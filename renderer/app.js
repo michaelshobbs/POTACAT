@@ -13764,6 +13764,8 @@ document.getElementById('welcome-start').addEventListener('click', async () => {
   const hideOobChecked = document.getElementById('welcome-hide-oob').checked;
   const autoSstvChecked = document.getElementById('welcome-enable-auto-sstv').checked;
   const autoSstvMinVal = Math.max(5, Math.min(600, parseInt(document.getElementById('welcome-auto-sstv-min').value, 10) || 90));
+  const ft8brEl = document.getElementById('welcome-enable-ft8br');
+  const ft8brChecked = ft8brEl ? ft8brEl.checked : false;
   const lightModeEnabled = welcomeLightMode.checked;
   const qrzUser = (document.getElementById('welcome-qrz-user')?.value || '').trim().toUpperCase();
   const qrzPass = document.getElementById('welcome-qrz-pass')?.value || '';
@@ -13779,6 +13781,7 @@ document.getElementById('welcome-start').addEventListener('click', async () => {
     hideOutOfBand: hideOobChecked,
     enableAutoSstv: autoSstvChecked,
     autoSstvInactivityMin: autoSstvMinVal,
+    enableFt8br: ft8brChecked,
     firstRun: false,
     lastVersion: currentSettings.appVersion,
     lightMode: lightModeEnabled,
