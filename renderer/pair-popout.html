@@ -24,6 +24,19 @@
     .pp-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .pp-error { color: #e94560; font-size: 13px; text-align: center; }
+
+    /* Manual-pairing fields — for when scanning the QR isn't an option
+       (Linux Electron QR rendering hiccup, phone camera busy, etc.).
+       Each field is selectable and has its own Copy button. */
+    .pp-manual { width: 100%; max-width: 460px; border: 1px solid var(--border-primary); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-secondary); }
+    .pp-manual h3 { margin: 0; font-size: 13px; color: var(--text-primary); }
+    .pp-manual-row { display: flex; flex-direction: column; gap: 4px; }
+    .pp-manual-row label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+    .pp-manual-row .pp-manual-value { display: flex; gap: 6px; }
+    .pp-manual-row input { flex: 1; font-family: monospace; font-size: 11px; padding: 4px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 3px; word-break: break-all; }
+    .pp-manual-row button { padding: 4px 10px; font-size: 11px; border: 1px solid var(--border-primary); background: var(--bg-tertiary); color: var(--text-primary); border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+    .pp-manual-row button:hover { background: var(--bg-hover); }
+    .pp-manual-help { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -47,6 +60,43 @@
       <div id="pp-qr-ttl" class="pp-ttl"></div>
     </div>
     <div id="pp-error" class="pp-error" style="display:none;"></div>
+
+    <div class="pp-manual">
+      <h3>Pair manually (no QR)</h3>
+      <div class="pp-manual-help">
+        If the QR won't scan or render, type these into the mobile app's manual-pair screen.
+        Each value is also tap-to-copy.
+      </div>
+      <div class="pp-manual-row">
+        <label for="pp-manual-host">Host</label>
+        <div class="pp-manual-value">
+          <input type="text" id="pp-manual-host" readonly>
+          <button type="button" data-copy="pp-manual-host">Copy</button>
+        </div>
+      </div>
+      <div class="pp-manual-row">
+        <label for="pp-manual-token">Pairing token (single-use, 5 min)</label>
+        <div class="pp-manual-value">
+          <input type="text" id="pp-manual-token" readonly>
+          <button type="button" data-copy="pp-manual-token">Copy</button>
+        </div>
+      </div>
+      <div class="pp-manual-row">
+        <label for="pp-manual-fp">Server fingerprint (SHA-256)</label>
+        <div class="pp-manual-value">
+          <input type="text" id="pp-manual-fp" readonly>
+          <button type="button" data-copy="pp-manual-fp">Copy</button>
+        </div>
+      </div>
+      <div class="pp-manual-row">
+        <label for="pp-manual-url">Full pairing URL</label>
+        <div class="pp-manual-value">
+          <input type="text" id="pp-manual-url" readonly>
+          <button type="button" data-copy="pp-manual-url">Copy</button>
+        </div>
+      </div>
+    </div>
+
     <div class="pp-actions">
       <button type="button" id="pp-regen-btn">Regenerate</button>
       <button type="button" id="pp-close-btn">Close</button>

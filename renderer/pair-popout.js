@@ -19,6 +19,11 @@
   var closeBtnHeader = document.getElementById('tb-close');
   var closeBtnFooter = document.getElementById('pp-close-btn');
 
+  var manualHostEl = document.getElementById('pp-manual-host');
+  var manualTokenEl = document.getElementById('pp-manual-token');
+  var manualFpEl = document.getElementById('pp-manual-fp');
+  var manualUrlEl = document.getElementById('pp-manual-url');
+
   var ttlInterval = null;
 
   function showError(msg) {
@@ -32,6 +37,16 @@
     cardEl.style.display = '';
   }
 
+  // Hide the QR card and lean on the manual fields. Used when SVG fails to
+  // mount (rare Linux Electron + Mint 22.3 case 2026-05-05) so the user
+  // still has a clear path: copy the URL or the individual fields.
+  function showManualOnly(reason) {
+    cardEl.style.display = 'none';
+    errEl.textContent = reason ||
+      'QR rendering failed on this platform. Use the manual-pairing fields below.';
+    errEl.style.display = '';
+  }
+
   async function generate() {
     if (ttlInterval) { clearInterval(ttlInterval); ttlInterval = null; }
     regenBtn.disabled = true;
@@ -40,23 +55,46 @@
       var r = await window.api.echocatCreatePairingQr({});
       if (r && r.error) { showError(r.error); return; }
       hideError();
+
+      // Always populate the manual-pair fields, even when the QR renders.
+      // Users may want to share the values via text/email rather than scan.
+      manualHostEl.value = r.host || '';
+      manualTokenEl.value = r.pairingToken || '';
+      manualFpEl.value = r.fingerprint || '';
+      manualUrlEl.value = r.qrText || '';
+
       // Prefer SVG: inline markup, no PNG codec, no data: URL — same
-      // result on Win/macOS/Linux. Linux user 2026-05-05 saw a broken-
-      // image icon because the dataUrl path produced an unreadable PNG
-      // on their distro. Fall back to the PNG dataUrl if for some
-      // reason SVG didn't generate (e.g., older qrcode build).
+      // result on Win/macOS/Linux. KD2TJU on Linux Mint 22.3 saw a
+      // broken-image icon because the dataUrl path produced an
+      // unreadable PNG on Chromium's image decoder for that distro.
+      // Fall back to the PNG dataUrl if for some reason SVG didn't
+      // generate (e.g., older qrcode build).
+      var qrShown = false;
       if (r.svg) {
         svgEl.innerHTML = r.svg;
         svgEl.style.display = '';
         imgEl.style.display = 'none';
-      } else if (r.dataUrl) {
+        // Verify the SVG actually mounted — in rare cases (Linux Electron
+        // Chromium quirks) inline SVG via innerHTML doesn't paint. If
+        // there's no <svg> child after we set innerHTML, fall through
+        // to the PNG path or surface a manual-only message.
+        if (svgEl.querySelector('svg')) qrShown = true;
+      }
+      if (!qrShown && r.dataUrl) {
+        // Wire onerror so a failing PNG decode also collapses to manual-only.
+        imgEl.onerror = function() {
+          imgEl.onerror = null;
+          showManualOnly('QR image failed to render. Type the values below into your mobile app to pair manually.');
+        };
         imgEl.src = r.dataUrl;
         imgEl.style.display = '';
         svgEl.style.display = 'none';
-      } else {
-        showError('Pairing QR generated nothing renderable. Try Regenerate; if it still fails, report this with your platform.');
-        return;
+        qrShown = true;
       }
+      if (!qrShown) {
+        showManualOnly('No QR formats generated. Type the values below into your mobile app to pair manually.');
+      }
+
       imgEl.style.opacity = '1';
       svgEl.style.opacity = '1';
       textEl.textContent = r.qrText;
@@ -68,6 +106,9 @@
           ttlEl.classList.add('expired');
           imgEl.style.opacity = '0.3';
           svgEl.style.opacity = '0.3';
+          // Empty out manual fields too so the user doesn't paste a stale token.
+          manualTokenEl.value = '';
+          manualUrlEl.value = '';
           clearInterval(ttlInterval);
           ttlInterval = null;
           return;
@@ -86,6 +127,41 @@
       regenBtn.textContent = 'Regenerate';
     }
   }
+
+  // Tap-to-copy buttons next to each manual field. Standard navigator.clipboard
+  // path with a hidden-textarea + execCommand fallback for older Electron
+  // builds where clipboard API isn't exposed.
+  function copyText(text, btn) {
+    function done() {
+      var prev = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function() { btn.textContent = prev; }, 1200);
+    }
+    function fallback() {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:-9999px;';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        done();
+      } catch {}
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
+  document.querySelectorAll('button[data-copy]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var target = document.getElementById(btn.dataset.copy);
+      if (target && target.value) copyText(target.value, btn);
+    });
+  });
 
   regenBtn.addEventListener('click', generate);
   closeBtnHeader.addEventListener('click', function() { window.api.close(); });
