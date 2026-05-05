@@ -10,6 +10,7 @@
   }
 
   var imgEl = document.getElementById('pp-qr-img');
+  var svgEl = document.getElementById('pp-qr-svg');
   var textEl = document.getElementById('pp-qr-text');
   var ttlEl = document.getElementById('pp-qr-ttl');
   var errEl = document.getElementById('pp-error');
@@ -39,8 +40,25 @@
       var r = await window.api.echocatCreatePairingQr({});
       if (r && r.error) { showError(r.error); return; }
       hideError();
-      imgEl.src = r.dataUrl;
+      // Prefer SVG: inline markup, no PNG codec, no data: URL — same
+      // result on Win/macOS/Linux. Linux user 2026-05-05 saw a broken-
+      // image icon because the dataUrl path produced an unreadable PNG
+      // on their distro. Fall back to the PNG dataUrl if for some
+      // reason SVG didn't generate (e.g., older qrcode build).
+      if (r.svg) {
+        svgEl.innerHTML = r.svg;
+        svgEl.style.display = '';
+        imgEl.style.display = 'none';
+      } else if (r.dataUrl) {
+        imgEl.src = r.dataUrl;
+        imgEl.style.display = '';
+        svgEl.style.display = 'none';
+      } else {
+        showError('Pairing QR generated nothing renderable. Try Regenerate; if it still fails, report this with your platform.');
+        return;
+      }
       imgEl.style.opacity = '1';
+      svgEl.style.opacity = '1';
       textEl.textContent = r.qrText;
       var remaining = r.ttlSeconds || 300;
       ttlEl.classList.remove('expired');
@@ -49,6 +67,7 @@
           ttlEl.textContent = 'Expired — click Regenerate.';
           ttlEl.classList.add('expired');
           imgEl.style.opacity = '0.3';
+          svgEl.style.opacity = '0.3';
           clearInterval(ttlInterval);
           ttlInterval = null;
           return;

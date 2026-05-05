@@ -12173,10 +12173,32 @@ app.whenReady().then(() => {
       name: hostname,
     });
     const qrText = `potacat://pair?${qrParams.toString()}`;
-    const dataUrl = await qrcode.toDataURL(qrText, { errorCorrectionLevel: 'M', width: 320, margin: 2 });
+    // Generate BOTH formats so the renderer can pick whichever works.
+    // SVG is the preferred path: pure-text inline markup, no PNG codec
+    // dependency, no data: URL — works identically across Win/macOS/Linux
+    // builds. PNG dataUrl kept as a fallback for compatibility with any
+    // older client that still reads dataUrl. (Linux user 2026-05-05 saw
+    // a broken-image icon because the PNG path returned an unreadable
+    // payload on their distro — Canvas-less Electron + pngjs hiccup.)
+    let svg = '';
+    let dataUrl = '';
+    try {
+      svg = await qrcode.toString(qrText, { type: 'svg', errorCorrectionLevel: 'M', margin: 2 });
+    } catch (err) {
+      console.error('[Echo CAT] QR SVG generation failed:', err.message);
+    }
+    try {
+      dataUrl = await qrcode.toDataURL(qrText, { errorCorrectionLevel: 'M', width: 320, margin: 2 });
+    } catch (err) {
+      console.error('[Echo CAT] QR PNG generation failed:', err.message);
+    }
+    if (!svg && !dataUrl) {
+      return { error: 'Could not render the pairing QR. Check that the qrcode module installed cleanly (npm install in the POTACAT repo).' };
+    }
     return {
       qrText,
       dataUrl,
+      svg,
       pairingToken,
       fingerprint,
       host: wsUrl,
