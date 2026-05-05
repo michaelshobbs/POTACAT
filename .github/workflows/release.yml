@@ -23,7 +23,14 @@ jobs:
   # --------------------------------------------------------------------------
 
   build-windows:
-    runs-on: windows-latest
+    # Pin to windows-2022. GitHub flipped windows-latest to Windows Server
+    # 2025 (build 10.0.26100) on 2026-05-05, and the new image's Visual
+    # Studio layout doesn't satisfy node-gyp's heuristics — @electron/rebuild
+    # of @serialport/bindings-cpp fails with "Could not find any Visual
+    # Studio installation to use". v1.5.14 (May 4, on the old image) was
+    # fine; v1.5.15 (May 5, on the new image) failed. Re-evaluate when
+    # windows-2022 is retired.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
