@@ -348,6 +348,19 @@
   async function doSave() {
     const built = buildQsoData();
     if (built.error) { showToast(built.error, 'error'); return; }
+    // Defensive: WG9I on macOS darwin v1.5.14 saw
+    //   "Cannot read properties of undefined: reading 'saveQso'"
+    // here — meaning window.api was undefined at click time. The cause
+    // (preload didn't expose, sandbox stripped a require, etc.) is hard
+    // to diagnose remotely. Surface a clear actionable message and dump
+    // diagnostic info to the console so DevTools paints a useful trace
+    // instead of the vague TypeError. (2026-05-05.)
+    if (!window.api || typeof window.api.saveQso !== 'function') {
+      console.error('[log-popout] window.api missing saveQso',
+        { hasApi: !!window.api, apiKeys: window.api ? Object.keys(window.api) : null });
+      showToast('Save failed: log-popout preload bridge not loaded. Restart POTACAT and try again. If this persists, send the DevTools console output via Help → Bug Report.', 'error');
+      return;
+    }
     saveBtn.disabled = true;
     try {
       const result = await window.api.saveQso(built.data);
