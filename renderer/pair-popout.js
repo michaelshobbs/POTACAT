@@ -29,21 +29,36 @@
 
   var ttlInterval = null;
 
-  function showError(msg) {
-    errEl.textContent = msg;
+  // Show a hard error: big banner + hint line, fields blanked, QR card
+  // hidden so the user doesn't see an empty broken-image icon next to
+  // a useless empty form. The hint is built per error so the user
+  // knows exactly what to do (enable ECHOCAT, restart, etc.).
+  function showError(msg, hint) {
+    errEl.innerHTML = '';
+    const main = document.createElement('div');
+    main.textContent = msg;
+    errEl.appendChild(main);
+    if (hint) {
+      const h = document.createElement('div');
+      h.className = 'pp-error-hint';
+      h.textContent = hint;
+      errEl.appendChild(h);
+    }
     errEl.style.display = '';
+    cardEl.style.display = 'none';
   }
   function hideError() {
     errEl.style.display = 'none';
-    errEl.textContent = '';
+    errEl.innerHTML = '';
   }
 
   function showFallbackNote() {
-    cardEl.style.display = 'none';
+    cardEl.style.display = '';
+    imgEl.style.display = 'none';
+    svgEl.style.display = 'none';
     fallbackNoteEl.style.display = '';
   }
   function hideFallbackNote() {
-    cardEl.style.display = '';
     fallbackNoteEl.style.display = 'none';
   }
 
@@ -55,13 +70,21 @@
       var r = await window.api.echocatCreatePairingQr({});
       // Hard error from main (server not running, qrcode module missing,
       // etc.) — show the message and clear stale fields so the user can't
-      // paste expired values.
+      // paste expired values. Pick the most actionable hint from the
+      // error text so users know exactly what to do.
       if (r && r.error) {
-        showError(r.error);
+        var hint = '';
+        if (/server is not running|enable it in settings/i.test(r.error)) {
+          hint = 'Open Settings → ECHOCAT → check "Enable ECHOCAT remote access" (the box at the top), then come back here and tap Regenerate.';
+        } else if (/qrcode module/i.test(r.error)) {
+          hint = 'If you installed via .dmg / .exe / .AppImage, please file a bug report — this should never happen on a packaged build.';
+        }
+        showError(r.error, hint);
         manualUrlEl.value = manualHostEl.value = manualTokenEl.value = manualFpEl.value = '';
         return;
       }
       hideError();
+      cardEl.style.display = '';
 
       // Populate the manual-pair fields FIRST, before any rendering work.
       // These are the source of truth: even if both QR formats fail to

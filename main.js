@@ -12167,7 +12167,16 @@ app.whenReady().then(() => {
       // safer suggestion is to use the installer.
       return { error: 'Pairing QR generator missing. If you\'re running POTACAT from source, run exactly: npm install (no other arguments) in the POTACAT directory. If you installed via .dmg / .exe / .AppImage, this should never happen — please file a bug report.' };
     }
-    const pairingToken = remoteServer.createPairingToken({ deviceLabel: opts.deviceLabel || '' });
+    let pairingToken;
+    try {
+      pairingToken = remoteServer.createPairingToken({ deviceLabel: opts.deviceLabel || '' });
+    } catch (err) {
+      console.error('[Echo CAT] createPairingToken failed:', err.message);
+      return { error: 'Could not mint a pairing token: ' + (err.message || 'unknown error') + '. Try restarting POTACAT.' };
+    }
+    if (!pairingToken) {
+      return { error: 'Pairing token came back empty. ECHOCAT may not be fully started yet — wait a moment and tap Regenerate.' };
+    }
     let fingerprint = '';
     try {
       if (remoteServer._tlsCertPem) {
