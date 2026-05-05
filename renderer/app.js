@@ -810,6 +810,16 @@ if (setExtraUdp) {
     extraUdpConfig.classList.toggle('hidden', !setExtraUdp.checked);
   });
 }
+const setFt8br = document.getElementById('set-ft8br');
+const ft8brConfig = document.getElementById('ft8br-config');
+const setFt8brHost = document.getElementById('set-ft8br-host');
+const setFt8brPort = document.getElementById('set-ft8br-port');
+const setFt8brComment = document.getElementById('set-ft8br-comment');
+if (setFt8br) {
+  setFt8br.addEventListener('change', () => {
+    ft8brConfig.classList.toggle('hidden', !setFt8br.checked);
+  });
+}
 const setDisableAutoUpdate = document.getElementById('set-disable-auto-update');
 const setEnableTelemetry = document.getElementById('set-enable-telemetry');
 const setLightMode = document.getElementById('set-light-mode');
@@ -8443,6 +8453,13 @@ async function openSettingsDialog(tab) {
   setExtraUdpPort.value = s.extraUdpPort || 2237;
   setExtraUdpFormat.value = s.extraUdpFormat || 'wsjtx';
   extraUdpConfig.classList.toggle('hidden', !setExtraUdp.checked);
+  if (setFt8br) {
+    setFt8br.checked = s.enableFt8br === true;
+    setFt8brHost.value = s.ft8brHost || '';
+    setFt8brPort.value = s.ft8brPort || 2237;
+    setFt8brComment.value = s.ft8brComment || '';
+    ft8brConfig.classList.toggle('hidden', !setFt8br.checked);
+  }
   loggingConfig.classList.toggle('hidden', !s.enableLogging);
   logbookConfig.classList.toggle('hidden', !s.sendToLogbook);
   updateLogbookPortConfig();
@@ -8935,6 +8952,10 @@ settingsSave.addEventListener('click', async () => {
     extraUdpHost: setExtraUdpHost.value.trim() || '127.0.0.1',
     extraUdpPort: parseInt(setExtraUdpPort.value, 10) || 2237,
     extraUdpFormat: setExtraUdpFormat.value || 'wsjtx',
+    enableFt8br: setFt8br ? setFt8br.checked : false,
+    ft8brHost: setFt8brHost ? setFt8brHost.value.trim() : '',
+    ft8brPort: setFt8brPort ? (parseInt(setFt8brPort.value, 10) || 2237) : 2237,
+    ft8brComment: setFt8brComment ? setFt8brComment.value : '',
     disableAutoUpdate: disableAutoUpdate,
     enableTelemetry: telemetryEnabled,
     lightMode: lightModeEnabled,
@@ -9087,6 +9108,14 @@ settingsSave.addEventListener('click', async () => {
   }
   settingsDialog.close();
   render();
+  // Sync the JTCAT-panel FT8BR comment input visibility + value with the
+  // freshly-saved enable/comment so the user doesn't have to reopen JTCAT.
+  if (typeof syncFt8brCommentVisibility === 'function' && setFt8br) {
+    syncFt8brCommentVisibility(setFt8br.checked);
+    if (jtcatFt8brCommentEl && setFt8brComment) {
+      jtcatFt8brCommentEl.value = setFt8brComment.value;
+    }
+  }
   // Update home marker if map is initialized
   if (map) updateHomeMarker();
   if (rbnMap) updateRbnHomeMarker();
@@ -16772,12 +16801,31 @@ if (window.api.onJtcatAudioLatency) {
     if (payload.auto) jtcatAudioLatencyMsEl.classList.add('jtcat-auto');
   });
 }
+// JTCAT-panel FT8 Battle Royale comment input. Mirrors the Settings ⇄
+// Logbook ⇄ FT8BR comment field but lives here so the user can update
+// /team / /score etc. between QSOs without opening Settings. Hidden unless
+// FT8BR is enabled in Settings.
+const jtcatFt8brCommentEl = document.getElementById('jtcat-ft8br-comment');
+const jtcatFt8brCommentLabelEl = document.getElementById('jtcat-ft8br-comment-label');
+function syncFt8brCommentVisibility(enabled) {
+  if (!jtcatFt8brCommentLabelEl) return;
+  jtcatFt8brCommentLabelEl.style.display = enabled ? '' : 'none';
+}
+if (jtcatFt8brCommentEl) {
+  jtcatFt8brCommentEl.addEventListener('change', async function() {
+    await window.api.saveSettings({ ft8brComment: jtcatFt8brCommentEl.value });
+  });
+}
 // Hydrate from settings on load
 window.api.getSettings().then(function(s) {
   if (jtcatHoldTxFreqEl) jtcatHoldTxFreqEl.checked = !!s.jtcatHoldTxFreq;
   if (jtcatAudioLatencyMsEl) {
     jtcatAudioLatencyMsEl.value = String(s.jtcatAudioLatencyMs || 0);
     if (!s.jtcatAudioLatencyManual) jtcatAudioLatencyMsEl.classList.add('jtcat-auto');
+  }
+  if (jtcatFt8brCommentEl) {
+    jtcatFt8brCommentEl.value = s.ft8brComment || '';
+    syncFt8brCommentVisibility(s.enableFt8br === true);
   }
 });
 jtcatTxSlotSelect.addEventListener('change', function() {
