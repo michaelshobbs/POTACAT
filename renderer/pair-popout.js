@@ -34,18 +34,27 @@
   // a useless empty form. The hint is built per error so the user
   // knows exactly what to do (enable ECHOCAT, restart, etc.).
   function showError(msg, hint) {
+    // Paranoid: if the HTML somehow didn't include the error banner
+    // (shouldn't happen, but if pp-error is missing the popout would
+    // silently swallow every error message), at minimum log AND alert
+    // so the user gets SOMETHING. Better to be noisy than silent.
+    if (!errEl) {
+      console.error('[pair-popout] errEl missing, falling back to alert:', msg, hint || '');
+      try { alert(msg + (hint ? '\n\n' + hint : '')); } catch {}
+      return;
+    }
     errEl.innerHTML = '';
-    const main = document.createElement('div');
+    var main = document.createElement('div');
     main.textContent = msg;
     errEl.appendChild(main);
     if (hint) {
-      const h = document.createElement('div');
+      var h = document.createElement('div');
       h.className = 'pp-error-hint';
       h.textContent = hint;
       errEl.appendChild(h);
     }
     errEl.style.display = '';
-    cardEl.style.display = 'none';
+    if (cardEl) cardEl.style.display = 'none';
   }
   function hideError() {
     errEl.style.display = 'none';
@@ -68,6 +77,33 @@
     regenBtn.textContent = 'Generating…';
     try {
       var r = await window.api.echocatCreatePairingQr({});
+      // Diagnostic: log the response shape so a user with DevTools open
+      // can see exactly what came back. (K3SBP 2026-05-05: users were
+      // reporting blank fields with no error banner; this surfaces the
+      // raw IPC response so the failure mode is visible without a
+      // stack-trace.)
+      console.log('[pair-popout] IPC returned:', r ? {
+        hasError: !!r.error,
+        errorText: r.error || null,
+        hasQrText: !!r.qrText,
+        hasHost: !!r.host,
+        hasToken: !!r.pairingToken,
+        hasFingerprint: !!r.fingerprint,
+        hasSvg: !!r.svg,
+        hasDataUrl: !!r.dataUrl,
+        qrError: r.qrError || null,
+      } : 'null/undefined');
+      // Defense: if IPC came back with nothing usable (no error, no
+      // pairing data), surface that specifically so the user isn't
+      // stranded with empty fields.
+      if (!r || (!r.error && !r.qrText && !r.pairingToken && !r.host)) {
+        showError(
+          'Pairing data came back empty — desktop returned no token or URL.',
+          'Restart POTACAT, make sure ECHOCAT is enabled in Settings, then try again. If this persists, open DevTools (Ctrl+Shift+I) → Console and send me what appears after "[pair-popout] IPC returned:".',
+        );
+        manualUrlEl.value = manualHostEl.value = manualTokenEl.value = manualFpEl.value = '';
+        return;
+      }
       // Hard error from main (server not running, qrcode module missing,
       // etc.) — show the message and clear stale fields so the user can't
       // paste expired values. Pick the most actionable hint from the
