@@ -105,6 +105,10 @@
     .jp-qso-toast { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); background: #d4edda; color: #1a1a1a; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
     .jp-qso-toast.visible { opacity: 1; pointer-events: auto; }
     .jp-qso-toast .jp-toast-sub { font-weight: normal; font-size: 11px; opacity: 0.8; margin-top: 2px; }
+    /* Amber/red variant for "TX stopped" / retry-limit events. Same shape
+       as the success toast, just visually distinct so it doesn't get
+       confused with a logged-QSO confirmation. K3SBP 2026-05-05. */
+    .jp-qso-toast.error { background: #f8d7da; color: #721c24; }
 
     /* Waterfall */
     .jp-waterfall { width: 100%; height: 80px; image-rendering: pixelated; cursor: crosshair; flex-shrink: 0; border-top: 1px solid var(--border-primary); border-bottom: 1px solid var(--border-primary); display: block; }

@@ -3221,6 +3221,8 @@ function startJtcat(mode) {
         const max = (remoteJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : JTCAT_MAX_QSO_RETRIES;
         if (remoteJtcatQso.txRetries >= max) {
           console.log('[JTCAT Remote] TX retry limit reached (' + max + ') in phase ' + remoteJtcatQso.phase + ' — giving up');
+          const stoppedPhase = remoteJtcatQso.phase;
+          const stoppedCall = remoteJtcatQso.call || '';
           ft8Engine._txEnabled = false;
           ft8Engine.setTxMessage('');
           ft8Engine.setTxSlot('auto');
@@ -3228,7 +3230,11 @@ function startJtcat(mode) {
           remoteJtcatQso = null;
           remoteJtcatBroadcastQso();
           if (remoteServer.hasClient()) {
-            remoteServer.broadcastJtcatQsoState({ phase: 'error', error: 'No response — TX stopped' });
+            const phaseLabel = stoppedPhase === 'cq' ? 'CQ' : 'QSO with ' + (stoppedCall || 'partner');
+            remoteServer.broadcastJtcatQsoState({
+              phase: 'error',
+              error: `${phaseLabel}: TX limit reached after ${max} cycles — stopping. No reply heard.`,
+            });
           }
         }
       } else if (remoteJtcatQso && remoteJtcatQso.phase !== phaseBefore) {
@@ -3249,6 +3255,10 @@ function startJtcat(mode) {
         const max = (popoutJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : JTCAT_MAX_QSO_RETRIES;
         if (popoutJtcatQso.txRetries >= max) {
           console.log('[JTCAT Popout] TX retry limit reached (' + max + ') in phase ' + popoutJtcatQso.phase + ' — giving up');
+          // Capture phase + call BEFORE null'ing the QSO state for the
+          // user-facing message (the toast on the popout reads it).
+          const stoppedPhase = popoutJtcatQso.phase;
+          const stoppedCall = popoutJtcatQso.call || '';
           ft8Engine._txEnabled = false;
           ft8Engine.setTxMessage('');
           ft8Engine.setTxSlot('auto');
@@ -3256,7 +3266,11 @@ function startJtcat(mode) {
           popoutJtcatQso = null;
           popoutBroadcastQso();
           if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
-            jtcatPopoutWin.webContents.send('jtcat-qso-state', { phase: 'error', error: 'No response — TX stopped' });
+            const phaseLabel = stoppedPhase === 'cq' ? 'CQ' : 'QSO with ' + (stoppedCall || 'partner');
+            jtcatPopoutWin.webContents.send('jtcat-qso-state', {
+              phase: 'error',
+              error: `${phaseLabel}: TX limit reached after ${max} cycles — stopping. No reply heard.`,
+            });
           }
         }
       } else if (popoutJtcatQso && popoutJtcatQso.phase !== phaseBefore) {

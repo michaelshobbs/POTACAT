@@ -728,6 +728,11 @@
       enableTxBtn.classList.remove('active');
       enableTxBtn.textContent = 'Enable TX';
       txMsgEl.textContent = data.error || 'Error';
+      // Raise the same toast slot used for QSO-Logged success so the
+      // "TX stopped" event is visible without DevTools. Red variant
+      // distinguishes it from the green success toast. (K3SBP 2026-05-05:
+      // the retry-limit was previously only logged to console.)
+      showJtcatErrorToast(data.error || 'TX stopped');
       renderQsoTracker();
       return;
     } else {
@@ -784,9 +789,30 @@
   qsoToast.addEventListener('click', function() {
     if (qsoToastTimer) clearTimeout(qsoToastTimer);
     qsoToast.classList.remove('visible');
-    // Focus main POTACAT window — QSO log is there
-    window.api.focusMain();
+    qsoToast.classList.remove('error');
+    // Focus main POTACAT window — QSO log is there (only meaningful for
+    // the success toast; clicking an error toast just dismisses it).
+    if (!qsoToast.dataset.errorToast) window.api.focusMain();
+    delete qsoToast.dataset.errorToast;
   });
+
+  // Shared "TX stopped / something went wrong" toast. Reuses jp-qso-toast
+  // with the .error variant so we don't introduce a second floating UI
+  // element. Stays up longer than the success toast (8s vs 5s) since the
+  // user may need a moment to read why TX gave up.
+  function showJtcatErrorToast(message, sub) {
+    if (qsoToastTimer) clearTimeout(qsoToastTimer);
+    qsoToast.innerHTML = esc(message) +
+      (sub ? '<div class="jp-toast-sub">' + esc(sub) + '</div>' : '');
+    qsoToast.classList.add('visible');
+    qsoToast.classList.add('error');
+    qsoToast.dataset.errorToast = '1';
+    qsoToastTimer = setTimeout(function() {
+      qsoToast.classList.remove('visible');
+      qsoToast.classList.remove('error');
+      delete qsoToast.dataset.errorToast;
+    }, 8000);
+  }
 
   // --- Countdown timer ---
   setInterval(function() {
