@@ -53,20 +53,30 @@
     regenBtn.textContent = 'Generating…';
     try {
       var r = await window.api.echocatCreatePairingQr({});
+      // Hard error from main (server not running, qrcode module missing,
+      // etc.) — show the message and clear stale fields so the user can't
+      // paste expired values.
       if (r && r.error) {
         showError(r.error);
-        // Empty out manual fields so the user doesn't paste a stale value.
         manualUrlEl.value = manualHostEl.value = manualTokenEl.value = manualFpEl.value = '';
         return;
       }
       hideError();
 
-      // Always populate the manual-pair fields first, regardless of QR
-      // outcome. These are the source of truth.
+      // Populate the manual-pair fields FIRST, before any rendering work.
+      // These are the source of truth: even if both QR formats fail to
+      // render on this platform, the user can still copy these values.
       manualUrlEl.value = r.qrText || '';
       manualHostEl.value = r.host || '';
       manualTokenEl.value = r.pairingToken || '';
       manualFpEl.value = r.fingerprint || '';
+
+      // Soft QR error (PNG + SVG both failed). Show a banner above the
+      // QR area but DON'T touch the fields — the user can still pair.
+      if (r.qrError) {
+        showError('QR rendering failed on this build (' + r.qrError +
+          '). Use the fields above to pair manually.');
+      }
 
       // Best-effort QR render. Try SVG first (no PNG codec, no data: URL),
       // verify it actually mounted, fall through to PNG dataUrl, fall

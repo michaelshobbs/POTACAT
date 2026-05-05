@@ -12190,32 +12190,35 @@ app.whenReady().then(() => {
       name: hostname,
     });
     const qrText = `potacat://pair?${qrParams.toString()}`;
-    // Generate BOTH formats so the renderer can pick whichever works.
-    // SVG is the preferred path: pure-text inline markup, no PNG codec
-    // dependency, no data: URL — works identically across Win/macOS/Linux
-    // builds. PNG dataUrl kept as a fallback for compatibility with any
-    // older client that still reads dataUrl. (Linux user 2026-05-05 saw
-    // a broken-image icon because the PNG path returned an unreadable
-    // payload on their distro — Canvas-less Electron + pngjs hiccup.)
+    // Generate BOTH formats best-effort. The QR is a convenience: the
+    // pairing data (qrText / pairingToken / fingerprint / host) is the
+    // source of truth and is ALWAYS returned, even if both QR rendering
+    // paths fail on this platform. KD2TJU on Linux Mint 22.3 hit a case
+    // where qrcode's PNG output was an unreadable payload AND the SVG
+    // path also failed — the renderer was emptying the manual fields
+    // on the resulting error and leaving the user with no path to pair.
+    // Now we surface a non-fatal `qrError` instead so the UI can still
+    // populate the fields.
     let svg = '';
     let dataUrl = '';
+    let qrError = '';
     try {
       svg = await qrcode.toString(qrText, { type: 'svg', errorCorrectionLevel: 'M', margin: 2 });
     } catch (err) {
       console.error('[Echo CAT] QR SVG generation failed:', err.message);
+      qrError = err.message;
     }
     try {
       dataUrl = await qrcode.toDataURL(qrText, { errorCorrectionLevel: 'M', width: 320, margin: 2 });
     } catch (err) {
       console.error('[Echo CAT] QR PNG generation failed:', err.message);
-    }
-    if (!svg && !dataUrl) {
-      return { error: 'Could not render the pairing QR. Check that the qrcode module installed cleanly (npm install in the POTACAT repo).' };
+      if (!qrError) qrError = err.message;
     }
     return {
       qrText,
       dataUrl,
       svg,
+      qrError: (svg || dataUrl) ? '' : qrError, // only surface when BOTH formats failed
       pairingToken,
       fingerprint,
       host: wsUrl,
