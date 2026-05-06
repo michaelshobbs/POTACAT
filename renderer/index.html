@@ -2123,6 +2123,17 @@
 
         <!-- Mobile-app pairing (Phase 0 of native app) -->
         <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
+          <!-- Setup checklist for first-time users. Shown until the
+               Tailscale cert is cached; hidden once everything's wired
+               up and pairing is one click. -->
+          <div id="echocat-pair-setup" style="display:none;background:#1c2a3a;border:1px solid #2a4060;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px;line-height:1.5;">
+            <strong style="display:block;margin-bottom:4px;">Before pairing the iOS app:</strong>
+            <ol style="margin:0;padding-left:20px;">
+              <li>Install <a href="https://tailscale.com/download" target="_blank" style="color:#4fc3f7;">Tailscale</a> on this computer and your phone, sign both in to the same tailnet.</li>
+              <li>Open <a href="https://login.tailscale.com/admin/dns" target="_blank" style="color:#4fc3f7;">login.tailscale.com/admin/dns</a> and turn on <strong>MagicDNS</strong> AND <strong>HTTPS Certificates</strong>. Both are required.</li>
+              <li>Click <em>Open pairing QR</em> below. POTACAT will issue a TLS cert automatically and show the QR.</li>
+            </ol>
+          </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
             <div>
               <strong>Pair Mobile App</strong>

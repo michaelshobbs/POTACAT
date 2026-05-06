@@ -3605,6 +3605,12 @@ async function echocatRefreshTailscaleStatus() {
     echocatTsStatus.textContent = 'Tailscale: status check failed.';
     return;
   }
+  // Setup checklist visibility: show whenever there's still a step
+  // the user can take (Tailscale missing / signed out / MagicDNS off
+  // / cert not yet issued). Hide once the cert is cached and
+  // pairing is one-click.
+  const setupBlock = document.getElementById('echocat-pair-setup');
+  if (setupBlock) setupBlock.style.display = s.certCached ? 'none' : '';
   // Each branch points the user at exactly the next thing to fix.
   // Deep links go straight to the correct admin page so users
   // don't have to hunt through Tailscale's docs.
