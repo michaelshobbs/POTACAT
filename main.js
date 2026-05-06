@@ -194,6 +194,81 @@ let parksDbLoading = false;
 // --- cty.dat database (loaded once at startup) ---
 let ctyDb = null;
 
+// --- SSTV CW ID helper ---
+// SSTV engine emits audio at 48 kHz; CW ID is appended at the same
+// rate so the popout's playback path doesn't have to resample.
+const SSTV_SAMPLE_RATE = 48000;
+const _MORSE_CODES = {
+  A:'.-',   B:'-...', C:'-.-.', D:'-..',  E:'.',    F:'..-.', G:'--.',  H:'....',
+  I:'..',   J:'.---', K:'-.-',  L:'.-..', M:'--',   N:'-.',   O:'---',  P:'.--.',
+  Q:'--.-', R:'.-.',  S:'...',  T:'-',    U:'..-',  V:'...-', W:'.--',  X:'-..-',
+  Y:'-.--', Z:'--..',
+  '0':'-----', '1':'.----', '2':'..---', '3':'...--', '4':'....-',
+  '5':'.....', '6':'-....', '7':'--...', '8':'---..', '9':'----.',
+  '/':'-..-.', '?':'..--..', '.':'.-.-.-', ',':'--..--',
+};
+
+// Generate a Float32Array of audio samples for `text` as Morse code.
+// Used by the SSTV CW-ID feature; standalone enough that future paths
+// (auto-CQ ID, beacon, etc.) can call it too. Standard PARIS timing.
+function generateMorseSamples(text, opts = {}) {
+  const sr = opts.sampleRate || 48000;
+  const wpm = opts.wpm || 20;
+  const freq = opts.freqHz || 800;
+  const dotSec = 1.2 / wpm;
+  const dotSamp = Math.max(1, Math.floor(dotSec * sr));
+  const dashSamp = dotSamp * 3;
+  const elemGap = dotSamp;     // intra-character spacing
+  const charGap = dotSamp * 3; // inter-character spacing
+  const wordGap = dotSamp * 7; // inter-word spacing
+  const rampSamp = Math.min(Math.floor(0.005 * sr), Math.floor(dotSamp / 4));
+  const omega = 2 * Math.PI * freq / sr;
+  const upper = String(text || '').toUpperCase().trim();
+
+  // Build a sequence of {tone:samples} | {silence:samples} chunks first
+  // so we can size the output buffer once.
+  const chunks = [];
+  for (let i = 0; i < upper.length; i++) {
+    const ch = upper[i];
+    if (ch === ' ') {
+      // Replace the trailing charGap with a wordGap (consume the
+      // previous gap if any).
+      if (chunks.length && chunks[chunks.length - 1].silence === charGap) {
+        chunks[chunks.length - 1].silence = wordGap;
+      } else {
+        chunks.push({ silence: wordGap });
+      }
+      continue;
+    }
+    const code = _MORSE_CODES[ch];
+    if (!code) continue;
+    for (let j = 0; j < code.length; j++) {
+      chunks.push({ tone: code[j] === '.' ? dotSamp : dashSamp });
+      if (j < code.length - 1) chunks.push({ silence: elemGap });
+    }
+    if (i < upper.length - 1) chunks.push({ silence: charGap });
+  }
+
+  let total = 0;
+  for (const c of chunks) total += c.tone || c.silence;
+  const out = new Float32Array(total);
+  let cur = 0;
+  for (const c of chunks) {
+    if (c.tone) {
+      for (let n = 0; n < c.tone; n++) {
+        let env = 0.6;
+        if (n < rampSamp) env *= n / rampSamp;
+        else if (n > c.tone - rampSamp) env *= (c.tone - n) / rampSamp;
+        out[cur + n] = Math.sin(omega * n) * env;
+      }
+      cur += c.tone;
+    } else if (c.silence) {
+      cur += c.silence; // already zero
+    }
+  }
+  return out;
+}
+
 // --- Settings ---
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
@@ -11095,13 +11170,45 @@ app.whenReady().then(() => {
       }
       // Key PTT
       handleRemotePtt(true);
+
+      // Optional CW ID — required by some regulators (UK/EU), good
+      // practice everywhere. When settings.sstvCwId is true, append
+      // a Morse-encoded callsign to the SSTV audio at 800 Hz / 20 WPM
+      // before the playback. Mobile setting toggle wired via
+      // sstvCwId in save-settings; default false.
+      let outSamples = data.samples;
+      let outDurSec = data.durationSec;
+      if (settings.sstvCwId && settings.myCallsign) {
+        try {
+          const morse = generateMorseSamples(settings.myCallsign, {
+            wpm: 20,
+            freqHz: 800,
+            sampleRate: SSTV_SAMPLE_RATE,
+          });
+          if (morse && morse.length) {
+            // 250 ms tail of silence between SSTV image end and CW ID
+            // so receivers don't slur the boundary.
+            const tail = new Float32Array(Math.floor(SSTV_SAMPLE_RATE * 0.25));
+            const merged = new Float32Array(outSamples.length + tail.length + morse.length);
+            merged.set(outSamples, 0);
+            merged.set(tail, outSamples.length);
+            merged.set(morse, outSamples.length + tail.length);
+            outSamples = merged;
+            outDurSec = merged.length / SSTV_SAMPLE_RATE;
+            sendCatLog(`[SSTV] CW ID appended: ${settings.myCallsign.toUpperCase()} (${(morse.length / SSTV_SAMPLE_RATE).toFixed(1)}s)`);
+          }
+        } catch (err) {
+          sendCatLog(`[SSTV] CW ID failed: ${err.message} — sending image without ID`);
+        }
+      }
+
       // Send audio to popout for playback after PTT settles (extra delay if popout just opened)
       const delay = (!sstvPopoutWin || sstvPopoutWin.isDestroyed()) ? 1500 : 200;
       setTimeout(() => {
         if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
           sstvPopoutWin.webContents.send('sstv-tx-audio', {
-            samples: Array.from(data.samples),
-            durationSec: data.durationSec,
+            samples: Array.from(outSamples),
+            durationSec: outDurSec,
           });
         } else {
           // Failsafe: release PTT if popout never opened
@@ -11110,7 +11217,7 @@ app.whenReady().then(() => {
       }, delay);
       // Notify ECHOCAT with duration so phone can show progress
       if (remoteServer && remoteServer.hasClient()) {
-        remoteServer.broadcastSstvTxStatus({ state: 'tx', durationSec: data.durationSec });
+        remoteServer.broadcastSstvTxStatus({ state: 'tx', durationSec: outDurSec });
       }
     });
 
