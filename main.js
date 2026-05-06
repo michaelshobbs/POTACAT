@@ -2479,6 +2479,26 @@ async function saveQsoRecord(qsoData) {
   }
 
   const didRespot = (qsoData.respot && qsoData.sig === 'POTA') || qsoData.wwffRespot || qsoData.llotaRespot || qsoData.dxcRespot;
+
+  // Push the updated log to any connected mobile/browser clients so
+  // their QSO list reflects the new entry without a reconnect.
+  // Mallory KD5ZZU 2026-05-06: she logged a QSO from the desktop UI
+  // and her iOS app's logbook stayed stale until she restarted the
+  // app, because the desktop never told the app the log changed.
+  // The iOS app currently only subscribes to 'all-qsos' (not the
+  // more granular 'qso-updated'), so push the full list — small for
+  // most users, and the iOS app reapplies the snapshot in O(n).
+  try {
+    if (remoteServer && remoteServer.running) {
+      const logPath = settings.adifLogPath || path.join(app.getPath('userData'), 'potacat_qso_log.adi');
+      const qsos = parseAllRawQsos(logPath);
+      const mapped = qsos.map((q, i) => ({ idx: i, ...q }));
+      remoteServer.sendAllQsos(mapped);
+    }
+  } catch (err) {
+    console.warn('[QSO] Broadcast to mobile clients failed:', err.message);
+  }
+
   return { success: true, resposted: didRespot || false, logbookError, qrzError };
 }
 
