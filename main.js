@@ -6603,6 +6603,16 @@ function handleRemotePtt(state, opts = {}) {
     win.webContents.send('remote-tx-state', state);
     if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('remote-tx-state', state);
   }
+  // Broadcast to the hidden remote-audio window so it can mute the
+  // Kiwi/WebSDR audio routed over WebRTC to the phone — otherwise
+  // mobile listeners hear their own TX echoed through the remote SDR
+  // for the duration of TX. (VK3AWA's original report covered the
+  // desktop and browser ECHOCAT paths in v1.5.14; the WebRTC bridge
+  // for native iOS, added in Gap 20a, missed this and v1.5.15 mobile
+  // users got their TX audible again.)
+  if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+    remoteAudioWin.webContents.send('remote-tx-state', state);
+  }
   // Broadcast to phone
   broadcastRemoteRadioStatus();
 }

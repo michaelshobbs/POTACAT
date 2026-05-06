@@ -215,6 +215,14 @@ window.api.onStopAudio(() => {
 // swap the WebRTC sender's track from rig audio → Kiwi stream so the phone
 // hears SDR audio over the same WebRTC bridge it already uses for rig audio.
 // No native Web Audio API needed on the mobile side.
+// Persistent gain node between Kiwi BufferSources and the WebRTC
+// destination. Lets us mute the SDR audio during TX without tearing
+// down the audio graph (each PCM frame still creates a fresh
+// BufferSource and connects to this gain). VK3AWA: hearing your own
+// TX echoed through the remote SDR is unsettling.
+let kiwiGain = null;
+let kiwiTxMuted = false;
+
 function ensureKiwiTrack() {
   if (kiwiStream && kiwiDest) {
     const tracks = kiwiStream.getAudioTracks();
@@ -226,8 +234,13 @@ function ensureKiwiTrack() {
   if (!kiwiCtx) {
     kiwiCtx = new AudioContext();
   }
+  if (!kiwiGain) {
+    kiwiGain = kiwiCtx.createGain();
+    kiwiGain.gain.value = kiwiTxMuted ? 0 : 1;
+  }
   if (!kiwiDest) {
     kiwiDest = kiwiCtx.createMediaStreamDestination();
+    kiwiGain.connect(kiwiDest);
   }
   kiwiStream = kiwiDest.stream;
   return kiwiStream.getAudioTracks()[0] || null;
@@ -235,6 +248,10 @@ function ensureKiwiTrack() {
 
 function tearDownKiwiGraph() {
   kiwiNextPlayTime = 0;
+  if (kiwiGain) {
+    try { kiwiGain.disconnect(); } catch {}
+    kiwiGain = null;
+  }
   if (kiwiDest) {
     try { kiwiDest.disconnect(); } catch {}
     kiwiDest = null;
@@ -284,7 +301,8 @@ window.api.onKiwiAudioFrame((frame) => {
   buf.getChannelData(0).set(pcm);
   const src = kiwiCtx.createBufferSource();
   src.buffer = buf;
-  src.connect(kiwiDest);
+  // Route through the gain node so a TX-mute affects every frame.
+  src.connect(kiwiGain || kiwiDest);
   // Schedule packets back-to-back. Cap the cursor at 500 ms ahead of now —
   // a network burst can otherwise leave us seconds behind real time.
   const now = kiwiCtx.currentTime;
@@ -293,6 +311,17 @@ window.api.onKiwiAudioFrame((frame) => {
   }
   src.start(kiwiNextPlayTime);
   kiwiNextPlayTime += pcm.length / sr;
+});
+
+// TX-mute for the WebRTC-bridged SDR audio path. Mirror of the
+// kiwiGainNode mute the desktop VFO popout has had since v1.5.14.
+// Without this, mobile listeners hear their own TX echoed through
+// the remote SDR for the duration of TX. Track the state even when
+// kiwiGain isn't yet created so the very first frame after a hot
+// PTT lands at the correct gain.
+window.api.onTxState((state) => {
+  kiwiTxMuted = !!state;
+  if (kiwiGain) kiwiGain.gain.value = kiwiTxMuted ? 0 : 1;
 });
 </script>
 </body>

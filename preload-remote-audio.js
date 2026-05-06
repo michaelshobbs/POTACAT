@@ -16,4 +16,10 @@ contextBridge.exposeInMainWorld('api', {
   // frames via `kiwi-audio-frame`.
   onKiwiActive: (cb) => ipcRenderer.on('kiwi-active', (_e, active) => cb(active)),
   onKiwiAudioFrame: (cb) => ipcRenderer.on('kiwi-audio-frame', (_e, frame) => cb(frame)),
+  // TX state — used to mute Kiwi audio while transmitting so the
+  // mobile listener doesn't hear their own TX echoed through the
+  // remote SDR. (VK3AWA original report; the desktop and browser
+  // ECHOCAT paths already had this — Gap 20a's WebRTC route was
+  // missing it, so v1.5.15 mobile users got their TX back.)
+  onTxState: (cb) => ipcRenderer.on('remote-tx-state', (_e, state) => cb(state)),
 });
