@@ -395,6 +395,11 @@ let remoteServer = null;   // RemoteServer instance for phone remote access
 let cwKeyPort = null;      // Dedicated SerialPort for DTR CW keying (external USB-serial adapter)
 let _cwKeyPortEverOpened = false; // Becomes true after the first successful open this session — gates startup vs reconnect auto-open
 let remoteAudioWin = null; // hidden BrowserWindow for WebRTC audio bridge
+// 60-second grace before tearing down JTCAT engine + audio after a
+// client disconnect. iOS app suspending in background commonly drops
+// the WebSocket; the foreground-reconnect on unlock brings it back
+// fast enough that we shouldn't restart everything every time.
+let _clientDisconnectGraceTimer = null;
 let _currentFreqHz = 0;    // tracked for remote radio status
 let _currentMode = '';
 let _remoteTxState = false;
@@ -4537,6 +4542,13 @@ function connectRemote() {
   });
 
   remoteServer.on('client-connected', () => {
+    // Cancel any pending teardown — the phone came back inside the
+    // grace window, so the engine kept running and we're whole.
+    if (_clientDisconnectGraceTimer) {
+      clearTimeout(_clientDisconnectGraceTimer);
+      _clientDisconnectGraceTimer = null;
+      sendCatLog('[Echo CAT] Phone reconnected during grace window — engine survived.');
+    }
     broadcastRemoteRadioStatus();
     // Send current source toggles to phone
     remoteServer.sendSourcesToClient({
@@ -4634,39 +4646,46 @@ function connectRemote() {
     if (win && !win.isDestroyed()) {
       win.webContents.send('remote-status', { connected: false });
     }
-    // Stop JTCAT engine FIRST — prevents new TX audio from being generated
-    if (ft8Engine) {
-      stopJtcat();
-      if (win && !win.isDestroyed()) win.webContents.send('jtcat-stop-for-remote');
-      console.log('[JTCAT] Phone disconnected — engine stopped, audio released');
-    }
-    remoteJtcatQso = null;
-    // Destroy audio window to stop all outgoing audio (prevents VOX trigger)
-    destroyRemoteAudioWindow();
-    // Clear SSB-over-DATA state so handleRemotePtt doesn't try to restore mode
-    _ssbModeBeforePtt = null;
-    // ALWAYS force RX on disconnect — critical safety to prevent stuck TX
-    // (FT8 may use VOX, PTT state tracking can be stale, radio may be mid-cycle)
-    handleRemotePtt(false);
-    // CW safety: ensure PTT released on disconnect (keyer.stop() is handled in RemoteServer)
-    const rigType = detectRigType();
-    if (rigType === 'flex' && smartSdr && smartSdr.connected) {
-      smartSdr.cwPttRelease();
-    }
-    // Force CW key port DTR low (key up) on disconnect
-    if (cwKeyPort && cwKeyPort.isOpen) {
-      cwKeyPort.set({ dtr: false }, () => {});
-    }
-    // Delayed safety TX-off: catches VOX re-trigger from audio artifacts during teardown,
-    // and any race conditions from FT8 engine shutdown
-    setTimeout(() => {
-      if (cat && cat.connected) cat.setTransmit(false);
-      if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
-    }, 500);
-    setTimeout(() => {
-      if (cat && cat.connected) cat.setTransmit(false);
-      if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
-    }, 2000);
+    // Defer the heavy teardown by a 60-second grace period so an iOS
+    // background-suspend (commonly 30-45s) doesn't kill the JTCAT
+    // engine and force a full restart when the phone wakes back up.
+    // The engine keeps decoding through the gap; cached state +
+    // jtcat-decode-batch replay (mobile handoff #1) bring the phone's
+    // FT8 view back to current the instant it reconnects.
+    //
+    // If client-connected fires before grace expires, we cancel the
+    // teardown — engine survived the nap. Otherwise teardown runs.
+    if (_clientDisconnectGraceTimer) clearTimeout(_clientDisconnectGraceTimer);
+    _clientDisconnectGraceTimer = setTimeout(() => {
+      _clientDisconnectGraceTimer = null;
+      if (ft8Engine) {
+        stopJtcat();
+        if (win && !win.isDestroyed()) win.webContents.send('jtcat-stop-for-remote');
+        console.log('[JTCAT] Phone disconnected (60s grace expired) — engine stopped, audio released');
+      }
+      remoteJtcatQso = null;
+      destroyRemoteAudioWindow();
+      _ssbModeBeforePtt = null;
+      handleRemotePtt(false);
+      const rigType = detectRigType();
+      if (rigType === 'flex' && smartSdr && smartSdr.connected) {
+        smartSdr.cwPttRelease();
+      }
+      // Force CW key port DTR low (key up) on full teardown
+      if (cwKeyPort && cwKeyPort.isOpen) {
+        cwKeyPort.set({ dtr: false }, () => {});
+      }
+      // Delayed safety TX-off: catches VOX re-trigger from audio artifacts
+      // during teardown and any race conditions from FT8 engine shutdown
+      setTimeout(() => {
+        if (cat && cat.connected) cat.setTransmit(false);
+        if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
+      }, 500);
+      setTimeout(() => {
+        if (cat && cat.connected) cat.setTransmit(false);
+        if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
+      }, 2000);
+    }, 60_000);
   });
 
   // CW keyer output: route IambicKeyer key events to radio
