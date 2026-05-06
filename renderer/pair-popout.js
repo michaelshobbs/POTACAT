@@ -43,6 +43,8 @@
   var progressEl = document.getElementById('pp-progress');
   var cardEl = document.getElementById('pp-qr-card');
   var regenBtn = document.getElementById('pp-regen-btn');
+  var shareBtn = document.getElementById('pp-share-btn');
+  var shareToast = document.getElementById('pp-share-toast');
   var closeBtnHeader = document.getElementById('tb-close');
   var closeBtnFooter = document.getElementById('pp-close-btn');
 
@@ -109,12 +111,15 @@
     fallbackNoteEl.style.display = 'none';
   }
 
-  async function generate() {
+  async function generate(opts) {
+    opts = opts || {};
     if (ttlInterval) { clearInterval(ttlInterval); ttlInterval = null; }
     regenBtn.disabled = true;
-    regenBtn.textContent = 'Generating…';
+    regenBtn.textContent = opts.share ? 'Preparing share link…' : 'Generating…';
+    if (shareBtn) shareBtn.disabled = true;
+    if (shareToast) shareToast.style.display = 'none';
     try {
-      var r = await window.api.echocatCreatePairingQr({});
+      var r = await window.api.echocatCreatePairingQr(opts);
       // Diagnostic: log the response shape so a user with DevTools open
       // can see exactly what came back. (K3SBP 2026-05-05: users were
       // reporting blank fields with no error banner; this surfaces the
@@ -259,11 +264,20 @@
       }
       tick();
       ttlInterval = setInterval(tick, 1000);
+
+      // Friend-share path: copy the URL to clipboard right away so the
+      // user can paste it into iMessage/Signal/etc. The toast confirms
+      // it's there; the QR + manual fields stay populated as a backup.
+      if (opts.share && r.qrText) {
+        copyText(r.qrText, null);
+        if (shareToast) shareToast.style.display = '';
+      }
     } catch (err) {
       showError('Pairing QR failed: ' + (err.message || err));
     } finally {
       regenBtn.disabled = false;
       regenBtn.textContent = 'Regenerate';
+      if (shareBtn) shareBtn.disabled = false;
     }
   }
 
@@ -271,6 +285,7 @@
   // for older Electron builds that don't expose the modern API.
   function copyText(text, btn) {
     function done() {
+      if (!btn) return; // share-toast caller; no button to flash
       var prev = btn.textContent;
       btn.textContent = 'Copied';
       setTimeout(function() { btn.textContent = prev; }, 1200);
@@ -301,7 +316,10 @@
     });
   });
 
-  regenBtn.addEventListener('click', generate);
+  regenBtn.addEventListener('click', function() { generate({}); });
+  if (shareBtn) {
+    shareBtn.addEventListener('click', function() { generate({ share: true }); });
+  }
   closeBtnHeader.addEventListener('click', function() { window.api.close(); });
   closeBtnFooter.addEventListener('click', function() { window.api.close(); });
 

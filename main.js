@@ -12333,8 +12333,15 @@ app.whenReady().then(() => {
       return { error: 'Pairing QR generator missing. If you\'re running POTACAT from source, run exactly: npm install (no other arguments) in the POTACAT directory. If you installed via .dmg / .exe / .AppImage, this should never happen — please file a bug report.' };
     }
     let pairingToken;
+    // Friend-share callers ask for a longer TTL so the recipient
+    // has time to act on the link from messaging without it
+    // expiring while the message sits in their notifications.
+    const tokenTtlMs = opts.share ? 60 * 60 * 1000 : undefined;
     try {
-      pairingToken = remoteServer.createPairingToken({ deviceLabel: opts.deviceLabel || '' });
+      pairingToken = remoteServer.createPairingToken({
+        deviceLabel: opts.deviceLabel || '',
+        ttlMs: tokenTtlMs,
+      });
     } catch (err) {
       console.error('[Echo CAT] createPairingToken failed:', err.message);
       sendCatLog('[Pair QR] FAILED — createPairingToken threw: ' + (err.message || err));
@@ -12412,7 +12419,8 @@ app.whenReady().then(() => {
       fingerprint,
       host: wsUrl,
       hostname,
-      ttlSeconds: 5 * 60,
+      ttlSeconds: tokenTtlMs ? Math.floor(tokenTtlMs / 1000) : 5 * 60,
+      shareMode: !!opts.share,
       warn: softWarn || '',
     };
   });
