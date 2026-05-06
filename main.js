@@ -6428,6 +6428,12 @@ function connectRemote() {
     pttSafetyTimeout: settings.remotePttTimeout || 180,
     rendererPath: path.join(app.getAppPath(), 'renderer'),
     certDir: app.getPath('userData'),
+    // User-provided publicly-trusted cert (e.g. Tailscale-issued LE
+    // via `tailscale cert <hostname>`). When both paths are set,
+    // the server uses these instead of generating self-signed —
+    // iOS trusts Tailscale certs natively, no pinning needed.
+    userCertPath: settings.echocatTlsCertPath || null,
+    userKeyPath: settings.echocatTlsKeyPath || null,
   });
 
   // KiwiSDR bridge — must be inside connectRemote() so listeners survive reconnect
