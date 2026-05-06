@@ -3538,6 +3538,64 @@ if (window.api.onEchocatPairedDevices) {
 }
 echocatRefreshPairedList();
 
+// Tailscale cert UI: refreshes status, runs `tailscale cert` on click.
+// Without a publicly-trusted cert, iOS rejects the self-signed cert at
+// the TLS layer (NSAllowsLocalNetworking neuters NSAllowsArbitraryLoads),
+// so pairing fails with "network request failed" — no amount of SAN
+// tweaking helps. Tailscale's free Let's Encrypt cert sidesteps that.
+const echocatTsStatus = document.getElementById('echocat-ts-status');
+const echocatTsCertBtn = document.getElementById('echocat-ts-cert-btn');
+async function echocatRefreshTailscaleStatus() {
+  if (!echocatTsStatus || !echocatTsCertBtn) return;
+  let s;
+  try {
+    s = await window.api.echocatTailscaleStatus();
+  } catch (err) {
+    echocatTsStatus.textContent = 'Tailscale: status check failed.';
+    echocatTsCertBtn.disabled = true;
+    return;
+  }
+  if (!s.installed) {
+    echocatTsStatus.innerHTML = 'Tailscale not detected. Install <a href="https://tailscale.com/download" target="_blank" style="color:#4fc3f7;">Tailscale</a> and sign in, then enable HTTPS Certificates in your <a href="https://login.tailscale.com/admin/dns" target="_blank" style="color:#4fc3f7;">admin console</a>.';
+    echocatTsCertBtn.disabled = true;
+    echocatTsCertBtn.textContent = 'Set up';
+    return;
+  }
+  if (!s.certCached) {
+    echocatTsStatus.textContent = `Tailscale: ${s.hostname}. Cert not yet issued — click Set up.`;
+    echocatTsCertBtn.disabled = false;
+    echocatTsCertBtn.textContent = 'Set up';
+    return;
+  }
+  const expiry = s.certExpiresAt ? s.certExpiresAt.slice(0, 10) : 'unknown';
+  echocatTsStatus.textContent = `Tailscale: ${s.hostname}. Cert ready, expires ${expiry} (${s.daysLeft} days).`;
+  echocatTsCertBtn.disabled = false;
+  echocatTsCertBtn.textContent = 'Renew';
+}
+if (echocatTsCertBtn) {
+  echocatTsCertBtn.addEventListener('click', async () => {
+    echocatTsCertBtn.disabled = true;
+    const prev = echocatTsCertBtn.textContent;
+    echocatTsCertBtn.textContent = 'Issuing…';
+    if (echocatTsStatus) echocatTsStatus.textContent = 'Issuing cert via Tailscale (can take up to a minute the first time)…';
+    try {
+      const r = await window.api.echocatIssueTailscaleCert();
+      if (!r.ok) {
+        if (echocatTsStatus) echocatTsStatus.textContent = `Failed: ${r.error}`;
+        echocatTsCertBtn.disabled = false;
+        echocatTsCertBtn.textContent = prev;
+        return;
+      }
+      await echocatRefreshTailscaleStatus();
+    } catch (err) {
+      if (echocatTsStatus) echocatTsStatus.textContent = `Failed: ${err.message || err}`;
+      echocatTsCertBtn.disabled = false;
+      echocatTsCertBtn.textContent = prev;
+    }
+  });
+}
+echocatRefreshTailscaleStatus();
+
 // Club Station Mode event handlers
 setClubMode.addEventListener('change', () => {
   clubConfig.classList.toggle('hidden', !setClubMode.checked);

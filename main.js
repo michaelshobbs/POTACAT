@@ -12153,6 +12153,51 @@ app.whenReady().then(() => {
   ipcMain.handle('get-rig-models', () => getModelList());
   ipcMain.handle('get-sdr-directory', () => require('./lib/sdr-directory').STATIONS);
 
+  // --- Tailscale TLS cert IPC ---
+  // Settings → ECHOCAT shows a "Set up secure connection via
+  // Tailscale" button. Click runs `tailscale cert <hostname>` and
+  // caches the result; pairing then uses a publicly-trusted LE cert
+  // that iOS accepts natively (no pinning, no ATS quirks).
+  ipcMain.handle('echocat-tailscale-status', async () => {
+    const { tailscaleStatus, loadCachedTailscaleCert } = require('./lib/remote-server');
+    const certDir = app.getPath('userData');
+    const ts = tailscaleStatus();
+    const cached = loadCachedTailscaleCert(certDir);
+    return {
+      installed: !!ts,
+      hostname: ts ? ts.hostname : null,
+      backendState: ts ? ts.backendState : null,
+      certCached: !!cached,
+      certExpiresAt: cached ? cached.validTo.toISOString() : null,
+      daysLeft: cached ? Math.floor(cached.daysLeft) : null,
+    };
+  });
+
+  ipcMain.handle('echocat-issue-tailscale-cert', async () => {
+    const { tailscaleStatus, issueTailscaleCert } = require('./lib/remote-server');
+    const certDir = app.getPath('userData');
+    const ts = tailscaleStatus();
+    if (!ts) {
+      return { ok: false, error: 'Tailscale is not running. Install Tailscale and sign in, then try again.' };
+    }
+    sendCatLog(`[Tailscale] Issuing cert for ${ts.hostname}…`);
+    try {
+      issueTailscaleCert(certDir, ts.hostname);
+    } catch (err) {
+      sendCatLog(`[Tailscale] Cert issuance failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+    sendCatLog(`[Tailscale] Cert issued for ${ts.hostname}.`);
+    // Restart ECHOCAT so the new cert is loaded. If it wasn't
+    // running, this is a no-op the next time the user enables it.
+    if (remoteServer && remoteServer.running) {
+      sendCatLog('[Tailscale] Restarting ECHOCAT to load new cert…');
+      try { await remoteServer.stop(); } catch {}
+      connectRemote();
+    }
+    return { ok: true, hostname: ts.hostname };
+  });
+
   // --- Mobile-app pairing IPC ---
   // The desktop UI calls these from the Settings → ECHOCAT → "Pair
   // Mobile App" section. The QR is generated server-side so the
