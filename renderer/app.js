@@ -3631,7 +3631,8 @@ async function echocatRefreshTailscaleStatus() {
   }
   const expiry = s.certExpiresAt ? s.certExpiresAt.slice(0, 10) : 'unknown';
   echocatTsStatus.innerHTML =
-    `Tailscale: <code>${s.hostname}</code>. TLS cert ready, expires ${expiry} (${s.daysLeft} days).`;
+    `Tailscale: <code>${s.hostname}</code>. TLS cert ready, valid until ${expiry} (${s.daysLeft} days). ` +
+    `<span style="color:#888;">Auto-renews when fewer than 14 days remain.</span>`;
 }
 echocatRefreshTailscaleStatus();
 // Refresh whenever the user opens the Settings dialog so a state
