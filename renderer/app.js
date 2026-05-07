@@ -8135,6 +8135,7 @@ quickLightMode.addEventListener('change', async () => {
   if (popoutOpen) window.api.sendPopoutTheme(light ? 'light' : 'dark');
   if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(light ? 'light' : 'dark');
   window.api.logPopoutTheme(light ? 'light' : 'dark');
+  if (window.api.pairPopoutTheme) window.api.pairPopoutTheme(light ? 'light' : 'dark');
   if (actmapPopoutOpen) window.api.actmapPopoutTheme(light ? 'light' : 'dark');
   if (spotsPopoutOpen) window.api.sendSpotsPopoutTheme(light ? 'light' : 'dark');
   if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(light ? 'light' : 'dark');

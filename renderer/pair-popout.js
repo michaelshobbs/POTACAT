@@ -35,6 +35,19 @@
     if (ctrls) ctrls.style.display = 'none';
   }
 
+  // Theme follows the main window. Hydrate from settings on first
+  // open, then listen for live toggles so the popout flips when the
+  // user changes themes mid-session.
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+  }
+  if (window.api.onTheme) window.api.onTheme(applyTheme);
+  if (window.api.getSettings) {
+    window.api.getSettings().then(function(s) {
+      if (s && s.lightMode) applyTheme('light');
+    }).catch(function() {});
+  }
+
   var imgEl = document.getElementById('pp-qr-img');
   var svgEl = document.getElementById('pp-qr-svg');
   var fallbackNoteEl = document.getElementById('pp-qr-fallback-note');

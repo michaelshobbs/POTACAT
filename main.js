@@ -10339,6 +10339,10 @@ app.whenReady().then(() => {
     pairPopoutWin.setMenuBarVisibility(false);
     pairPopoutWin.loadFile(path.join(__dirname, 'renderer', 'pair-popout.html'));
     pairPopoutWin.on('closed', () => { pairPopoutWin = null; });
+    pairPopoutWin.webContents.on('did-finish-load', () => {
+      if (!pairPopoutWin || pairPopoutWin.isDestroyed()) return;
+      pairPopoutWin.webContents.send('pair-popout-theme', settings.lightMode ? 'light' : 'dark');
+    });
     pairPopoutWin.webContents.on('before-input-event', (_e, input) => {
       if (input.key === 'F12' && input.type === 'keyDown') {
         pairPopoutWin.webContents.toggleDevTools();
@@ -10346,6 +10350,13 @@ app.whenReady().then(() => {
     });
   });
   ipcMain.on('pair-popout-close', () => { if (pairPopoutWin && !pairPopoutWin.isDestroyed()) pairPopoutWin.close(); });
+  // Live theme relay — main window's light/dark toggle propagates
+  // immediately to an open pair popout.
+  ipcMain.on('pair-popout-theme', (_e, theme) => {
+    if (pairPopoutWin && !pairPopoutWin.isDestroyed()) {
+      pairPopoutWin.webContents.send('pair-popout-theme', theme);
+    }
+  });
 
   // Relay colorblind mode to pop-outs and panadapter integrations
   ipcMain.on('colorblind-mode', (_e, enabled) => {
