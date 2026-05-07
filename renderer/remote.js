@@ -1876,7 +1876,7 @@
   }
 
   // Map spot mode to filter category
-  var KNOWN_MODES = new Set(['CW', 'SSB', 'FT8', 'FT4', 'FM', 'RTTY', 'PSK31', 'FREEDV']);
+  var KNOWN_MODES = new Set(['CW', 'SSB', 'FT8', 'FT4', 'JS8', 'FM', 'RTTY', 'PSK31', 'FREEDV']);
   function spotModeCategory(mode) {
     if (!mode) return 'other';
     var m = mode.toUpperCase();
@@ -4326,7 +4326,7 @@
 
   function defaultRst(mode) {
     const m = (mode || '').toUpperCase();
-    if (m === 'CW' || m === 'FT8' || m === 'FT4' || m === 'FT2' || m === 'RTTY' || m === 'PSK31' || m === 'PSK') return '599';
+    if (m === 'CW' || m === 'FT8' || m === 'FT4' || m === 'FT2' || m === 'JS8' || m === 'RTTY' || m === 'PSK31' || m === 'PSK') return '599';
     return '59';
   }
 
@@ -4571,7 +4571,7 @@
   // button worked because spot data already carries normalized ADIF
   // modes; the VFO full-view LOG button used currentMode directly,
   // which is what the rig reports.
-  const LOG_MODE_OPTIONS = ['SSB','CW','FT8','FT4','FT2','FM','RTTY','PSK31','AM'];
+  const LOG_MODE_OPTIONS = ['SSB','CW','FT8','FT4','FT2','JS8','FM','RTTY','PSK31','AM'];
   function aliasModeForLogSheet(rawMode) {
     const m = (rawMode || '').toUpperCase();
     if (!m) return 'SSB';

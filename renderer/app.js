@@ -2044,13 +2044,21 @@ rigSaveBtn.addEventListener('click', async () => {
 });
 
 // --- Multi-select dropdowns ---
+// "Digital (all)" group preset: tap once to set all five common
+// digital modes; tap again (when fully selected) to clear them.
+// CW omitted (Morse classification debate); FREEDV omitted (digital
+// voice handled separately); SSTV omitted (image, separate workflow).
+// Mirrors the iOS app's DIGITAL_MODE_GROUP for parity.
+const DIGITAL_MODE_GROUP = ['FT8', 'FT4', 'FT2', 'RTTY', 'PSK31', 'JS8'];
+
 function initMultiDropdown(container, label, onChange) {
   const btn = container.querySelector('.multi-dropdown-btn');
   const menu = container.querySelector('.multi-dropdown-menu');
   const textEl = container.querySelector('.multi-dropdown-text');
   const allCb = menu.querySelector('input[value="all"]');
   const radioCb = menu.querySelector('input[value="radio"]');  // only exists on band & mode filters
-  const itemCbs = [...menu.querySelectorAll('input:not([value="all"]):not([value="radio"])')];
+  const presetCb = menu.querySelector('input[value="preset:digital"]'); // only on mode filter
+  const itemCbs = [...menu.querySelectorAll('input:not([value="all"]):not([value="radio"]):not([value^="preset:"])')];
 
   container._updateText = updateText;
 
@@ -2086,6 +2094,17 @@ function initMultiDropdown(container, label, onChange) {
 
   menu.addEventListener('click', (e) => e.stopPropagation());
 
+  // Sync the preset checkbox to whether all DIGITAL_MODE_GROUP modes
+  // are currently selected. Called whenever individual items change.
+  function syncPreset() {
+    if (!presetCb) return;
+    const all = DIGITAL_MODE_GROUP.every((m) => {
+      const cb = itemCbs.find((c) => c.value === m);
+      return cb && cb.checked;
+    });
+    presetCb.checked = all;
+  }
+
   menu.addEventListener('change', (e) => {
     if (scanning) stopScan();
     const cb = e.target;
@@ -2102,6 +2121,18 @@ function initMultiDropdown(container, label, onChange) {
         // Unchecking Radio with nothing else -> fall back to All
         allCb.checked = true;
       }
+    } else if (cb.value === 'preset:digital') {
+      // Digital (all): set/clear the five digital modes as a group.
+      // Preserve any non-digital modes the user already had set.
+      const turnOn = cb.checked;
+      allCb.checked = false;
+      if (radioCb) radioCb.checked = false;
+      DIGITAL_MODE_GROUP.forEach((m) => {
+        const target = itemCbs.find((c) => c.value === m);
+        if (target) target.checked = turnOn;
+      });
+      // If turning OFF and nothing's left, fall back to All
+      if (!turnOn && itemCbs.every((c) => !c.checked)) allCb.checked = true;
     } else {
       // Uncheck "All" and "Radio" when toggling individual items
       allCb.checked = false;
@@ -2114,11 +2145,13 @@ function initMultiDropdown(container, label, onChange) {
         itemCbs.forEach((c) => { c.checked = false; });
       }
     }
+    syncPreset();
     updateText();
     if (onChange) { onChange(); } else { render(); }
     if (typeof saveFilters === 'function') saveFilters();
   });
 
+  syncPreset();
   updateText();
 }
 
@@ -2135,7 +2168,7 @@ function getDropdownValues(container) {
       return mode ? new Set([mode]) : null;
     }
   }
-  const checked = [...container.querySelectorAll('input:not([value="all"]):not([value="radio"]):checked')];
+  const checked = [...container.querySelectorAll('input:not([value="all"]):not([value="radio"]):not([value^="preset:"]):checked')];
   if (checked.length === 0) return null;
   return new Set(checked.map((cb) => cb.value));
 }
