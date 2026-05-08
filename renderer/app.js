@@ -3568,6 +3568,34 @@ if (echocatPairBtn) {
     window.api.pairPopoutOpen();
   });
 }
+
+// Restart audio bridge — for RDP-shuffle recovery. Casey hit this
+// repeatedly: shack PC running fine, RDP in from phone, audio paths
+// get scrambled by Windows' device-routing changes, and the only fix
+// was to walk over to the PC and restart apps. Now it's one click,
+// remote-friendly.
+const echocatRestartAudioBtn = document.getElementById('echocat-restart-audio-btn');
+const echocatRestartAudioStatus = document.getElementById('echocat-restart-audio-status');
+if (echocatRestartAudioBtn) {
+  echocatRestartAudioBtn.addEventListener('click', async () => {
+    echocatRestartAudioBtn.disabled = true;
+    const prev = echocatRestartAudioBtn.textContent;
+    echocatRestartAudioBtn.textContent = 'Restarting…';
+    if (echocatRestartAudioStatus) echocatRestartAudioStatus.textContent = '';
+    try {
+      const r = await window.api.echocatRestartAudio();
+      if (echocatRestartAudioStatus) {
+        echocatRestartAudioStatus.textContent = r && r.ok
+          ? (r.note || 'Audio bridge rebuilt. Phone should hear rig audio again within a few seconds.')
+          : ('Restart failed: ' + (r && r.error ? r.error : 'unknown error'));
+      }
+    } catch (err) {
+      if (echocatRestartAudioStatus) echocatRestartAudioStatus.textContent = 'Restart failed: ' + (err.message || err);
+    }
+    echocatRestartAudioBtn.disabled = false;
+    echocatRestartAudioBtn.textContent = prev;
+  });
+}
 if (window.api.onEchocatPairedDevices) {
   window.api.onEchocatPairedDevices(() => echocatRefreshPairedList());
 }

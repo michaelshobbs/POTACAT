@@ -2153,6 +2153,14 @@
             </div>
             <button type="button" id="echocat-pair-btn" style="padding:4px 12px;">Open pairing QR</button>
           </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;">
+            <div>
+              <strong>Restart audio</strong>
+              <span class="help-text" style="display:block;">Rebuilds the ECHOCAT audio bridge and re-grabs the rig audio device. Fixes the RDP audio-shuffle issue where the phone hears silence after you Remote-Desktop into the shack PC.</span>
+              <span id="echocat-restart-audio-status" class="help-text" style="display:block;color:var(--accent-blue);"></span>
+            </div>
+            <button type="button" id="echocat-restart-audio-btn" style="padding:4px 12px;">Restart audio</button>
+          </div>
           <div style="margin-top:10px;">
             <strong style="font-size:12px;">Paired devices:</strong>
             <ul id="echocat-paired-list" style="list-style:none;padding:0;margin:6px 0 0;font-size:12px;">

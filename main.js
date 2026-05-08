@@ -12573,6 +12573,35 @@ app.whenReady().then(() => {
     return { ok };
   });
 
+  // Reset audio devices — tears down + rebuilds the ECHOCAT WebRTC
+  // bridge AND the JTCAT audio capture in one go. Fixes the RDP
+  // audio-shuffle problem: when Windows enters/leaves an RDP session,
+  // it can swap the default audio device and invalidate handles, but
+  // running apps keep pointing at the now-stale device. Same shape
+  // hits WSJT-X. The "fix" used to be "drive home and restart everything";
+  // this button is the remote equivalent. K3SBP 2026-05-08.
+  ipcMain.handle('echocat-restart-audio', async () => {
+    sendCatLog('[Echo CAT] Audio reset requested — tearing down bridge + JTCAT capture');
+    // Tear down the ECHOCAT WebRTC bridge (the call also nudges JTCAT
+    // to restart its capture via the existing restart-jtcat-audio IPC).
+    destroyRemoteAudioWindow();
+    // Rebuild after a short delay so the OS releases the prior device
+    // handles before we re-grab them. 600 ms is a comfortable margin
+    // — Windows DAX/WASAPI device tear-down is async.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    if (settings.enableRemote) {
+      try {
+        await startRemoteAudio();
+        sendCatLog('[Echo CAT] Audio bridge rebuilt.');
+        return { ok: true };
+      } catch (err) {
+        sendCatLog('[Echo CAT] Audio bridge rebuild failed: ' + (err.message || err));
+        return { ok: false, error: err.message || String(err) };
+      }
+    }
+    return { ok: true, note: 'ECHOCAT not enabled — JTCAT audio kicked, no bridge rebuilt.' };
+  });
+
   // Ragchew log pop-out: combined callsign lookup. Returns the QRZ result
   // (live network call) AND the past-QSO history from the in-memory index in
   // a single round-trip so the pop-out only debounces one IPC.
