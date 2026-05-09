@@ -11,4 +11,8 @@ This directory holds open requests for the iOS POTACAT app (React Native, repo `
 
 ## Open
 
-- [psk31-rtty-modes.md](psk31-rtty-modes.md) — Add PSK31 (new) and RTTY (partial) to spot filters, log sheet, mode picker.
+- [audio-restart-button.md](audio-restart-button.md) — Add a "Restart audio" button (and optional auto-banner) that fires the `restart-audio` WS message; recovers the iOS audio bridge from RDP-induced silence without leaving the phone.
+
+## Shipped
+
+- [psk31-rtty-modes.md](psk31-rtty-modes.md) — Add PSK31 (new) and RTTY (partial) to spot filters, log sheet, mode picker. Shipped 2026-05-06.
