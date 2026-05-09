@@ -12583,22 +12583,62 @@ app.whenReady().then(() => {
   //
   // Both the desktop button (IPC) and the iOS app (WebSocket
   // 'restart-audio' message) drive this same helper.
+  // Idempotent across racing triggers (desktop button, mobile WS,
+  // future auto-restart on health signal): if a restart is already in
+  // flight, all callers get the same eventual result.
+  let _restartInFlight = null;
+
+  // Circuit breaker. Three restarts inside 60 seconds means the
+  // underlying device is genuinely broken (DAX misconfigured, sound
+  // driver dead, etc.) — restarting again won't fix it and will burn
+  // phone battery. Abort with a diagnostic error the iOS app can
+  // surface to the user.
+  const _restartHistory = [];
+  const RESTART_CIRCUIT_LIMIT = 3;
+  const RESTART_CIRCUIT_WINDOW_MS = 60_000;
+
   async function restartEchoAudio(source) {
-    const tag = source === 'mobile' ? '[Echo CAT/mobile]' : '[Echo CAT]';
-    sendCatLog(`${tag} Audio reset requested — tearing down bridge + JTCAT capture`);
-    destroyRemoteAudioWindow();
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    if (settings.enableRemote) {
-      try {
-        await startRemoteAudio();
-        sendCatLog(`${tag} Audio bridge rebuilt.`);
-        return { ok: true };
-      } catch (err) {
-        sendCatLog(`${tag} Audio bridge rebuild failed: ` + (err.message || err));
-        return { ok: false, error: err.message || String(err) };
-      }
+    if (_restartInFlight) return _restartInFlight;
+
+    const now = Date.now();
+    while (_restartHistory.length && now - _restartHistory[0] > RESTART_CIRCUIT_WINDOW_MS) {
+      _restartHistory.shift();
     }
-    return { ok: true, note: 'ECHOCAT not enabled — JTCAT audio kicked, no bridge rebuilt.' };
+    if (_restartHistory.length >= RESTART_CIRCUIT_LIMIT) {
+      const tag = source === 'mobile' ? '[Echo CAT/mobile]' : '[Echo CAT]';
+      const note = `${_restartHistory.length} restarts in last 60s; aborting auto-recovery`;
+      sendCatLog(`${tag} Audio restart suppressed: ${note}`);
+      return {
+        ok: false,
+        error: 'audio bridge keeps failing — check DAX configuration',
+        note,
+      };
+    }
+    _restartHistory.push(now);
+
+    _restartInFlight = (async () => {
+      const tag = source === 'mobile' ? '[Echo CAT/mobile]' : '[Echo CAT]';
+      sendCatLog(`${tag} Audio reset requested — tearing down bridge + JTCAT capture`);
+      destroyRemoteAudioWindow();
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      if (settings.enableRemote) {
+        try {
+          await startRemoteAudio();
+          sendCatLog(`${tag} Audio bridge rebuilt.`);
+          return { ok: true };
+        } catch (err) {
+          sendCatLog(`${tag} Audio bridge rebuild failed: ` + (err.message || err));
+          return { ok: false, error: err.message || String(err) };
+        }
+      }
+      return { ok: true, note: 'ECHOCAT not enabled — JTCAT audio kicked, no bridge rebuilt.' };
+    })();
+
+    try {
+      return await _restartInFlight;
+    } finally {
+      _restartInFlight = null;
+    }
   }
 
   ipcMain.handle('echocat-restart-audio', () => restartEchoAudio('desktop'));
