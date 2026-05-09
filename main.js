@@ -147,6 +147,7 @@ const { DxClusterClient } = require('./lib/dxcluster');
 const { RbnClient } = require('./lib/rbn');
 const { appendQso, buildAdifRecord, appendImportedQso, appendRawQso, rewriteAdifFile, ADIF_HEADER, adifField } = require('./lib/adif-writer');
 const { SmartSdrClient, setColorblindMode: setSmartSdrColorblind } = require('./lib/smartsdr');
+const { SmartSdrAudio } = require('./lib/smartsdr-audio');
 const { TciClient, setTciColorblindMode } = require('./lib/tci');
 const { AntennaGeniusClient } = require('./lib/antenna-genius');
 const { TunerGeniusClient } = require('./lib/tuner-genius');
@@ -348,6 +349,7 @@ let rbnFlushTimer = null; // throttle timer for RBN -> renderer updates
 let rbnWatchSpots = []; // RBN spots for watchlist callsigns, merged into main table
 let smartSdr = null;
 let smartSdrPushTimer = null; // throttle timer for SmartSDR spot pushes
+let smartSdrAudio = null;     // separate non-GUI TCP for slice audio (DAX-free path)
 let tciClient = null;
 let tciPushTimer = null; // throttle timer for TCI spot pushes
 let agClient = null; // 4O3A Antenna Genius client
@@ -3643,36 +3645,15 @@ function connectSmartSdr() {
   smartSdr.on('connected', () => {
     _sdrErrorLogged = false;
     sendCatLog('SmartSDR API connected (port 4992) — rig controls active');
-    // If the user opted into the DAX-free audio path, subscribe to
-    // slice 0's audio. Stream ID lands via 'stream_id=' on a TCP
-    // reply line; subsequent VITA-49 packets carrying that stream
-    // ID land on the meter UDP socket and emit 'audio-frame'.
+    // DAX-free audio path lives on a SEPARATE TCP connection (non-GUI
+    // client) — see startSmartSdrAudio() below. The primary client
+    // here is GUI-bound for CW + spots and can't subscribe to audio.
     if (settings.audioSource === 'smartsdr') {
-      setTimeout(() => smartSdr.subscribeSliceAudio(0), 800);
+      // Small delay so the primary's bind/setup logs land in order.
+      setTimeout(() => startSmartSdrAudio(), 1000);
     }
   });
   smartSdr.on('log', (msg) => sendCatLog('[SmartSDR] ' + msg));
-  smartSdr.on('audio-frame', (opusBuffer) => {
-    // Forward to the hidden audio bridge window for WebCodecs decode
-    // + WebRTC track injection. Mirrors the kiwi-audio-frame pattern.
-    if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-      remoteAudioWin.webContents.send('smartsdr-audio-frame', {
-        opus: opusBuffer.buffer.slice(opusBuffer.byteOffset, opusBuffer.byteOffset + opusBuffer.byteLength),
-        sampleRate: 24000,
-      });
-    }
-  });
-  smartSdr.on('audio-fallback', () => {
-    // SmartSDR audio subscription succeeded at the protocol level but
-    // no packets arrived in 5 s — fall back to DAX so the user isn't
-    // stranded with silence. Settings stay flipped to 'smartsdr' so
-    // the user can see + investigate; we just stop trying for this
-    // session.
-    sendCatLog('[SmartSDR] Audio subscription produced no packets — falling back to DAX path. Investigate Flex firmware / slice config.');
-    if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-      remoteAudioWin.webContents.send('smartsdr-audio-fallback');
-    }
-  });
   smartSdr.on('disconnected', () => {
     sendCatLog('SmartSDR API disconnected — rig controls (ATU/filter/gain) unavailable');
   });
@@ -3732,6 +3713,46 @@ function disconnectSmartSdr() {
     smartSdr.disconnect();
     smartSdr = null;
   }
+  stopSmartSdrAudio();
+}
+
+// --- DAX-free audio path -----------------------------------------------
+// Opens a second TCP connection to the same Flex on port 4992. This
+// connection is intentionally NOT `client bind`-ed, so it stays a
+// non-GUI client and is allowed to subscribe to slice audio. Frames
+// arrive on a dedicated UDP socket inside SmartSdrAudio and get
+// forwarded to the renderer for WebCodecs decode + WebRTC track swap.
+function startSmartSdrAudio() {
+  if (smartSdrAudio) return; // already running
+  const activeRig = (settings.rigs || []).find(r => r.id === settings.activeRigId);
+  const sdrHost = (activeRig && activeRig.flexApiHost) || settings.smartSdrHost || (settings.catTarget && settings.catTarget.host) || '127.0.0.1';
+  smartSdrAudio = new SmartSdrAudio();
+  smartSdrAudio.on('log', (msg) => sendCatLog('[SmartSDR-Audio] ' + msg));
+  smartSdrAudio.on('audio-frame', (opusBuffer) => {
+    if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+      remoteAudioWin.webContents.send('smartsdr-audio-frame', {
+        opus: opusBuffer.buffer.slice(opusBuffer.byteOffset, opusBuffer.byteOffset + opusBuffer.byteLength),
+        sampleRate: 24000,
+      });
+    }
+  });
+  smartSdrAudio.on('audio-fallback', ({ reason }) => {
+    sendCatLog(`[SmartSDR-Audio] Falling back to DAX path (${reason}).`);
+    if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+      remoteAudioWin.webContents.send('smartsdr-audio-fallback');
+    }
+    // Tear the dedicated TCP/UDP down — no point holding it open if
+    // we've fallen back. User can re-toggle the setting to retry.
+    stopSmartSdrAudio();
+  });
+  sendCatLog(`[SmartSDR-Audio] Starting non-GUI audio client → ${sdrHost}:4992`);
+  smartSdrAudio.start(sdrHost, 0);
+}
+
+function stopSmartSdrAudio() {
+  if (!smartSdrAudio) return;
+  try { smartSdrAudio.stop(); } catch {}
+  smartSdrAudio = null;
 }
 
 let lastSmartSdrPush = 0;
@@ -13205,16 +13226,13 @@ app.whenReady().then(() => {
       connectSmartSdr(); // needsSmartSdr() decides whether to actually connect
     }
 
-    // DAX-free audio path: subscribe / unsubscribe slice audio when
-    // the user toggles. SmartSDR client must already be connected for
-    // subscribe to take effect; if it's not, subscribeSliceAudio logs
-    // and bails. Connect-time auto-subscribe in the 'connected' handler
-    // covers the case where the user enables this and then connects.
-    if (audioSourceChanged && smartSdr) {
+    // DAX-free audio path: start / stop the dedicated non-GUI audio
+    // client. The primary SmartSDR connection (GUI-bound) stays put.
+    if (audioSourceChanged) {
       if (settings.audioSource === 'smartsdr') {
-        smartSdr.subscribeSliceAudio(0);
+        startSmartSdrAudio();
       } else {
-        smartSdr.unsubscribeSliceAudio();
+        stopSmartSdrAudio();
         // Tell the renderer to drop the synthetic SmartSDR track and
         // revert the WebRTC sender to the local DAX stream.
         if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
