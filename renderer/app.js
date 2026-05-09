@@ -918,6 +918,7 @@ const setRemotePttTimeout = document.getElementById('set-remote-ptt-timeout');
 const setSsbOverData = document.getElementById('set-ssb-over-data');
 const setRemoteCwEnabled = document.getElementById('set-remote-cw-enabled');
 const setRemoteStun = document.getElementById('set-remote-stun');
+const setAudioSource = document.getElementById('set-audio-source');
 const setCwKeyPort = document.getElementById('set-cw-key-port');
 const remoteUrlDisplay = document.getElementById('remote-url-display');
 // Mobile-app pairing UI (Phase 0 of native app)
@@ -8760,6 +8761,7 @@ async function openSettingsDialog(tab) {
   }
   setRemoteCwEnabled.checked = !!s.remoteCwEnabled;
   setRemoteStun.checked = !!s.remoteStun;
+  if (setAudioSource) setAudioSource.value = (s.audioSource === 'smartsdr') ? 'smartsdr' : 'dax';
   // Populate CW Key Port datalist
   try {
     const cwPorts = await window.api.listPorts();
@@ -8984,6 +8986,7 @@ settingsSave.addEventListener('click', async () => {
   const ssbOverDataVal = setSsbOverData.checked;
   const remoteCwEnabledVal = setRemoteCwEnabled.checked;
   const remoteStunVal = setRemoteStun.checked;
+  const audioSourceVal = setAudioSource ? setAudioSource.value : 'dax';
   const cwKeyPortVal = setCwKeyPort.value || '';
   const launcherEnabled = setEnableLauncher ? setEnableLauncher.checked : false;
   const clubModeEnabled = setClubMode.checked;
@@ -9195,6 +9198,7 @@ settingsSave.addEventListener('click', async () => {
     ssbOverData: ssbOverDataVal,
     remoteCwEnabled: remoteCwEnabledVal,
     remoteStun: remoteStunVal,
+    audioSource: audioSourceVal,
     cwKeyPort: cwKeyPortVal,
     enableLauncher: launcherEnabled,
     clubMode: clubModeEnabled,

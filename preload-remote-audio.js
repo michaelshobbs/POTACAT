@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('api', {
   // frames via `kiwi-audio-frame`.
   onKiwiActive: (cb) => ipcRenderer.on('kiwi-active', (_e, active) => cb(active)),
   onKiwiAudioFrame: (cb) => ipcRenderer.on('kiwi-audio-frame', (_e, frame) => cb(frame)),
+  // SmartSDR DAX-free audio path. Opus frames arrive as Buffer; the
+  // bridge decodes via WebCodecs and feeds a synthetic MediaStream to
+  // the WebRTC peer.
+  onSmartSdrAudioFrame: (cb) => ipcRenderer.on('smartsdr-audio-frame', (_e, frame) => cb(frame)),
+  onSmartSdrAudioFallback: (cb) => ipcRenderer.on('smartsdr-audio-fallback', () => cb()),
   // TX state — used to mute Kiwi audio while transmitting so the
   // mobile listener doesn't hear their own TX echoed through the
   // remote SDR. (VK3AWA original report; the desktop and browser
