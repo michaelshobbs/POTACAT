@@ -400,22 +400,22 @@ window.api.onTxState((state) => {
 });
 
 // --- SmartSDR DAX-free audio path -------------------------------------
-// Receives Opus-encoded VITA-49 audio from the Flex via main, decodes
-// using Chromium's WebCodecs AudioDecoder (no native dep, no npm
-// addon), and feeds the PCM into a synthetic MediaStream that takes
-// the place of the DAX-sourced rig audio at the WebRTC sender.
+// Receives uncompressed Float32 PCM frames from the Flex (decoded from
+// VITA-49 DAX RX packets in main → lib/smartsdr-audio.js), feeds them
+// into a synthetic MediaStream, and swaps the WebRTC sender's track
+// to that stream so the phone hears Flex audio with DAX out of the
+// path entirely.
 //
-// Architecture mirrors the Kiwi/WebSDR path above: persistent gain
+// Mirrors the Kiwi/WebSDR direct-PCM pattern above: persistent gain
 // node so TX-mute can silence it during transmit, MediaStreamAudio-
 // DestinationNode produces the .stream we hand to replaceTrack().
+// No WebCodecs needed — DAX RX audio is uncompressed PCM, not Opus.
 let smartCtx = null;
 let smartDest = null;
 let smartStream = null;
 let smartGain = null;
-let smartDecoder = null;
-let smartNextPlayTime = 0;
 let smartActive = false;
-let smartFrameTs = 0; // monotonic µs counter for WebCodecs frame ordering
+let smartNextPlayTime = 0;
 
 function ensureSmartTrack() {
   if (smartStream && smartDest) {
@@ -437,12 +437,7 @@ function ensureSmartTrack() {
 
 function tearDownSmartGraph() {
   smartNextPlayTime = 0;
-  smartFrameTs = 0;
   smartActive = false;
-  if (smartDecoder) {
-    try { smartDecoder.close(); } catch {}
-    smartDecoder = null;
-  }
   if (smartGain) {
     try { smartGain.disconnect(); } catch {}
     smartGain = null;
@@ -458,60 +453,12 @@ function tearDownSmartGraph() {
   smartStream = null;
 }
 
-function ensureSmartDecoder() {
-  if (smartDecoder) return smartDecoder;
-  if (typeof AudioDecoder === 'undefined') {
-    window.api.sendAudioStatus({ error: 'WebCodecs AudioDecoder unavailable in this Electron build — SmartSDR audio path needs Chromium 94+.' });
-    return null;
-  }
-  smartDecoder = new AudioDecoder({
-    output: (audioData) => {
-      try {
-        if (!smartCtx || !smartDest) return;
-        // AudioData → Float32Array PCM. Flex audio is mono Opus at
-        // 24 kHz; allocate a buffer of that exact shape and copy.
-        const numFrames = audioData.numberOfFrames;
-        const sr = audioData.sampleRate;
-        const pcm = new Float32Array(numFrames);
-        audioData.copyTo(pcm, { planeIndex: 0, format: 'f32' });
-        audioData.close();
-        if (smartCtx.state === 'suspended') smartCtx.resume().catch(() => {});
-        const buf = smartCtx.createBuffer(1, numFrames, sr);
-        buf.getChannelData(0).set(pcm);
-        const src = smartCtx.createBufferSource();
-        src.buffer = buf;
-        src.connect(smartGain || smartDest);
-        const now = smartCtx.currentTime;
-        if (smartNextPlayTime < now || smartNextPlayTime > now + 0.5) {
-          smartNextPlayTime = now;
-        }
-        src.start(smartNextPlayTime);
-        smartNextPlayTime += numFrames / sr;
-      } catch (err) {
-        window.api.sendAudioStatus({ error: 'SmartSDR audio output failed: ' + err.message });
-      }
-    },
-    error: (err) => {
-      window.api.sendAudioStatus({ error: 'SmartSDR audio decode error: ' + err.message });
-    },
-  });
-  smartDecoder.configure({
-    codec: 'opus',
-    sampleRate: 24000,
-    numberOfChannels: 1,
-  });
-  return smartDecoder;
-}
-
 window.api.onSmartSdrAudioFrame((frame) => {
-  if (!frame || !frame.opus) return;
+  if (!frame || !frame.pcm || !frame.pcm.length) return;
   const track = ensureSmartTrack();
-  if (!track) return;
-  const dec = ensureSmartDecoder();
-  if (!dec) return;
-  // First frame triggers the WebRTC sender swap from rig (DAX) audio
-  // to the synthetic SmartSDR-direct stream. From here on, the phone
-  // hears Flex audio without DAX in the path.
+  if (!track || !smartCtx) return;
+
+  // First frame swaps the WebRTC sender to the synthetic stream.
   if (!smartActive && pc && audioSender) {
     smartActive = true;
     audioSender.replaceTrack(track).catch((e) => {
@@ -519,25 +466,29 @@ window.api.onSmartSdrAudioFrame((frame) => {
       smartActive = false;
     });
   }
-  try {
-    // Flex frames are 20 ms Opus at 24 kHz; advance the µs cursor by
-    // that fixed amount per frame so WebCodecs gets monotonically
-    // increasing timestamps even if the source clock drifts.
-    dec.decode(new EncodedAudioChunk({
-      type: 'key', // Opus frames are independently decodable
-      timestamp: smartFrameTs,
-      data: new Uint8Array(frame.opus),
-    }));
-    smartFrameTs += 20_000;
-  } catch (err) {
-    window.api.sendAudioStatus({ error: 'SmartSDR audio decode submit failed: ' + err.message });
+
+  if (smartCtx.state === 'suspended') smartCtx.resume().catch(() => {});
+
+  const sr = frame.sampleRate || 24000;
+  const pcm = new Float32Array(frame.pcm);
+  const buf = smartCtx.createBuffer(1, pcm.length, sr);
+  buf.getChannelData(0).set(pcm);
+  const src = smartCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(smartGain || smartDest);
+  // Schedule packets back-to-back. Cap the cursor at 500 ms ahead of
+  // now so a network burst can't strand us seconds behind real time.
+  const now = smartCtx.currentTime;
+  if (smartNextPlayTime < now || smartNextPlayTime > now + 0.5) {
+    smartNextPlayTime = now;
   }
+  src.start(smartNextPlayTime);
+  smartNextPlayTime += pcm.length / sr;
 });
 
 window.api.onSmartSdrAudioFallback(() => {
-  // Subscription protocol succeeded but no audio packets in 5 s.
-  // Tear the synthetic graph down and let the existing DAX-sourced
-  // localStream stay on the WebRTC sender.
+  // Subscribe failed or watchdog tripped — drop the synthetic graph
+  // and put DAX (localStream) back on the WebRTC sender.
   tearDownSmartGraph();
   if (pc && audioSender && localStream) {
     const rigTrack = localStream.getAudioTracks()[0];

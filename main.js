@@ -3728,11 +3728,14 @@ function startSmartSdrAudio() {
   const sdrHost = (activeRig && activeRig.flexApiHost) || settings.smartSdrHost || (settings.catTarget && settings.catTarget.host) || '127.0.0.1';
   smartSdrAudio = new SmartSdrAudio();
   smartSdrAudio.on('log', (msg) => sendCatLog('[SmartSDR-Audio] ' + msg));
-  smartSdrAudio.on('audio-frame', (opusBuffer) => {
+  smartSdrAudio.on('audio-frame', ({ pcm, sampleRate }) => {
     if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+      // Send the underlying ArrayBuffer so structured-clone doesn't
+      // copy it through layers. The renderer wraps it back into a
+      // Float32Array on the other side. Mirrors the kiwi pattern.
       remoteAudioWin.webContents.send('smartsdr-audio-frame', {
-        opus: opusBuffer.buffer.slice(opusBuffer.byteOffset, opusBuffer.byteOffset + opusBuffer.byteLength),
-        sampleRate: 24000,
+        pcm: Array.from(pcm),
+        sampleRate,
       });
     }
   });
@@ -3745,8 +3748,9 @@ function startSmartSdrAudio() {
     // we've fallen back. User can re-toggle the setting to retry.
     stopSmartSdrAudio();
   });
-  sendCatLog(`[SmartSDR-Audio] Starting non-GUI audio client → ${sdrHost}:4992`);
-  smartSdrAudio.start(sdrHost, 0);
+  const daxChannel = parseInt(settings.audioDaxChannel, 10) || 1;
+  sendCatLog(`[SmartSDR-Audio] Starting non-GUI audio client → ${sdrHost}:4992 (DAX RX ${daxChannel})`);
+  smartSdrAudio.start(sdrHost, daxChannel);
 }
 
 function stopSmartSdrAudio() {
