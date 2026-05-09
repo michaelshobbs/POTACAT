@@ -12579,27 +12579,42 @@ app.whenReady().then(() => {
   // it can swap the default audio device and invalidate handles, but
   // running apps keep pointing at the now-stale device. Same shape
   // hits WSJT-X. The "fix" used to be "drive home and restart everything";
-  // this button is the remote equivalent. K3SBP 2026-05-08.
-  ipcMain.handle('echocat-restart-audio', async () => {
-    sendCatLog('[Echo CAT] Audio reset requested — tearing down bridge + JTCAT capture');
-    // Tear down the ECHOCAT WebRTC bridge (the call also nudges JTCAT
-    // to restart its capture via the existing restart-jtcat-audio IPC).
+  // this is the remote equivalent. K3SBP 2026-05-08.
+  //
+  // Both the desktop button (IPC) and the iOS app (WebSocket
+  // 'restart-audio' message) drive this same helper.
+  async function restartEchoAudio(source) {
+    const tag = source === 'mobile' ? '[Echo CAT/mobile]' : '[Echo CAT]';
+    sendCatLog(`${tag} Audio reset requested — tearing down bridge + JTCAT capture`);
     destroyRemoteAudioWindow();
-    // Rebuild after a short delay so the OS releases the prior device
-    // handles before we re-grab them. 600 ms is a comfortable margin
-    // — Windows DAX/WASAPI device tear-down is async.
     await new Promise((resolve) => setTimeout(resolve, 600));
     if (settings.enableRemote) {
       try {
         await startRemoteAudio();
-        sendCatLog('[Echo CAT] Audio bridge rebuilt.');
+        sendCatLog(`${tag} Audio bridge rebuilt.`);
         return { ok: true };
       } catch (err) {
-        sendCatLog('[Echo CAT] Audio bridge rebuild failed: ' + (err.message || err));
+        sendCatLog(`${tag} Audio bridge rebuild failed: ` + (err.message || err));
         return { ok: false, error: err.message || String(err) };
       }
     }
     return { ok: true, note: 'ECHOCAT not enabled — JTCAT audio kicked, no bridge rebuilt.' };
+  }
+
+  ipcMain.handle('echocat-restart-audio', () => restartEchoAudio('desktop'));
+
+  // Mobile-triggered restart. Phone sends { type: 'restart-audio' };
+  // desktop runs the same helper and replies with restart-audio-result.
+  remoteServer.on('restart-audio', async () => {
+    const r = await restartEchoAudio('mobile');
+    if (remoteServer && remoteServer.running) {
+      remoteServer.sendToClient({
+        type: 'restart-audio-result',
+        ok: !!r.ok,
+        error: r.error || '',
+        note: r.note || '',
+      });
+    }
   });
 
   // Ragchew log pop-out: combined callsign lookup. Returns the QRZ result
