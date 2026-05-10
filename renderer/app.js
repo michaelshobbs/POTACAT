@@ -2587,11 +2587,11 @@ async function saveBannerQso() {
   const addlRefs = allRefs.slice(1);
 
   // Build sig/sigInfo/ref fields based on type
-  let sig = '', sigInfo = '', potaRef = '', sotaRef = '', wwffRef = '';
+  let sig = '', sigInfo = '', potaRef = '', sotaRef = '', wwffRef = '', llotaRef = '';
   if (type === 'pota' && primaryRef) { sig = 'POTA'; potaRef = primaryRef; sigInfo = primaryRef; }
   else if (type === 'sota' && primaryRef) { sig = 'SOTA'; sotaRef = primaryRef; sigInfo = primaryRef; }
   else if (type === 'wwff' && primaryRef) { sig = 'WWFF'; wwffRef = primaryRef; sigInfo = primaryRef; }
-  else if (type === 'llota' && primaryRef) { sig = 'LLOTA'; sigInfo = primaryRef; }
+  else if (type === 'llota' && primaryRef) { sig = 'LLOTA'; llotaRef = primaryRef; sigInfo = primaryRef; }
   const notes = blNotes.value.trim();
   const commentBase = [notes, sigInfo ? `[${sig} ${sigInfo}]` : ''].filter(Boolean).join(' ');
 
@@ -2640,6 +2640,7 @@ async function saveBannerQso() {
         potaRef,
         sotaRef,
         wwffRef,
+        llotaRef,
         name: qrzInfo ? [cleanQrzName(qrzInfo.nickname) || cleanQrzName(qrzInfo.fname), cleanQrzName(qrzInfo.name)].filter(Boolean).join(' ') : '',
         state: parkLocState || (!sig && qrzInfo ? (qrzInfo.state || '') : ''),
         county: !parkLocState && !sig && qrzInfo && qrzInfo.state && qrzInfo.county ? `${qrzInfo.state},${qrzInfo.county}` : '',
@@ -2676,7 +2677,9 @@ async function saveBannerQso() {
           ...qsoData,
           sigInfo: addlRef,
           potaRef: sig === 'POTA' ? addlRef : qsoData.potaRef,
+          sotaRef: sig === 'SOTA' ? addlRef : qsoData.sotaRef,
           wwffRef: sig === 'WWFF' ? addlRef : qsoData.wwffRef,
+          llotaRef: sig === 'LLOTA' ? addlRef : qsoData.llotaRef,
           comment: addlComment,
           respot: false, wwffRespot: false, llotaRespot: false, dxcRespot: false, respotComment: '',
         };
@@ -7463,15 +7466,16 @@ logSaveBtn.addEventListener('click', async () => {
   let potaRef = '';
   let sotaRef = '';
   let wwffRef = '';
+  let llotaRef = '';
   const { primary: typedRef, additional: addlParks } = parseRefParks(callsign);
   if (logSelectedType && typedRef) {
     if (logSelectedType === 'pota') { sig = 'POTA'; potaRef = typedRef; }
     else if (logSelectedType === 'sota') { sig = 'SOTA'; sotaRef = typedRef; }
     else if (logSelectedType === 'wwff') { sig = 'WWFF'; wwffRef = typedRef; }
-    else if (logSelectedType === 'llota') sig = 'LLOTA';
+    else if (logSelectedType === 'llota') { sig = 'LLOTA'; llotaRef = typedRef; }
     sigInfo = typedRef;
   }
-  // Dual-program: pull every additional program reference the spot was
+  // Multi-type: pull every additional program reference the spot was
   // tagged with during cross-source dedup. The user only chip-picks ONE
   // primary program (e.g. POTA), but a K4FR-style POTA+SOTA spot needs
   // BOTH refs in the ADIF (sigInfo + potaRef from POTA, sotaRef from
@@ -7481,6 +7485,7 @@ logSaveBtn.addEventListener('click', async () => {
     if (!potaRef && currentLogSpot.potaReference) potaRef = currentLogSpot.potaReference;
     if (!sotaRef && currentLogSpot.sotaReference) sotaRef = currentLogSpot.sotaReference;
     if (!wwffRef && currentLogSpot.wwffReference) wwffRef = currentLogSpot.wwffReference;
+    if (!llotaRef && currentLogSpot.llotaReference) llotaRef = currentLogSpot.llotaReference;
   }
 
   // Re-spot state from stored targets
@@ -7555,6 +7560,7 @@ logSaveBtn.addEventListener('click', async () => {
         potaRef,
         sotaRef,
         wwffRef,
+        llotaRef,
         name: logQrzInfo ? [cleanQrzName(logQrzInfo.nickname) || cleanQrzName(logQrzInfo.fname), cleanQrzName(logQrzInfo.name)].filter(Boolean).join(' ') : '',
         // For park/summit activators, use park location instead of QRZ home QTH
         // For POTA activators, use the park's state/grid instead of QRZ home QTH
@@ -7589,7 +7595,9 @@ logSaveBtn.addEventListener('click', async () => {
           ...qsoData,
           sigInfo: addlRef,
           potaRef: sig === 'POTA' ? addlRef : qsoData.potaRef,
+          sotaRef: sig === 'SOTA' ? addlRef : qsoData.sotaRef,
           wwffRef: sig === 'WWFF' ? addlRef : qsoData.wwffRef,
+          llotaRef: sig === 'LLOTA' ? addlRef : qsoData.llotaRef,
           comment: addlComment,
           respot: false,
           wwffRespot: false,

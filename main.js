@@ -5808,6 +5808,14 @@ function connectRemote() {
 
       const sig = data.sig || '';
       const sigInfo = data.sigInfo || '';
+      // Multi-type cross-program refs — iOS/ECHOCAT-Web pass these
+      // when the spot was tagged with secondary OTA programs during
+      // dedup. Desktop popup already does the same. Empty-string
+      // safe: buildAdifRecord skips empty fields.
+      const potaRef = data.potaRef || '';
+      const sotaRef = data.sotaRef || '';
+      const wwffRef = data.wwffRef || '';
+      const llotaRef = data.llotaRef || '';
       const userComment = (data.userComment || '').trim();
       let comment = '';
       if (sigInfo && userComment) comment = `[${sig} ${sigInfo}] ${userComment}`;
@@ -5848,6 +5856,10 @@ function connectRemote() {
         rstRcvd: data.rstRcvd || '59',
         sig,
         sigInfo,
+        potaRef,
+        sotaRef,
+        wwffRef,
+        llotaRef,
         comment,
         // QRZ-derived fields. The state/county branch suppresses the worked
         // op's home QTH on POTA contacts (the park's state goes there
