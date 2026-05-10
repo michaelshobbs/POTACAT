@@ -1355,7 +1355,8 @@ async function loadPrefs() {
       // Restore cross-program references
       if (settings.activatorCrossRefs && Array.isArray(settings.activatorCrossRefs)) {
         activatorCrossRefs = settings.activatorCrossRefs;
-        if (crossRefWwff) for (const xr of activatorCrossRefs) { if (xr.program === 'WWFF') crossRefWwff.value = xr.ref; }
+        if (crossRefSota)  for (const xr of activatorCrossRefs) { if (xr.program === 'SOTA')  crossRefSota.value  = xr.ref; }
+        if (crossRefWwff)  for (const xr of activatorCrossRefs) { if (xr.program === 'WWFF')  crossRefWwff.value  = xr.ref; }
         if (crossRefLlota) for (const xr of activatorCrossRefs) { if (xr.program === 'LLOTA') crossRefLlota.value = xr.ref; }
         updateCrossRefToggle();
       }
@@ -15609,13 +15610,16 @@ function updateHunterParkDisplay() {
 const crossRefWrap = document.getElementById('activator-crossref-wrap');
 const crossRefToggle = document.getElementById('activator-crossref-toggle');
 const crossRefPopover = document.getElementById('activator-crossref-popover');
+const crossRefSota = document.getElementById('activator-crossref-sota');
 const crossRefWwff = document.getElementById('activator-crossref-wwff');
 const crossRefLlota = document.getElementById('activator-crossref-llota');
 
 function rebuildCrossRefs() {
   activatorCrossRefs = [];
+  const sotaVal = crossRefSota ? crossRefSota.value.trim().toUpperCase() : '';
   const wwffVal = crossRefWwff ? crossRefWwff.value.trim().toUpperCase() : '';
   const llotaVal = crossRefLlota ? crossRefLlota.value.trim().toUpperCase() : '';
+  if (sotaVal) activatorCrossRefs.push({ program: 'SOTA', ref: sotaVal });
   if (wwffVal) activatorCrossRefs.push({ program: 'WWFF', ref: wwffVal });
   if (llotaVal) activatorCrossRefs.push({ program: 'LLOTA', ref: llotaVal });
   window.api.saveSettings({ activatorCrossRefs });
@@ -15642,6 +15646,7 @@ if (crossRefToggle) {
     }
   });
 }
+if (crossRefSota) crossRefSota.addEventListener('blur', rebuildCrossRefs);
 if (crossRefWwff) crossRefWwff.addEventListener('blur', rebuildCrossRefs);
 if (crossRefLlota) crossRefLlota.addEventListener('blur', rebuildCrossRefs);
 
@@ -15732,7 +15737,9 @@ async function activatorLogContact() {
     for (const xr of activatorCrossRefs) {
       for (const theirPark of theirParks) {
         const qsoData = { ...baseFields, mySig: xr.program.toUpperCase(), mySigInfo: xr.ref };
-        if (xr.program === 'WWFF') qsoData.myWwffRef = xr.ref;
+        if (xr.program === 'SOTA') qsoData.mySotaRef = xr.ref;
+        else if (xr.program === 'WWFF') qsoData.myWwffRef = xr.ref;
+        else if (xr.program === 'LLOTA') qsoData.myLlotaRef = xr.ref;
         if (theirPark) { qsoData.sig = 'POTA'; qsoData.sigInfo = theirPark.ref; }
         allQsoData.push(qsoData);
       }

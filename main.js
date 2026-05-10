@@ -2695,7 +2695,9 @@ function connectWsjtx() {
         const crossRefs = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
         for (const xr of crossRefs) {
           const xrQso = { ...qsoData, mySig: xr.program.toUpperCase(), mySigInfo: xr.ref, myGridsquare: settings.grid || '' };
-          if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+          if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
+          else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+          else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
           allQsoData.push(xrQso);
           await saveQsoRecord(xrQso);
         }
@@ -2973,7 +2975,9 @@ async function jtcatAutoLog(qso) {
       const crossRefs = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
       for (const xr of crossRefs) {
         const xrQso = { ...qsoData, mySig: (xr.program || 'WWFF').toUpperCase(), mySigInfo: xr.ref, myGridsquare: settings.grid || '' };
-        if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+        if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
+        else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+        else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
         await saveQsoRecord(xrQso);
       }
     } else {
@@ -5921,7 +5925,9 @@ function connectRemote() {
         const crossRefs1 = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
         for (const xr of crossRefs1) {
           const xrQso = { ...qsoData, mySig: xr.program.toUpperCase(), mySigInfo: xr.ref, myGridsquare: myGrid, skipLogbookForward: true };
-          if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+          if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
+          else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+          else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
           await saveQsoRecord(xrQso);
         }
       } else if (settings.appMode === 'activator') {
@@ -5938,7 +5944,9 @@ function connectRemote() {
           const crossRefs2 = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
           for (const xr of crossRefs2) {
             const xrQso = { ...qsoData, mySig: xr.program.toUpperCase(), mySigInfo: xr.ref, myGridsquare: myGrid, skipLogbookForward: true };
-            if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+            if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
+            else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
+            else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
             await saveQsoRecord(xrQso);
           }
         } else {
