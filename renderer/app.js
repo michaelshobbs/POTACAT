@@ -997,10 +997,40 @@ function applyRstMode() {
   document.querySelectorAll('.rst-n1mm-mode').forEach(el => el.classList.toggle('hidden', n1mmRst));
 }
 const logTypePicker = document.getElementById('log-type-picker');
-const logRefInputSection = document.getElementById('log-ref-input-section');
-const logRefInput = document.getElementById('log-ref-input');
-const logRefName = document.getElementById('log-ref-name');
-let logSelectedType = '';
+const logMultiRefSection = document.getElementById('log-multi-ref-section');
+// Per-program ref inputs — multi-type spots show multiple rows simultaneously.
+// Order here matches priority for SIG/SIG_INFO selection (POTA > SOTA > WWFF > LLOTA).
+const LOG_OTA_TYPES = ['pota', 'sota', 'wwff', 'llota'];
+const logRefInputs = {
+  pota: document.getElementById('log-ref-pota'),
+  sota: document.getElementById('log-ref-sota'),
+  wwff: document.getElementById('log-ref-wwff'),
+  llota: document.getElementById('log-ref-llota'),
+};
+const logRefNames = {
+  pota: document.getElementById('log-ref-name-pota'),
+  sota: document.getElementById('log-ref-name-sota'),
+  wwff: document.getElementById('log-ref-name-wwff'),
+  llota: document.getElementById('log-ref-name-llota'),
+};
+const logRefRows = {};
+LOG_OTA_TYPES.forEach(t => {
+  logRefRows[t] = logMultiRefSection.querySelector(`.log-ref-row[data-type="${t}"]`);
+});
+// Active OTA types — multi-toggle. DX is mutually exclusive with these
+// (DX-only contacts have no OTA ref). For multi-type spots (POTA + SOTA),
+// multiple types are active simultaneously and SIG/SIG_INFO is derived
+// from priority order (POTA > SOTA > WWFF > LLOTA) per Casey decision #1.
+let logActiveTypes = new Set();
+let logDxActive = false;
+// Legacy compat: code that reads logSelectedType gets the priority-derived
+// primary type. Same shape as before, just computed instead of stored.
+function getLogPrimaryType() {
+  if (logDxActive) return 'dx';
+  for (const t of LOG_OTA_TYPES) if (logActiveTypes.has(t)) return t;
+  return '';
+}
+let logSelectedType = ''; // kept for code that reads it; updated in selectLogType
 const logComment = document.getElementById('log-comment');
 const logSaveBtn = document.getElementById('log-save');
 const logCancelBtn = document.getElementById('log-cancel');
@@ -6032,14 +6062,14 @@ document.getElementById('dx-command-send').addEventListener('click', sendDxComma
 
 // --- Log Type Picker ---
 const LOG_TYPE_SOURCE_MAP = { pota: 'pota', sota: 'sota', wwff: 'wwff', llota: 'llota', dx: 'dxc' };
-const LOG_TYPE_PLACEHOLDERS = { pota: 'e.g. 1234 or 1234, 5678 (auto-prefix from call)', sota: 'e.g. W6/CT-001', wwff: 'e.g. KFF-1234 or KFF-1234, KFF-5678', llota: 'e.g. US-0001 or US-0001, US-0002' };
 
-function selectLogType(type) {
-  const prevType = logSelectedType;
-  logSelectedType = type;
+// Repaint the chip picker so each active type's chip is highlighted.
+// Multi-type spots have multiple OTA chips lit simultaneously; DX is
+// exclusive with the OTA group.
+function refreshLogTypeChips() {
   logTypePicker.querySelectorAll('.log-type-chip').forEach(chip => {
     const ct = chip.dataset.type;
-    const isActive = ct === type;
+    const isActive = (ct === 'dx') ? logDxActive : logActiveTypes.has(ct);
     chip.classList.toggle('active', isActive);
     if (isActive) {
       const color = ct === 'dx' ? SOURCE_COLORS_ACTIVE.dxc : SOURCE_COLORS_ACTIVE[ct] || '#888';
@@ -6050,35 +6080,77 @@ function selectLogType(type) {
       chip.style.color = '';
     }
   });
-  // Show/hide reference input (not for DX or no selection)
-  const showRef = type && type !== 'dx';
-  logRefInputSection.classList.toggle('hidden', !showRef);
-  if (showRef) {
-    logRefInput.placeholder = LOG_TYPE_PLACEHOLDERS[type] || '';
+  // Multi-ref section visible whenever any OTA type is active.
+  logMultiRefSection.classList.toggle('hidden', logActiveTypes.size === 0);
+  // Per-program rows show only for active types.
+  for (const t of LOG_OTA_TYPES) {
+    logRefRows[t].style.display = logActiveTypes.has(t) ? '' : 'none';
   }
-  if (!showRef) {
-    logRefInput.value = '';
-    logRefName.textContent = '';
-  } else if (prevType && prevType !== type) {
-    // User switched between programs (e.g. POTA → SOTA on a dual-program
-    // spot). Don't carry the old program's reference into the new field —
-    // KK4DF saw "incorrect SOTA reference" because the POTA ref stayed in
-    // the input after switching to SOTA. Auto-fill from the spot's
-    // preserved <type>Reference if one exists, otherwise clear.
+  // Legacy compat: surface the priority-primary type for code that reads it.
+  logSelectedType = getLogPrimaryType();
+}
+
+// Activate a specific OTA type, optionally pre-filling its ref input from
+// the current spot. Used both by chip clicks and by openLogPopup.
+function activateLogType(type, opts = {}) {
+  if (type === 'dx') {
+    logDxActive = true;
+    logActiveTypes.clear();
+    LOG_OTA_TYPES.forEach(t => { logRefInputs[t].value = ''; logRefNames[t].textContent = ''; });
+    refreshLogTypeChips();
+    updateLogRespot();
+    return;
+  }
+  if (!LOG_OTA_TYPES.includes(type)) return;
+  logDxActive = false;
+  const wasActive = logActiveTypes.has(type);
+  logActiveTypes.add(type);
+  // Pre-fill from spot context only if input is empty (don't clobber user edits).
+  if (!wasActive && !logRefInputs[type].value && currentLogSpot) {
     const refField = type + 'Reference';
     const nameField = type + 'ParkName';
-    if (currentLogSpot && currentLogSpot[refField]) {
-      logRefInput.value = currentLogSpot[refField];
-      logRefName.textContent = currentLogSpot[nameField] || '';
-    } else if (currentLogSpot && type === currentLogSpot.source && currentLogSpot.reference) {
-      // Spot's primary reference matches the new type
-      logRefInput.value = currentLogSpot.reference;
-      logRefName.textContent = currentLogSpot.parkName || '';
-    } else {
-      logRefInput.value = '';
-      logRefName.textContent = '';
+    if (currentLogSpot[refField]) {
+      logRefInputs[type].value = currentLogSpot[refField];
+      logRefNames[type].textContent = currentLogSpot[nameField] || '';
+    } else if (type === currentLogSpot.source && currentLogSpot.reference) {
+      logRefInputs[type].value = currentLogSpot.reference;
+      logRefNames[type].textContent = currentLogSpot.parkName || '';
     }
   }
+  refreshLogTypeChips();
+  updateLogRespot();
+  // Auto-focus the input that just appeared (only when invoked from a chip
+  // click, not a programmatic activate during openLogPopup).
+  if (opts.focus) logRefInputs[type].focus();
+}
+
+function deactivateLogType(type) {
+  if (type === 'dx') {
+    logDxActive = false;
+    refreshLogTypeChips();
+    updateLogRespot();
+    return;
+  }
+  if (!LOG_OTA_TYPES.includes(type)) return;
+  logActiveTypes.delete(type);
+  logRefInputs[type].value = '';
+  logRefNames[type].textContent = '';
+  refreshLogTypeChips();
+  updateLogRespot();
+}
+
+// Single-arg shim used by openLogPopup's existing call sites — clears
+// everything then activates the given primary type. Multi-type spots
+// activate additional types separately after.
+function selectLogType(type) {
+  logActiveTypes.clear();
+  logDxActive = false;
+  LOG_OTA_TYPES.forEach(t => { logRefInputs[t].value = ''; logRefNames[t].textContent = ''; });
+  if (type) {
+    if (type === 'dx') logDxActive = true;
+    else if (LOG_OTA_TYPES.includes(type)) activateLogType(type);
+  }
+  refreshLogTypeChips();
   updateLogRespot();
 }
 
@@ -6088,19 +6160,16 @@ function updateLogRespot() {
   const respotLabel = document.getElementById('log-respot-label');
   const respotComment = document.getElementById('log-respot-comment');
   const respotCommentLabel = document.getElementById('log-respot-comment-label');
-  const ref = logRefInput.value.trim().toUpperCase();
   const targets = [];
   if (!myCallsign) { /* no respot without callsign */ }
-  else if (logSelectedType === 'pota' && ref) {
-    targets.push('pota');
-    // Check for dual-park WWFF
-    if (currentLogSpot && currentLogSpot.wwffReference) targets.push('wwff');
-  } else if (logSelectedType === 'wwff' && ref) {
-    targets.push('wwff');
-  } else if (logSelectedType === 'llota' && ref) {
-    targets.push('llota');
-  } else if (logSelectedType === 'dx' && clusterConnected) {
+  else if (logDxActive && clusterConnected) {
     targets.push('dxc');
+  } else {
+    // Multi-type: each active OTA type with a non-empty input is a respot
+    // candidate. POTA/WWFF/LLOTA all have respot endpoints; SOTA does not.
+    if (logActiveTypes.has('pota') && logRefInputs.pota.value.trim()) targets.push('pota');
+    if (logActiveTypes.has('wwff') && logRefInputs.wwff.value.trim()) targets.push('wwff');
+    if (logActiveTypes.has('llota') && logRefInputs.llota.value.trim()) targets.push('llota');
   }
 
   if (targets.length) {
@@ -6127,33 +6196,44 @@ function updateLogRespot() {
   }
 }
 
-// Type chip click handlers
+// Type chip click handlers — multi-toggle for OTA types, exclusive for DX.
 logTypePicker.addEventListener('click', (e) => {
   const chip = e.target.closest('.log-type-chip');
   if (!chip) return;
   const type = chip.dataset.type;
-  selectLogType(logSelectedType === type ? '' : type);
+  if (type === 'dx') {
+    if (logDxActive) { logDxActive = false; refreshLogTypeChips(); updateLogRespot(); }
+    else activateLogType('dx');
+  } else {
+    if (logActiveTypes.has(type)) deactivateLogType(type);
+    else activateLogType(type, { focus: true });
+  }
 });
 
-// Debounced reference lookup — supports comma-separated refs
-let logRefLookupTimer = null;
-logRefInput.addEventListener('input', () => {
-  clearTimeout(logRefLookupTimer);
-  const raw = logRefInput.value.trim().toUpperCase();
-  if (raw.length < 3) { logRefName.textContent = ''; updateLogRespot(); return; }
-  logRefLookupTimer = setTimeout(async () => {
-    const refs = raw.split(',').map(r => r.trim()).filter(Boolean);
-    const names = [];
-    for (const ref of refs) {
-      if (ref.length < 3) continue;
-      try {
-        const park = await window.api.getPark(ref);
-        if (park && park.name) names.push(`${ref}: ${park.name}`);
-      } catch { /* skip */ }
-    }
-    logRefName.textContent = names.join('\n');
-    updateLogRespot();
-  }, 400);
+// Debounced reference lookup — supports comma-separated refs.
+// Mirrors the old single-input lookup, now per-program.
+const logRefLookupTimers = {};
+LOG_OTA_TYPES.forEach(type => {
+  const input = logRefInputs[type];
+  const nameEl = logRefNames[type];
+  input.addEventListener('input', () => {
+    clearTimeout(logRefLookupTimers[type]);
+    const raw = input.value.trim().toUpperCase();
+    if (raw.length < 3) { nameEl.textContent = ''; updateLogRespot(); return; }
+    logRefLookupTimers[type] = setTimeout(async () => {
+      const refs = raw.split(',').map(r => r.trim()).filter(Boolean);
+      const names = [];
+      for (const ref of refs) {
+        if (ref.length < 3) continue;
+        try {
+          const park = await window.api.getPark(ref);
+          if (park && park.name) names.push(`${ref}: ${park.name}`);
+        } catch { /* skip */ }
+      }
+      nameEl.textContent = names.join('\n');
+      updateLogRespot();
+    }, 400);
+  });
 });
 
 // --- Quick Log (Ctrl+L) ---
@@ -7254,13 +7334,16 @@ function freqKhzToBand(khz) {
 
 let currentLogSpot = null;
 
-/** Parse comma-separated park refs from the reference input.
+/** Parse comma-separated refs from a specific program's input.
  *  Auto-prepends POTA country prefix for bare numbers based on callsign.
- *  Returns { primary, additional } where additional is the 2nd+ refs. */
-function parseRefParks(callsign) {
-  const raw = logRefInput.value.trim().toUpperCase();
+ *  Returns { primary, additional } where additional is the 2nd+ refs.
+ *  Per-program version — multi-type spots have one of these per active type. */
+function parseRefParksFor(type, callsign) {
+  const input = logRefInputs[type];
+  if (!input) return { primary: '', additional: [] };
+  const raw = input.value.trim().toUpperCase();
   let refs = raw.split(',').map(r => r.trim()).filter(Boolean);
-  if (logSelectedType === 'pota') {
+  if (type === 'pota') {
     refs = refs.map(r => autoPotaPrefix(r, callsign));
   }
   return { primary: refs[0] || '', additional: refs.slice(1) };
@@ -7316,25 +7399,43 @@ function openLogPopup(spot) {
   if (n1mmSentEl) n1mmSentEl.maxLength = rstMaxLen;
   if (n1mmRcvdEl) n1mmRcvdEl.maxLength = rstMaxLen;
 
-  // Type picker: map spot source to chip type
+  // Type picker: detect EVERY OTA program the spot is tagged with and
+  // activate them all simultaneously. Multi-type spots (POTA + SOTA on
+  // the same activator) show all relevant program rows visible by
+  // default — Casey decision #3, no expand-click required.
   const sourceToType = { pota: 'pota', sota: 'sota', wwff: 'wwff', llota: 'llota', dxc: 'dx' };
-  const mappedType = sourceToType[spot.source] || '';
-  // Pre-fill reference before selectLogType so respot can see it
-  logRefInput.value = spot.reference || '';
-  logRefName.textContent = spot.parkName || '';
-  // Surface every secondary program ref the dedup tagged the spot with —
-  // user can see at a glance that K4FR is on POTA *and* SOTA, both refs go
-  // into the ADIF on save regardless of which chip the user picks.
-  const extraRefs = [];
-  if (spot.wwffReference && spot.source !== 'wwff') extraRefs.push(`WWFF: ${spot.wwffReference}${spot.wwffParkName ? ' — ' + spot.wwffParkName : ''}`);
-  if (spot.sotaReference && spot.source !== 'sota') extraRefs.push(`SOTA: ${spot.sotaReference}${spot.sotaParkName ? ' — ' + spot.sotaParkName : ''}`);
-  if (spot.llotaReference && spot.source !== 'llota') extraRefs.push(`LLOTA: ${spot.llotaReference}${spot.llotaParkName ? ' — ' + spot.llotaParkName : ''}`);
-  if (spot.potaReference && spot.source !== 'pota') extraRefs.push(`POTA: ${spot.potaReference}`);
-  if (spot.tilesReference && spot.source !== 'tiles') extraRefs.push(`Tiles: ${spot.tilesReference}`);
-  if (extraRefs.length) {
-    logRefName.textContent += (logRefName.textContent ? '\n' : '') + extraRefs.join('\n');
+  const mappedPrimary = sourceToType[spot.source] || '';
+
+  // Reset state, then activate each detected type. The chip-state logic
+  // pulls refs from spot.<type>Reference + spot.parkName.
+  logActiveTypes.clear();
+  logDxActive = false;
+  LOG_OTA_TYPES.forEach(t => { logRefInputs[t].value = ''; logRefNames[t].textContent = ''; });
+
+  if (mappedPrimary === 'dx') {
+    logDxActive = true;
+  } else if (mappedPrimary && LOG_OTA_TYPES.includes(mappedPrimary)) {
+    // Activate primary type and seed it with the spot's primary reference.
+    logActiveTypes.add(mappedPrimary);
+    logRefInputs[mappedPrimary].value = spot.reference || '';
+    logRefNames[mappedPrimary].textContent = spot.parkName || '';
   }
-  selectLogType(mappedType);
+  // Activate every secondary program the dedup tagged. Each secondary
+  // ref/name lives on spot.<type>Reference / spot.<type>ParkName and was
+  // populated by the cross-source merge in main.js.
+  for (const t of LOG_OTA_TYPES) {
+    if (t === mappedPrimary) continue;
+    const refField = t + 'Reference';
+    const nameField = t + 'ParkName';
+    if (spot[refField]) {
+      logActiveTypes.add(t);
+      logRefInputs[t].value = spot[refField];
+      logRefNames[t].textContent = spot[nameField] || '';
+    }
+  }
+
+  refreshLogTypeChips();
+  updateLogRespot();
 
   logComment.value = '';
 
@@ -7459,34 +7560,46 @@ logSaveBtn.addEventListener('click', async () => {
   const timeOn = time.replace(':', '');     // HHMM
   const band = freqKhzToBand(frequency);
 
-  // Determine SIG/SIG_INFO from type picker + reference input
-  // Supports comma-separated refs for two-fer/three-fer (e.g. US-1234, US-5678)
-  let sig = '';
-  let sigInfo = '';
-  let potaRef = '';
-  let sotaRef = '';
-  let wwffRef = '';
-  let llotaRef = '';
-  const { primary: typedRef, additional: addlParks } = parseRefParks(callsign);
-  if (logSelectedType && typedRef) {
-    if (logSelectedType === 'pota') { sig = 'POTA'; potaRef = typedRef; }
-    else if (logSelectedType === 'sota') { sig = 'SOTA'; sotaRef = typedRef; }
-    else if (logSelectedType === 'wwff') { sig = 'WWFF'; wwffRef = typedRef; }
-    else if (logSelectedType === 'llota') { sig = 'LLOTA'; llotaRef = typedRef; }
-    sigInfo = typedRef;
+  // Read all per-program inputs. Each can be empty, single, or
+  // comma-separated for n-fer of that type.
+  const parsedByType = {};
+  for (const t of LOG_OTA_TYPES) {
+    if (logActiveTypes.has(t)) {
+      parsedByType[t] = parseRefParksFor(t, callsign);
+    }
   }
-  // Multi-type: pull every additional program reference the spot was
-  // tagged with during cross-source dedup. The user only chip-picks ONE
-  // primary program (e.g. POTA), but a K4FR-style POTA+SOTA spot needs
-  // BOTH refs in the ADIF (sigInfo + potaRef from POTA, sotaRef from
-  // SOTA). KK4DF report — without this, picking the SOTA chip silently
-  // dropped the POTA reference even though it was right there on the spot.
-  if (currentLogSpot) {
-    if (!potaRef && currentLogSpot.potaReference) potaRef = currentLogSpot.potaReference;
-    if (!sotaRef && currentLogSpot.sotaReference) sotaRef = currentLogSpot.sotaReference;
-    if (!wwffRef && currentLogSpot.wwffReference) wwffRef = currentLogSpot.wwffReference;
-    if (!llotaRef && currentLogSpot.llotaReference) llotaRef = currentLogSpot.llotaReference;
+  // Determine primary SIG/SIG_INFO by hard-coded priority order
+  // (POTA > SOTA > WWFF > LLOTA — Casey decision #1). The primary type
+  // also drives the n-fer record loop: one ADIF record per primary ref,
+  // each carrying secondary _REF fields with comma-joined additional
+  // values from the other active programs.
+  const SIG_BY_TYPE = { pota: 'POTA', sota: 'SOTA', wwff: 'WWFF', llota: 'LLOTA' };
+  let primaryType = '';
+  for (const t of LOG_OTA_TYPES) {
+    if (parsedByType[t] && parsedByType[t].primary) { primaryType = t; break; }
   }
+  let sig = primaryType ? SIG_BY_TYPE[primaryType] : '';
+  let sigInfo = primaryType ? parsedByType[primaryType].primary : '';
+  // Per-program primary refs (first ref in each comma-list)
+  let potaRef  = parsedByType.pota  ? parsedByType.pota.primary  : '';
+  let sotaRef  = parsedByType.sota  ? parsedByType.sota.primary  : '';
+  let wwffRef  = parsedByType.wwff  ? parsedByType.wwff.primary  : '';
+  let llotaRef = parsedByType.llota ? parsedByType.llota.primary : '';
+  // The primary type's additional refs (for the n-fer loop below).
+  const addlParks = primaryType && parsedByType[primaryType] ? parsedByType[primaryType].additional : [];
+  // Secondary types' additional refs get joined into the _REF fields
+  // alongside their primary, so e.g. a POTA-primary 1-fer + 2 WWFF refs
+  // produces WWFF_REF=KFF-1234,KFF-5678 on every POTA record.
+  function joinRefs(type) {
+    if (!parsedByType[type]) return '';
+    const all = [parsedByType[type].primary, ...parsedByType[type].additional].filter(Boolean);
+    return all.join(',');
+  }
+  // Override single-ref fields with comma-joined when secondary type has n-fer.
+  if (primaryType !== 'pota'  && parsedByType.pota)  potaRef  = joinRefs('pota');
+  if (primaryType !== 'sota'  && parsedByType.sota)  sotaRef  = joinRefs('sota');
+  if (primaryType !== 'wwff'  && parsedByType.wwff)  wwffRef  = joinRefs('wwff');
+  if (primaryType !== 'llota' && parsedByType.llota) llotaRef = joinRefs('llota');
 
   // Re-spot state from stored targets
   const respotCheckbox = document.getElementById('log-respot');
@@ -7508,8 +7621,11 @@ logSaveBtn.addEventListener('click', async () => {
     window.api.saveSettings({ respotDefault: respotCheckbox.checked });
   }
 
-  // Determine WWFF reference for respot
-  const respotWwffRef = (currentLogSpot && currentLogSpot.wwffReference) ? currentLogSpot.wwffReference : (logSelectedType === 'wwff' ? typedRef : '');
+  // Determine WWFF reference for respot — first WWFF ref from the
+  // user's input wins, fall back to the original spot's WWFF ref.
+  const respotWwffRef = (parsedByType.wwff && parsedByType.wwff.primary)
+    ? parsedByType.wwff.primary
+    : ((currentLogSpot && currentLogSpot.wwffReference) ? currentLogSpot.wwffReference : '');
   // Resolve {op_firstname} from QRZ data for the primary callsign; fall back to "OM"
   const primaryCall = callsigns[0] || '';
   const primaryQrz = qrzData.get(primaryCall.split('/')[0]);
@@ -7580,7 +7696,7 @@ logSaveBtn.addEventListener('click', async () => {
         wwffRespot: ci === 0 && wantsWwffRespot,
         wwffReference: ci === 0 && wantsWwffRespot ? respotWwffRef : '',
         llotaRespot: ci === 0 && wantsLlotaRespot,
-        llotaReference: ci === 0 && wantsLlotaRespot && logSelectedType === 'llota' ? typedRef : '',
+        llotaReference: ci === 0 && wantsLlotaRespot && parsedByType.llota ? parsedByType.llota.primary : '',
         dxcRespot: ci === 0 && wantsDxcRespot,
         respotComment: ci === 0 && (wantsRespot || wantsWwffRespot || wantsLlotaRespot || wantsDxcRespot) ? commentText : '',
       };
