@@ -29,6 +29,25 @@ contextBridge.exposeInMainWorld('api', {
   echocatIssueTailscaleCert: () => ipcRenderer.invoke('echocat-issue-tailscale-cert'),
   echocatPickFile: (opts) => ipcRenderer.invoke('echocat-pick-file', opts || {}),
   echocatRestartAudio: () => ipcRenderer.invoke('echocat-restart-audio'),
+  // --- ALSA bridge (Linux-only; resolves false / [] on Win+Mac) ----------
+  // Exposed for Linux SDR users who need to pick raw hw:/plughw: subdevices
+  // that Chromium's enumerateDevices hides. The capture flow is opt-in: the
+  // renderer's audio-device dropdown merges these entries in alongside the
+  // browser's list, and the consumer (FT8/SSTV/ECHOCAT mic) starts a session
+  // when the user actually picks one.
+  alsaAvailable: () => ipcRenderer.invoke('alsa-available'),
+  alsaListDevices: () => ipcRenderer.invoke('alsa-list-devices'),
+  alsaLoadError: () => ipcRenderer.invoke('alsa-load-error'),
+  alsaStartCapture: (opts) => ipcRenderer.invoke('alsa-start-capture', opts || {}),
+  alsaStopCapture: (sessionId) => ipcRenderer.invoke('alsa-stop-capture', sessionId),
+  onAlsaAudioChunk: (channel, cb) => {
+    // Multi-session: caller passes the channel name returned from
+    // alsaStartCapture so concurrent streams demux cleanly. Returns a
+    // function the caller invokes to unsubscribe (no leaks across stops).
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on(channel, handler);
+    return () => ipcRenderer.removeListener(channel, handler);
+  },
   onEchocatPairedDevices: (cb) => ipcRenderer.on('echocat-paired-devices', (_e, list) => cb(list)),
   pairPopoutOpen: () => ipcRenderer.send('pair-popout-open'),
   getSettings: () => ipcRenderer.invoke('get-settings'),

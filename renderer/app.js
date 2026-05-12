@@ -3923,6 +3923,54 @@ function renderClubSchedule(data) {
   });
 }
 
+// Merge ALSA hw:/plughw: devices (Linux only, via the alsa_native addon)
+// into Chromium's enumerateDevices output. Adds an "ALSA hardware" group
+// separator and prefixes the deviceId with "alsa:" so the consumer side
+// (Phase 2 — see lib/alsa.js startCapture wiring) can recognize that
+// these devices need the addon's read path rather than getUserMedia.
+//
+// Returns the augmented list in the same shape as enumerateDevices(): an
+// array of { deviceId, kind, label } objects. Safe to call on any
+// platform — returns the browser list verbatim when ALSA isn't available.
+async function enumerateAudioDevicesAugmented() {
+  let browser = [];
+  try {
+    browser = await navigator.mediaDevices.enumerateDevices();
+  } catch (e) {
+    console.warn('enumerateDevices failed:', e.message);
+  }
+  if (!window.api || !window.api.alsaAvailable) return browser;
+  try {
+    const have = await window.api.alsaAvailable();
+    if (!have) return browser;
+    const alsaList = await window.api.alsaListDevices();
+    if (!Array.isArray(alsaList) || alsaList.length === 0) return browser;
+    // Group-separator option (purely visual — the deviceId is empty so
+    // the picker can't accidentally select it). Inserted after the
+    // browser-supplied entries so the existing PulseAudio/PipeWire
+    // devices remain on top — same behavior as MSHV's two-section list.
+    const augmented = browser.slice();
+    augmented.push({ deviceId: '__alsa_separator__', kind: 'audioinput',  label: '── ALSA hardware (raw) ──', isAlsaSeparator: true });
+    augmented.push({ deviceId: '__alsa_separator__', kind: 'audiooutput', label: '── ALSA hardware (raw) ──', isAlsaSeparator: true });
+    for (const d of alsaList) {
+      augmented.push({
+        deviceId: 'alsa:' + d.id,
+        kind: d.kind,
+        label: d.label,
+        groupId: 'alsa',
+        // Pass-through metadata used by future consumer wiring (card +
+        // device numbers let JTCAT/SSTV pick sensible default chunk
+        // sizes per device class).
+        alsaCard: d.card, alsaDevice: d.device, alsaIsPlughw: d.isPlughw,
+      });
+    }
+    return augmented;
+  } catch (err) {
+    console.warn('ALSA enumerate failed:', err && err.message);
+    return browser;
+  }
+}
+
 async function populateRigAudioDevices(restoreIn, restoreOut) {
   // getUserMedia is used purely to unlock device labels. If it fails (mic
   // blocked in Windows privacy settings, no mic present, etc.) we still want
@@ -3939,14 +3987,15 @@ async function populateRigAudioDevices(restoreIn, restoreOut) {
     console.warn('getUserMedia failed — device labels may be hidden:', e.message);
   }
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
+    const devices = await enumerateAudioDevicesAugmented();
     const inputs = devices.filter(d => d.kind === 'audioinput');
     const outputs = devices.filter(d => d.kind === 'audiooutput');
     const optLabel = d => d.label || d.deviceId.slice(0, 12) + '…';
+    const optAttrs = d => d.isAlsaSeparator ? ' disabled' : '';
     rigRemoteAudioInput.innerHTML = '<option value="">-- system default --</option>' +
-      inputs.map(d => `<option value="${d.deviceId}">${optLabel(d)}</option>`).join('');
+      inputs.map(d => `<option value="${d.deviceId}"${optAttrs(d)}>${optLabel(d)}</option>`).join('');
     rigRemoteAudioOutput.innerHTML = '<option value="">-- system default --</option>' +
-      outputs.map(d => `<option value="${d.deviceId}">${optLabel(d)}</option>`).join('');
+      outputs.map(d => `<option value="${d.deviceId}"${optAttrs(d)}>${optLabel(d)}</option>`).join('');
     if (restoreIn) rigRemoteAudioInput.value = restoreIn;
     if (restoreOut) rigRemoteAudioOutput.value = restoreOut;
     if (getUserMediaError && inputs.length > 0 && !inputs[0].label) {
@@ -8427,14 +8476,15 @@ async function populateQuickAudioDevices(restoreIn, restoreOut) {
     console.warn('getUserMedia failed — device labels may be hidden:', e.message);
   }
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
+    const devices = await enumerateAudioDevicesAugmented();
     const inputs = devices.filter(d => d.kind === 'audioinput');
     const outputs = devices.filter(d => d.kind === 'audiooutput');
     const optLabel = d => d.label || d.deviceId.slice(0, 12) + '…';
+    const optAttrs = d => d.isAlsaSeparator ? ' disabled' : '';
     quickAudioInput.innerHTML = '<option value="">System Default</option>' +
-      inputs.map(d => `<option value="${d.deviceId}">${optLabel(d)}</option>`).join('');
+      inputs.map(d => `<option value="${d.deviceId}"${optAttrs(d)}>${optLabel(d)}</option>`).join('');
     quickAudioOutput.innerHTML = '<option value="">System Default</option>' +
-      outputs.map(d => `<option value="${d.deviceId}">${optLabel(d)}</option>`).join('');
+      outputs.map(d => `<option value="${d.deviceId}"${optAttrs(d)}>${optLabel(d)}</option>`).join('');
     if (restoreIn) quickAudioInput.value = restoreIn;
     if (restoreOut) quickAudioOutput.value = restoreOut;
   } catch (e) {

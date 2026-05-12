@@ -12,6 +12,15 @@ const addons = [
   { name: 'ft8_native',    dir: 'lib/ft8_native',    cmd: 'npx node-gyp rebuild' },
   { name: 'freedv_native',  dir: 'lib/freedv_native',  cmd: 'npx node-gyp rebuild' },
   { name: 'rade_native',    dir: null,                  cmd: 'node scripts/build-rade.js' },
+  // alsa_native gives Linux users access to raw hw:/plughw: ALSA devices
+  // that Chromium's enumerateDevices() hides. binding.gyp falls back to a
+  // tiny stub on Windows/macOS (so the .node file still loads) but the
+  // libasound link is Linux-only — no point invoking the build on hosts
+  // that can't find -lasound, so we skip those entirely. Linux-and-WSL
+  // are detected by os.platform() === 'linux'.
+  ...(process.platform === 'linux'
+    ? [{ name: 'alsa_native', dir: 'lib/alsa_native', cmd: 'npx node-gyp rebuild' }]
+    : []),
 ];
 
 let built = 0, skipped = 0;

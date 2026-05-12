@@ -1,0 +1,8 @@
+{
+  "name": "alsa_native",
+  "version": "1.0.0",
+  "description": "Native libasound (ALSA) bindings — device enumeration + hw/plughw capture for Linux SDR setups (sBitx, generic snd-aloop, etc.) that Chromium's getUserMedia can't reach.",
+  "main": "build/Release/alsa_native.node",
+  "private": true,
+  "gypfile": true
+}

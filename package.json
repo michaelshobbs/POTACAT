@@ -68,7 +68,8 @@
       "lib/ft2/**/*",
       "lib/ft8_native/**/*",
       "lib/freedv_native/**/*",
-      "lib/rade_native/**/*"
+      "lib/rade_native/**/*",
+      "lib/alsa_native/**/*"
     ],
     "win": {
       "icon": "assets/icon.ico",

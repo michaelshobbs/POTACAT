@@ -163,6 +163,9 @@ const { WsjtxClient, extractCallsigns, encodeHeartbeat, encodeLoggedAdif, encode
 const { PskrClient } = require('./lib/pskreporter');
 const { Ft8Engine } = require('./lib/ft8-engine');
 const { RemoteServer } = require('./lib/remote-server');
+// Linux-only ALSA bridge. On non-Linux, alsa.isAvailable() returns false
+// and every other call is a stable no-op — safe to require unconditionally.
+const alsa = require('./lib/alsa');
 const { loadClubUsers, hashPasswords, hasPlaintextPasswords } = require('./lib/club-users');
 const { createAuditLogger } = require('./lib/club-audit');
 const { fetchSpots: fetchWwffSpots } = require('./lib/wwff');
@@ -10218,6 +10221,62 @@ app.whenReady().then(() => {
   });
   potaSync.on('status', (s) => {
     if (win && !win.isDestroyed()) win.webContents.send('pota-sync-status', s);
+  });
+
+  // --- ALSA (Linux-only) ---------------------------------------------
+  // Surfaces raw hw:/plughw: ALSA devices to the renderer so SDR users
+  // on Pi-based setups (sBitx with snd-aloop, audioinjectorpi, etc.)
+  // can pick the loopback subdevices that Chromium's getUserMedia
+  // hides. On Windows / macOS the wrapper short-circuits; we still
+  // register the handlers so the preload bridge always resolves.
+  ipcMain.handle('alsa-available', () => alsa.isAvailable());
+  ipcMain.handle('alsa-list-devices', () => alsa.listDevices());
+  ipcMain.handle('alsa-load-error', () => alsa._loadError());
+
+  // Active capture sessions keyed by an opaque id so the renderer can
+  // start / stop several streams concurrently (e.g. FT8 RX alongside
+  // ECHOCAT mic). Each session forwards Float32 chunks to the renderer
+  // via the channel `alsa-audio-chunk-<id>` so multi-stream IPC stays
+  // demuxed without per-frame routing logic on the JS side.
+  const alsaSessions = new Map();
+  let alsaSessionSeq = 0;
+
+  ipcMain.handle('alsa-start-capture', async (event, { device, rate, channels, chunkFrames, intervalMs }) => {
+    if (!alsa.isAvailable()) {
+      throw new Error('ALSA not available on this platform');
+    }
+    const sessionId = ++alsaSessionSeq;
+    const channel = `alsa-audio-chunk-${sessionId}`;
+    const sender = event.sender;
+    let session;
+    try {
+      session = alsa.startCapture(device, {
+        rate, channels, chunkFrames, intervalMs,
+        onAudio: (frames, meta) => {
+          if (sender.isDestroyed()) { try { session.stop(); } catch {} return; }
+          // Forward the underlying ArrayBuffer — structured-clone copies
+          // it once, but that's still cheaper than per-sample JSON for
+          // the 5-10ms ECHOCAT chunk size we'll be using.
+          sender.send(channel, { samples: frames, rate: meta.rate, channels: meta.channels });
+        },
+        onError: (err) => {
+          if (!sender.isDestroyed()) sender.send(channel, { error: err.message });
+          alsaSessions.delete(sessionId);
+        },
+      });
+    } catch (err) {
+      throw new Error('alsa-start-capture: ' + err.message);
+    }
+    alsaSessions.set(sessionId, session);
+    return { sessionId, channel, rate: session.rate, channels: session.channels };
+  });
+
+  ipcMain.handle('alsa-stop-capture', (_e, sessionId) => {
+    const s = alsaSessions.get(sessionId);
+    if (!s) return false;
+    try { s.stop(); } catch {}
+    alsaSessions.delete(sessionId);
+    return true;
   });
 
   ipcMain.handle('pota-sync-status', () => potaSync.status());
