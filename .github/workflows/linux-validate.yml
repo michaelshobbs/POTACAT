@@ -1,0 +1,106 @@
+name: Linux build (validation)
+
+# Manual-trigger Linux-only build that does not create a GitHub release —
+# uploads the AppImage + .deb as a workflow artifact instead. Used to
+# hand a test build to a Linux user (e.g. for ALSA-addon validation
+# on real Pi hardware) before tagging a real release.
+#
+# Run via the Actions tab → "Linux build (validation)" → Run workflow,
+# or programmatically with `gh workflow run linux-validate.yml`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Short note about what's being validated (shows in run history)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install system build deps
+        # libasound2-dev added for the alsa_native addon link step.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential python3 libudev-dev cmake rpm patchelf \
+            autoconf automake libtool texinfo pkg-config \
+            libusb-1.0-0-dev libreadline-dev libxml2-dev \
+            libasound2-dev
+
+      - name: Build hamlib from source
+        env:
+          HAMLIB_VERSION: '4.7.1'
+        run: |
+          set -e
+          curl -fsSL "https://github.com/Hamlib/Hamlib/archive/refs/tags/${HAMLIB_VERSION}.tar.gz" -o /tmp/hamlib.tar.gz
+          mkdir -p /tmp/hamlib-src
+          tar -xzf /tmp/hamlib.tar.gz -C /tmp/hamlib-src --strip-components=1
+          cd /tmp/hamlib-src
+          ./bootstrap
+          ./configure --prefix=/usr/local --disable-static --enable-shared \
+            --without-cxx-binding --disable-doxygen-doc
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          /usr/local/bin/rigctld --version
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build native addons
+        # The whole point of this workflow — verify that alsa_native
+        # links against libasound on the runner. Failure here is the
+        # signal we're hunting for.
+        run: npm run build-natives
+
+      - name: Confirm alsa_native landed
+        run: |
+          set -e
+          ls -la lib/alsa_native/build/Release/
+          file lib/alsa_native/build/Release/alsa_native.node
+          # Cheap loadability check — Node will throw a useful linker
+          # error if libasound symbols are unresolved.
+          node -e "const a=require('./lib/alsa'); console.log('alsa available:', a.isAvailable(), 'version:', a._alsaVersion(), 'platform:', a._platform());"
+
+      - name: Bundle hamlib into assets/hamlib/
+        run: |
+          set -e
+          rm -f assets/hamlib/*.dll assets/hamlib/*.exe
+          cp /usr/local/bin/rigctld assets/hamlib/rigctld
+          chmod +x assets/hamlib/rigctld
+          for dep in $(ldd /usr/local/bin/rigctld | awk '/(hamlib|libusb)/ {print $3}'); do
+            if [ -f "$dep" ]; then
+              cp -L "$dep" "assets/hamlib/$(basename $dep)"
+            fi
+          done
+          patchelf --set-rpath '$ORIGIN' assets/hamlib/rigctld
+          for lib in assets/hamlib/*.so*; do
+            [ -f "$lib" ] && patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+          done
+          ls -la assets/hamlib/
+
+      - name: Build Linux packages
+        # AppImage + deb + rpm — the same artifacts the real release
+        # workflow produces, just without the GH release upload step.
+        run: npx electron-builder --linux --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: potacat-linux-validation
+          path: |
+            dist/POTACAT-*.AppImage
+            dist/potacat_*.deb
+            dist/potacat-*.rpm
+          if-no-files-found: error
+          retention-days: 30
