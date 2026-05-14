@@ -413,6 +413,18 @@ let _audioBridgeSilentSince = 0;
 let _currentFreqHz = 0;    // tracked for remote radio status
 let _currentMode = '';
 let _remoteTxState = false;
+// Desktop-initiated CW TX lockout. The audio-health detector in
+// remote-audio.html watches localStream peak energy and false-fires
+// "peak-zero-while-rx" after 5s of silence — and rig audio goes silent
+// during desktop-initiated TX (Flex slice mute, Yaesu/Icom USB-codec
+// silencing). FT8 routes through handleRemotePtt and gets covered by
+// _remoteTxState, but the CW text path (sendCwTextToRadio → smartSdr.
+// sendCwText / WinKeyer / DTR / CAT) deliberately doesn't engage the
+// PTT API — the rig handles its own TX state via the cwx command. We
+// track a timestamp lockout that ORs into the broadcast tx-state, sized
+// to the estimated morse playback duration. Casey K3SBP 2026-05-13.
+let _cwTxLockoutUntilMs = 0;
+let _cwTxLockoutTimer = null;
 let _currentNbState = false;
 let _currentSmeter = 0;
 // Stored alongside _currentSmeter so broadcastRemoteRadioStatus() can include
@@ -4587,6 +4599,35 @@ function sendCwTextToRadio(text) {
   if (cat && cat.connected) {
     cat.sendCwText(expanded);
   }
+
+  // ECHOCAT iOS sidetone synthesis. Casey K3SBP 2026-05-13: when CW fires,
+  // the Flex slice RX mutes during TX and the iOS audio bridge goes silent
+  // — the listener has no idea what they're sending. We can't toggle Flex
+  // CW Monitor to fix it (MON output goes to a different Flex stream than
+  // the dax_rx the bridge subscribes to). Instead we hand the text + WPM
+  // to the hidden remote-audio renderer which generates morse audio with
+  // Web Audio API and mixes it into the WebRTC sender's destination. Works
+  // for every backend (Flex, WinKeyer, DTR, CAT) without rig-specific
+  // sidetone routing. No-op when ECHOCAT isn't running.
+  if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+    const sidetoneWpm = settings.cwWpm || 20;
+    const sidetonePitch = settings.cwSidetonePitch || 600;
+    remoteAudioWin.webContents.send('cw-sidetone-play', {
+      text: expanded,
+      wpm: sidetoneWpm,
+      pitch: sidetonePitch,
+    });
+  }
+
+  // Hold the unified TX state true while CW is playing so the audio-
+  // health "peak-zero-while-rx" detector doesn't false-fire on the
+  // silenced RX path. Same envelope formula as RigController.sendCwText
+  // (Yaesu KY1 path) — text.length * 12000/wpm ms covers worst-case
+  // char timing plus 1s safety. Casey K3SBP 2026-05-13 saw the FT8
+  // version of this trip mid-QSO; CW macros have the same shape.
+  const cwLockoutWpm = settings.cwWpm || 20;
+  const cwDurationMs = Math.ceil((expanded.length * 12000) / Math.max(5, cwLockoutWpm)) + 1000;
+  _setCwTxLockout(cwDurationMs);
 }
 
 // Aborts any in-flight CW text send across every dispatch path. Mirrors
@@ -6952,8 +6993,22 @@ function handleRemotePtt(state, opts = {}) {
   }
 
   _remoteTxState = state;
+  _broadcastEffectiveTxState();
+}
 
-  // Broadcast to desktop UI
+// Combined TX state — true while any desktop-tracked path is keying the
+// rig (user PTT / FT8 / SSTV / voice macros via handleRemotePtt, OR a
+// CW text macro currently within its estimated playback window). The
+// audio-health detector in remote-audio.html, the Kiwi/SDR TX-mute
+// (VK3AWA), the VFO popout's TX banner, and the iOS status broadcast
+// all use this composite signal so adding a new TX source only needs
+// to flip one of the inputs.
+function _isEffectivelyTransmitting() {
+  return _remoteTxState || (Date.now() < _cwTxLockoutUntilMs);
+}
+
+function _broadcastEffectiveTxState() {
+  const state = _isEffectivelyTransmitting();
   if (win && !win.isDestroyed()) {
     win.webContents.send('remote-tx-state', state);
     if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('remote-tx-state', state);
@@ -6964,12 +7019,37 @@ function handleRemotePtt(state, opts = {}) {
   // for the duration of TX. (VK3AWA's original report covered the
   // desktop and browser ECHOCAT paths in v1.5.14; the WebRTC bridge
   // for native iOS, added in Gap 20a, missed this and v1.5.15 mobile
-  // users got their TX audible again.)
+  // users got their TX audible again.) Same state also gates the
+  // audio-health "peak-zero-while-rx" detector so it doesn't false-fire
+  // during a TX cycle.
   if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
     remoteAudioWin.webContents.send('remote-tx-state', state);
   }
   // Broadcast to phone
   broadcastRemoteRadioStatus();
+}
+
+/**
+ * Mark the desktop as transmitting CW text for the given duration.
+ * Used by sendCwTextToRadio to keep the unified TX state true while
+ * the rig is keying through the cwx / WinKeyer / DTR / CAT keyer
+ * paths — those paths don't engage handleRemotePtt, so _remoteTxState
+ * stays false and the audio-health detector would otherwise false-fire.
+ * Subsequent calls extend the lockout if the new end-time is later
+ * than the existing one.
+ */
+function _setCwTxLockout(durationMs) {
+  const target = Date.now() + Math.max(0, durationMs | 0);
+  if (target <= _cwTxLockoutUntilMs) return; // already locked further out
+  _cwTxLockoutUntilMs = target;
+  _broadcastEffectiveTxState();
+  if (_cwTxLockoutTimer) clearTimeout(_cwTxLockoutTimer);
+  _cwTxLockoutTimer = setTimeout(() => {
+    _cwTxLockoutTimer = null;
+    // Re-broadcast — _isEffectivelyTransmitting now reflects whether
+    // any other TX source is still active (user PTT, FT8 mid-cycle).
+    _broadcastEffectiveTxState();
+  }, target - Date.now());
 }
 
 /** Apply FreeDV audio mute state to ECHOCAT WebRTC — called on state change and audio (re)connect */
@@ -7009,7 +7089,11 @@ function broadcastRemoteRadioStatus() {
     freq: _currentFreqHz || 0,
     mode: modeVal,
     catConnected: (cat && cat.connected) || (smartSdr && smartSdr.connected),
-    txState: _remoteTxState,
+    // Effective state — covers user PTT, FT8, voice macros, AND the CW
+    // text path (which doesn't engage handleRemotePtt). The iOS app's
+    // defensive audio-health gate keys off this field per the mobile-
+    // side handoff in audio-health-detector-gates-tx.md.
+    txState: _isEffectivelyTransmitting(),
     rigType,
     nb: _currentNbState,
     atu: _currentAtuState,
@@ -7036,7 +7120,7 @@ function broadcastRemoteRadioStatus() {
     audioExpected: !!(
       settings.enableRemote &&
       ((cat && cat.connected) || (smartSdr && smartSdr.connected)) &&
-      !_remoteTxState &&
+      !_isEffectivelyTransmitting() &&
       !_freedvAudioMuted &&
       remoteAudioWin && !remoteAudioWin.isDestroyed()
     ),

@@ -28,4 +28,11 @@ contextBridge.exposeInMainWorld('api', {
   // ECHOCAT paths already had this — Gap 20a's WebRTC route was
   // missing it, so v1.5.15 mobile users got their TX back.)
   onTxState: (cb) => ipcRenderer.on('remote-tx-state', (_e, state) => cb(state)),
+  // CW sidetone synthesis. Flex slice RX is muted by firmware during TX,
+  // so the dax_rx stream feeding the WebRTC bridge goes silent — the iOS
+  // listener hears nothing while a CW macro plays. Other rigs may also
+  // mute USB audio during TX. Synthesizing morse locally and mixing into
+  // the bridge destination gives the iOS user audible feedback without
+  // depending on rig-specific sidetone routing. Casey K3SBP 2026-05-13.
+  onCwSidetonePlay: (cb) => ipcRenderer.on('cw-sidetone-play', (_e, payload) => cb(payload)),
 });

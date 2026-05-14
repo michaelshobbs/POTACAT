@@ -217,8 +217,14 @@ let _healthAnalyser = null;
 let _healthTimer = null;
 let _healthSilentCount = 0;
 let _healthState = 'unknown'; // 'ok' | 'silent' | 'unknown'
-const HEALTH_SILENT_THRESHOLD = 5; // 5 × 1s = 5 s of zero before flagging
-const HEALTH_PEAK_FLOOR = 0.0005;  // below this is "no audio"
+let _txEndedAtMs = 0;          // last kiwiTxMuted true→false transition
+const HEALTH_SILENT_THRESHOLD = 5;  // 5 × 1s = 5 s of zero before flagging
+const HEALTH_PEAK_FLOOR = 0.0005;   // below this is "no audio"
+const HEALTH_POST_TX_GRACE_MS = 1500; // suppress detection after PTT release
+                                      // so the rig's audio path can settle
+                                      // (DAX RX hand-off, USB codec AGC) without
+                                      // tripping a false silent flag. K3SBP
+                                      // 2026-05-13 saw FT8 trip this mid-QSO.
 
 function startHealthMonitor(stream) {
   stopHealthMonitor();
@@ -237,6 +243,19 @@ function startHealthMonitor(stream) {
   const buf = new Float32Array(_healthAnalyser.fftSize);
   _healthTimer = setInterval(() => {
     if (!_healthAnalyser) return;
+    // Skip detection entirely while the rig is keying (any source —
+    // user PTT, FT8, CW macros, voice macros — main.js folds them all
+    // into the single 'remote-tx-state' broadcast we receive as
+    // kiwiTxMuted). Also skip during the post-TX grace window so the
+    // rig's audio path can settle without a false silent flag right
+    // after PTT release. Reset the silent counter while skipping so
+    // we don't immediately fire on the first post-grace tick if the
+    // counter was creeping up before the gate activated.
+    const inGrace = _txEndedAtMs && (Date.now() - _txEndedAtMs) < HEALTH_POST_TX_GRACE_MS;
+    if (kiwiTxMuted || inGrace) {
+      _healthSilentCount = 0;
+      return;
+    }
     _healthAnalyser.getFloatTimeDomainData(buf);
     let peak = 0;
     for (let i = 0; i < buf.length; i++) {
@@ -392,11 +411,17 @@ window.api.onKiwiAudioFrame((frame) => {
 // kiwiGain isn't yet created so the very first frame after a hot
 // PTT lands at the correct gain.
 window.api.onTxState((state) => {
+  const wasMuted = kiwiTxMuted;
   kiwiTxMuted = !!state;
   if (kiwiGain) kiwiGain.gain.value = kiwiTxMuted ? 0 : 1;
   // SmartSDR-direct path needs the same TX-mute so the mobile listener
   // doesn't hear their own TX echoed back through the Flex receiver.
   if (smartGain) smartGain.gain.value = kiwiTxMuted ? 0 : 1;
+  // Stamp the TX→RX transition so the audio-health detector can apply
+  // its post-TX grace window. Without this, the detector would resume
+  // counting silent samples the instant PTT released and false-fire on
+  // the 200–500ms audio-settle period.
+  if (wasMuted && !kiwiTxMuted) _txEndedAtMs = Date.now();
 });
 
 // --- SmartSDR DAX-free audio path -------------------------------------
@@ -441,6 +466,10 @@ function tearDownSmartGraph() {
   if (smartGain) {
     try { smartGain.disconnect(); } catch {}
     smartGain = null;
+  }
+  if (sidetoneGain) {
+    try { sidetoneGain.disconnect(); } catch {}
+    sidetoneGain = null;
   }
   if (smartDest) {
     try { smartDest.disconnect(); } catch {}
@@ -495,6 +524,99 @@ window.api.onSmartSdrAudioFallback(() => {
     if (rigTrack) {
       audioSender.replaceTrack(rigTrack).catch(() => {});
     }
+  }
+});
+
+// --- CW sidetone synthesis -----------------------------------------------
+// Casey K3SBP 2026-05-13: when the desktop fires a CW macro, the iOS
+// listener's audio bridge goes silent for the duration of TX. Root cause
+// is that the Flex slice RX (which dax_rx subscribes to) is muted by
+// firmware during TX — and POTACAT can't fix that with `transmit set
+// mon=1` because MON audio routes to a different Flex output stream
+// than dax_rx. Synthesizing the morse locally and mixing into smartDest
+// (downstream of smartGain so the TX-mute on RX audio still applies)
+// gives the iOS user audible feedback without depending on any rig-
+// specific sidetone routing — works for Yaesu / Icom / Kenwood too.
+//
+// We deliberately connect AFTER the smartGain TX-mute: smartGain → 0
+// silences any leaking RX audio (Flex slice RX still mutes itself
+// during TX, so this is belt-and-suspenders), and the sidetone path
+// connects directly to smartDest so it survives the mute.
+const _MORSE_TABLE = {
+  'A':'.-','B':'-...','C':'-.-.','D':'-..','E':'.','F':'..-.','G':'--.','H':'....',
+  'I':'..','J':'.---','K':'-.-','L':'.-..','M':'--','N':'-.','O':'---','P':'.--.',
+  'Q':'--.-','R':'.-.','S':'...','T':'-','U':'..-','V':'...-','W':'.--','X':'-..-',
+  'Y':'-.--','Z':'--..','0':'-----','1':'.----','2':'..---','3':'...--','4':'....-',
+  '5':'.....','6':'-....','7':'--...','8':'---..','9':'----.','?':'..--..','=':'-...-',
+  '/':'-..-.','.':'.-.-.-',',':'--..--','+':'.-.-.','-':'-....-',
+};
+const SIDETONE_PITCH_DEFAULT_HZ = 600;  // Flex CW default; user override via settings.cwSidetonePitch
+const SIDETONE_GAIN = 0.25;             // moderate level — won't clip when mixed with any leaking RX
+const SIDETONE_RAMP_MS = 5;             // attack/release shaping to avoid key-clicks at the iOS speaker
+let sidetoneGain = null;
+
+function ensureSidetoneNode() {
+  // Hang off smartCtx — that's the AudioContext whose destination is
+  // already wired to the WebRTC sender on the Flex DAX-free path. We
+  // deliberately do NOT swap the sender's track here: on a non-Flex
+  // setup smartCtx hasn't been wired in, and force-swapping would
+  // disconnect the user from their localStream (mic / system audio)
+  // which is their normal bridge source. Bailing out cleanly is
+  // correct — Casey's reported case is Flex, where smartCtx is alive,
+  // and sidetone needs to mix into the already-active synthetic
+  // stream. Non-Flex sidetone is a follow-up that needs a separate
+  // mix path into localStream's source graph.
+  if (!smartCtx || !smartDest || !smartActive) return null;
+  if (!sidetoneGain) {
+    sidetoneGain = smartCtx.createGain();
+    sidetoneGain.gain.value = SIDETONE_GAIN;
+    sidetoneGain.connect(smartDest);
+  }
+  return sidetoneGain;
+}
+
+window.api.onCwSidetonePlay((payload) => {
+  if (!payload || !payload.text) return;
+  const sg = ensureSidetoneNode();
+  if (!sg || !smartCtx) return;
+  if (smartCtx.state === 'suspended') smartCtx.resume().catch(() => {});
+
+  const wpm = Math.max(5, Math.min(60, payload.wpm | 0)) || 20;
+  const pitchHz = Math.max(300, Math.min(1200, payload.pitch | 0)) || SIDETONE_PITCH_DEFAULT_HZ;
+  const ditSec = 1.2 / wpm;          // PARIS standard: 1 dit = 1200/WPM ms
+  const dahSec = 3 * ditSec;
+  const intraGap = 1 * ditSec;       // between dits/dahs of one character
+  const interCharGap = 2 * ditSec;   // total 3 (1 already added at end of last symbol)
+  const wordGap = 4 * ditSec;        // total 7 (3 already added at end of last char)
+  const ramp = SIDETONE_RAMP_MS / 1000;
+
+  let t = smartCtx.currentTime + 0.05; // 50ms lead-in
+  const text = String(payload.text).toUpperCase();
+  for (const ch of text) {
+    if (ch === ' ') { t += wordGap; continue; }
+    const morse = _MORSE_TABLE[ch];
+    if (!morse) continue;
+    for (let i = 0; i < morse.length; i++) {
+      const dur = (morse[i] === '.' ? ditSec : dahSec);
+      // Each element gets its own oscillator + envelope so the AudioContext
+      // can garbage-collect them once they've played. The envelope ramps
+      // shape the on/off transitions — a hard square edge produces audible
+      // key-clicks especially through the iOS speaker's small driver.
+      const osc = smartCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = pitchHz;
+      const env = smartCtx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(1, t + ramp);
+      env.gain.setValueAtTime(1, t + dur - ramp);
+      env.gain.linearRampToValueAtTime(0, t + dur);
+      osc.connect(env);
+      env.connect(sg);
+      osc.start(t);
+      osc.stop(t + dur + 0.005); // small slack so the ramp completes
+      t += dur + intraGap;
+    }
+    t += interCharGap;
   }
 });
 </script>
