@@ -578,8 +578,20 @@ function ensureSidetoneNode() {
 window.api.onCwSidetonePlay((payload) => {
   if (!payload || !payload.text) return;
   const sg = ensureSidetoneNode();
-  if (!sg || !smartCtx) return;
+  if (!sg || !smartCtx) {
+    // Diagnostic — if sidetone is still silent, this line says why.
+    // smartActive false means the WebRTC sender hasn't been swapped to
+    // the SmartSDR-direct stream: either the iOS audio bridge isn't open,
+    // or the user's audioSource isn't 'smartsdr' (no DAX-free frames to
+    // trigger the swap). K3SBP 2026-05-14.
+    console.log('[CW sidetone] skipped — smartCtx=' + !!smartCtx +
+      ' smartDest=' + !!smartDest + ' smartActive=' + smartActive +
+      ' pc=' + !!pc + ' audioSender=' + !!audioSender);
+    return;
+  }
   if (smartCtx.state === 'suspended') smartCtx.resume().catch(() => {});
+  console.log('[CW sidetone] playing: "' + payload.text + '" @ ' +
+    (payload.wpm || 20) + ' WPM ' + (payload.pitch || 600) + ' Hz');
 
   const wpm = Math.max(5, Math.min(60, payload.wpm | 0)) || 20;
   const pitchHz = Math.max(300, Math.min(1200, payload.pitch | 0)) || SIDETONE_PITCH_DEFAULT_HZ;

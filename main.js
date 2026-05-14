@@ -1302,7 +1302,13 @@ function formatClusterComment(comment) {
   return comment;
 }
 
-// Build a normalized spot from raw cluster data (shared by all cluster clients)
+// Build a normalized spot from raw cluster data (shared by all cluster clients).
+// Position lookup ladder, best→worst: QRZ grid (async, see refineClusterSpotWithQrz)
+// → call-area centroid (large multi-area countries) → DXCC centroid (cty.dat).
+// Without the call-area fallback all US DX spots stack at one Kansas pixel
+// because cty.dat returns the same lat/lon for every US-prefix callsign;
+// the call-area resolver spreads them across the 10 US regions and similar
+// breakdowns for CA / JP / VK. K3SBP 2026-05-14.
 function buildClusterSpot(raw, myPos, myEntity) {
   // Extract WPM from RBN-style comment (e.g. "CW 28 dB 29 WPM CQ")
   const wpmMatch = (raw.comment || '').match(/(\d+)\s*WPM/i);
@@ -1321,6 +1327,7 @@ function buildClusterSpot(raw, myPos, myEntity) {
     band: raw.band,
     spotTime: raw.spotTime,
     wpm: wpmMatch ? parseInt(wpmMatch[1], 10) : null,
+    coordSource: null, // 'qrz' | 'callarea' | 'cty' | null
   };
 
   if (ctyDb) {
@@ -1328,18 +1335,74 @@ function buildClusterSpot(raw, myPos, myEntity) {
     if (entity) {
       spot.locationDesc = entity.name;
       spot.continent = entity.continent || '';
-      if (entity.lat != null && entity.lon != null) {
+
+      // Prefer call-area centroid for large countries. Falls back to cty.dat
+      // DXCC centroid when the country isn't in CALL_AREA_COORDS.
+      const areaCoords = getCallAreaCoords(raw.callsign, entity.name);
+      if (areaCoords) {
+        spot.lat = areaCoords.lat;
+        spot.lon = areaCoords.lon;
+        spot.coordSource = 'callarea';
+        if (areaCoords.region) spot.locationDesc = `${entity.name} (${areaCoords.region})`;
+      } else if (entity.lat != null && entity.lon != null) {
         spot.lat = entity.lat;
         spot.lon = entity.lon;
-        if (myPos && entity !== myEntity) {
-          spot.distance = Math.round(haversineDistanceMiles(myPos.lat, myPos.lon, entity.lat, entity.lon));
-          spot.bearing = Math.round(bearing(myPos.lat, myPos.lon, entity.lat, entity.lon));
-        }
+        spot.coordSource = 'cty';
+      }
+
+      // Distance/bearing — meaningful when we have call-area precision (intra-
+      // country distances actually mean something) OR when the entity differs
+      // from ours (cross-country DXCC distance). Skip the same-entity-with-
+      // cty-centroid case because that's Kansas-to-Kansas zero-distance noise.
+      if (spot.lat != null && myPos && (spot.coordSource === 'callarea' || entity !== myEntity)) {
+        spot.distance = Math.round(haversineDistanceMiles(myPos.lat, myPos.lon, spot.lat, spot.lon));
+        spot.bearing = Math.round(bearing(myPos.lat, myPos.lon, spot.lat, spot.lon));
       }
     }
   }
 
   return spot;
+}
+
+// Async refinement — upgrade a cluster spot's position from cty/call-area
+// centroid to the actual operator grid via QRZ. K3SBP 2026-05-14: DX cluster
+// spots only carry callsign + freq + comment on the wire, so the map view
+// had nothing to plot against except centroids. With QRZ configured, every
+// unique callsign gets one network lookup (subsequently cached); the spot's
+// lat/lon gets refined in clusterSpots after the lookup resolves and a flush
+// is scheduled so the map updates within ~200 ms. No-op when QRZ isn't
+// configured or the user has it disabled — call-area fallback already
+// provides reasonable map placement for the common large-country cases.
+function refineClusterSpotWithQrz(rawCallsign, spot, myPos) {
+  if (spot.coordSource === 'qrz' || !qrz.configured || !settings.enableQrz) return;
+  qrz.lookup(rawCallsign).then((qrzResult) => {
+    if (!qrzResult || !qrzResult.grid) return;
+    const ll = gridToLatLon(qrzResult.grid);
+    if (!ll) return;
+    // Find the spot in clusterSpots — it may have been deduped out by a
+    // newer spot for the same callsign+band, in which case the newer spot
+    // will pick up the cached QRZ grid on its own enrichment pass.
+    const idx = clusterSpots.findIndex(s => s.callsign === rawCallsign && s.band === spot.band);
+    if (idx === -1) return;
+    const s = clusterSpots[idx];
+    s.lat = ll.lat;
+    s.lon = ll.lon;
+    s.coordSource = 'qrz';
+    s.grid = qrzResult.grid;
+    if (myPos) {
+      s.distance = Math.round(haversineDistanceMiles(myPos.lat, myPos.lon, ll.lat, ll.lon));
+      s.bearing = Math.round(bearing(myPos.lat, myPos.lon, ll.lat, ll.lon));
+    }
+    // Short flush so the renderer gets the position update promptly. The
+    // normal 2 s flush would still pick this up; 200 ms keeps the visible
+    // marker jitter (centroid → actual grid) brief.
+    if (!clusterFlushTimer) {
+      clusterFlushTimer = setTimeout(() => {
+        clusterFlushTimer = null;
+        sendMergedSpots();
+      }, 200);
+    }
+  }).catch(() => { /* lookup failures are non-fatal — spot keeps fallback coords */ });
 }
 
 let clusterClients = new Map(); // id -> { client, nodeConfig }
@@ -1455,6 +1518,11 @@ function connectCluster() {
           sendMergedSpots();
         }, 2000);
       }
+
+      // Fire QRZ refinement — no-op when not configured; otherwise upgrades
+      // this spot's lat/lon from centroid to the operator's actual grid as
+      // soon as the lookup resolves (instant for cached calls).
+      refineClusterSpotWithQrz(raw.callsign, spot, myPos);
     });
 
     client.on('line', (line) => {
@@ -4531,6 +4599,39 @@ function sendCwTextToRadio(text) {
     .replace(/\{mycallsign\}/gi, settings.myCallsign || '');
   // Note: {call}, {op_firstname}, {state} are expanded client-side before reaching here
   console.log(`[CW] Text: ${expanded}`);
+
+  // Backend-agnostic side effects FIRST — these only need the expanded
+  // text + WPM, not knowledge of which keyer handled the send. They MUST
+  // run before the dispatch branches below because several of those
+  // branches `return` early (Flex cwx, WinKeyer, DTR keyer). K3SBP
+  // 2026-05-14: the WinKeyer-priority fix added a `return` in the Flex
+  // branch, which silently killed the iOS sidetone + the audio-health TX
+  // lockout for every Flex user (the primary ECHOCAT CW audience).
+
+  // ECHOCAT iOS sidetone synthesis. When CW fires, the Flex slice RX
+  // mutes during TX and the iOS audio bridge goes silent — the listener
+  // has no idea what they're sending. We can't toggle Flex CW Monitor to
+  // fix it (MON output goes to a different Flex stream than the dax_rx
+  // the bridge subscribes to). Instead we hand the text + WPM to the
+  // hidden remote-audio renderer which generates morse audio with Web
+  // Audio API and mixes it into the WebRTC sender's destination. No-op
+  // when ECHOCAT isn't running.
+  if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+    remoteAudioWin.webContents.send('cw-sidetone-play', {
+      text: expanded,
+      wpm: settings.cwWpm || 20,
+      pitch: settings.cwSidetonePitch || 600,
+    });
+  }
+
+  // Hold the unified TX state true while CW is playing so the audio-
+  // health "peak-zero-while-rx" detector doesn't false-fire on the
+  // silenced RX path. Envelope formula matches RigController.sendCwText
+  // (Yaesu KY1 path) — text.length * 12000/wpm ms covers worst-case char
+  // timing plus 1s safety.
+  const cwLockoutWpm = settings.cwWpm || 20;
+  _setCwTxLockout(Math.ceil((expanded.length * 12000) / Math.max(5, cwLockoutWpm)) + 1000);
+
   // FlexRadio first when SmartSDR-CW is bound: a Flex user's WinKeyer is
   // very often plugged in for paddle work only (USB on COM24, not wired
   // to the radio's KEY jack), so routing macros through WinKeyer silently
@@ -4599,35 +4700,6 @@ function sendCwTextToRadio(text) {
   if (cat && cat.connected) {
     cat.sendCwText(expanded);
   }
-
-  // ECHOCAT iOS sidetone synthesis. Casey K3SBP 2026-05-13: when CW fires,
-  // the Flex slice RX mutes during TX and the iOS audio bridge goes silent
-  // — the listener has no idea what they're sending. We can't toggle Flex
-  // CW Monitor to fix it (MON output goes to a different Flex stream than
-  // the dax_rx the bridge subscribes to). Instead we hand the text + WPM
-  // to the hidden remote-audio renderer which generates morse audio with
-  // Web Audio API and mixes it into the WebRTC sender's destination. Works
-  // for every backend (Flex, WinKeyer, DTR, CAT) without rig-specific
-  // sidetone routing. No-op when ECHOCAT isn't running.
-  if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-    const sidetoneWpm = settings.cwWpm || 20;
-    const sidetonePitch = settings.cwSidetonePitch || 600;
-    remoteAudioWin.webContents.send('cw-sidetone-play', {
-      text: expanded,
-      wpm: sidetoneWpm,
-      pitch: sidetonePitch,
-    });
-  }
-
-  // Hold the unified TX state true while CW is playing so the audio-
-  // health "peak-zero-while-rx" detector doesn't false-fire on the
-  // silenced RX path. Same envelope formula as RigController.sendCwText
-  // (Yaesu KY1 path) — text.length * 12000/wpm ms covers worst-case
-  // char timing plus 1s safety. Casey K3SBP 2026-05-13 saw the FT8
-  // version of this trip mid-QSO; CW macros have the same shape.
-  const cwLockoutWpm = settings.cwWpm || 20;
-  const cwDurationMs = Math.ceil((expanded.length * 12000) / Math.max(5, cwLockoutWpm)) + 1000;
-  _setCwTxLockout(cwDurationMs);
 }
 
 // Aborts any in-flight CW text send across every dispatch path. Mirrors

@@ -2093,12 +2093,11 @@ rigSaveBtn.addEventListener('click', async () => {
 });
 
 // --- Multi-select dropdowns ---
-// "Digital (all)" group preset: tap once to set all five common
-// digital modes; tap again (when fully selected) to clear them.
-// CW omitted (Morse classification debate); FREEDV omitted (digital
-// voice handled separately); SSTV omitted (image, separate workflow).
-// Mirrors the iOS app's DIGITAL_MODE_GROUP for parity.
-const DIGITAL_MODE_GROUP = ['FT8', 'FT4', 'FT2', 'RTTY', 'PSK31', 'JS8'];
+// K3SBP 2026-05-14: removed the "Digital (all)" group preset from the mode
+// filter — replaced by the single combined "FT8/4/2" entry (value="FT")
+// which covers the most common digital-mode bucket. RTTY/PSK31/JS8 remain
+// as individual entries and the iOS app's DIGITAL_MODE_GROUP preset is
+// separately maintained on that side.
 
 function initMultiDropdown(container, label, onChange) {
   const btn = container.querySelector('.multi-dropdown-btn');
@@ -2106,8 +2105,7 @@ function initMultiDropdown(container, label, onChange) {
   const textEl = container.querySelector('.multi-dropdown-text');
   const allCb = menu.querySelector('input[value="all"]');
   const radioCb = menu.querySelector('input[value="radio"]');  // only exists on band & mode filters
-  const presetCb = menu.querySelector('input[value="preset:digital"]'); // only on mode filter
-  const itemCbs = [...menu.querySelectorAll('input:not([value="all"]):not([value="radio"]):not([value^="preset:"])')];
+  const itemCbs = [...menu.querySelectorAll('input:not([value="all"]):not([value="radio"])')];
 
   container._updateText = updateText;
 
@@ -2143,17 +2141,6 @@ function initMultiDropdown(container, label, onChange) {
 
   menu.addEventListener('click', (e) => e.stopPropagation());
 
-  // Sync the preset checkbox to whether all DIGITAL_MODE_GROUP modes
-  // are currently selected. Called whenever individual items change.
-  function syncPreset() {
-    if (!presetCb) return;
-    const all = DIGITAL_MODE_GROUP.every((m) => {
-      const cb = itemCbs.find((c) => c.value === m);
-      return cb && cb.checked;
-    });
-    presetCb.checked = all;
-  }
-
   menu.addEventListener('change', (e) => {
     if (scanning) stopScan();
     const cb = e.target;
@@ -2170,18 +2157,6 @@ function initMultiDropdown(container, label, onChange) {
         // Unchecking Radio with nothing else -> fall back to All
         allCb.checked = true;
       }
-    } else if (cb.value === 'preset:digital') {
-      // Digital (all): set/clear the five digital modes as a group.
-      // Preserve any non-digital modes the user already had set.
-      const turnOn = cb.checked;
-      allCb.checked = false;
-      if (radioCb) radioCb.checked = false;
-      DIGITAL_MODE_GROUP.forEach((m) => {
-        const target = itemCbs.find((c) => c.value === m);
-        if (target) target.checked = turnOn;
-      });
-      // If turning OFF and nothing's left, fall back to All
-      if (!turnOn && itemCbs.every((c) => !c.checked)) allCb.checked = true;
     } else {
       // Uncheck "All" and "Radio" when toggling individual items
       allCb.checked = false;
@@ -2194,13 +2169,11 @@ function initMultiDropdown(container, label, onChange) {
         itemCbs.forEach((c) => { c.checked = false; });
       }
     }
-    syncPreset();
     updateText();
     if (onChange) { onChange(); } else { render(); }
     if (typeof saveFilters === 'function') saveFilters();
   });
 
-  syncPreset();
   updateText();
 }
 
@@ -2901,12 +2874,28 @@ function restoreFilters() {
       modeFilterEl.querySelectorAll('input:not([value="all"]):not([value="radio"])').forEach((cb) => { cb.checked = false; });
     } else if (data.modes) {
       const modeSet = new Set(data.modes);
+      // Migration: legacy saved state may have individual FT8/FT4/FT2 entries
+      // — those checkboxes no longer exist (replaced by the combined FT8/4/2
+      // meta-mode at value="FT"). K3SBP 2026-05-14. Without this migration a
+      // user who'd saved "FT8 only" would land on "All" after upgrading
+      // because none of their saved mode values match any checkbox.
+      if (modeSet.has('FT8') || modeSet.has('FT4') || modeSet.has('FT2')) {
+        modeSet.delete('FT8');
+        modeSet.delete('FT4');
+        modeSet.delete('FT2');
+        modeSet.add('FT');
+      }
+      modeSet.delete('unknown'); // unknown checkbox also removed
       modeFilterEl.querySelector('input[value="all"]').checked = false;
       const radioCb = modeFilterEl.querySelector('input[value="radio"]');
       if (radioCb) radioCb.checked = false;
       modeFilterEl.querySelectorAll('input:not([value="all"]):not([value="radio"])').forEach((cb) => {
         cb.checked = modeSet.has(cb.value);
       });
+      // If migration left nothing checked, fall back to "All".
+      if (![...modeFilterEl.querySelectorAll('input:not([value="all"]):not([value="radio"]):checked')].length) {
+        modeFilterEl.querySelector('input[value="all"]').checked = true;
+      }
     } else {
       modeFilterEl.querySelector('input[value="all"]').checked = true;
       modeFilterEl.querySelectorAll('input:not([value="all"])').forEach((cb) => { cb.checked = false; });
@@ -4412,13 +4401,16 @@ document.addEventListener('click', () => {
 const DIGI_MODES = new Set(['FT8', 'FT4', 'FT2', 'RTTY', 'FREEDV', 'JT65', 'JT9', 'PSK31', 'OLIVIA', 'MFSK', 'DATA', 'DIGU', 'DIGL']);
 function modeMatches(spotMode, selectedModes) {
   if (!selectedModes) return true;
-  // Some POTA activators only spot a frequency, not a mode. Those spots
-  // arrive with mode === '' and used to vanish the moment a user
-  // unticked any individual mode. Now they bucket under "unknown" so
-  // the user can untick FreeDV (etc.) and still see no-mode spots.
-  if (!spotMode) return selectedModes.has('unknown');
+  // Empty-mode spots always pass — POTA activators sometimes only spot a
+  // frequency, not a mode, and hiding them on any specific mode filter
+  // surprised users. The dropdown no longer exposes an "unknown" checkbox
+  // (K3SBP 2026-05-14) so this is the new universal behavior.
+  if (!spotMode) return true;
   if (selectedModes.has(spotMode)) return true;
   if (selectedModes.has('SSB') && (spotMode === 'USB' || spotMode === 'LSB')) return true;
+  // FT8/4/2 meta-mode — single dropdown entry maps to all three FT family
+  // modes underneath. Mirrors the SSB→USB/LSB pattern.
+  if (selectedModes.has('FT') && (spotMode === 'FT8' || spotMode === 'FT4' || spotMode === 'FT2')) return true;
   if (selectedModes.has('DIGI') && DIGI_MODES.has(spotMode)) return true;
   if (selectedModes.has('FREEDV') && (spotMode === 'FREEDV' || spotMode === 'DV' || (spotMode && spotMode.startsWith('FREEDV')))) return true;
   return false;
