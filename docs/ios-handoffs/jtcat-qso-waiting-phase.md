@@ -1,8 +1,23 @@
 # JTCAT QSO "waiting" phase display for ECHOCAT iOS
 
-Status: open
+Status: in-progress
 Filed: 2026-05-14
 Repo for changes: D:\Projects\potacat-app
+
+## iOS implementation (2026-05-14, type-check clean — pending TestFlight + end-to-end test against a v1.5.22+ desktop)
+
+Implemented in `src/screens/Ft8Screen.tsx`:
+
+- `phase: "waiting"` flows through the existing pass-through `jtcat-qso-state` reducer; the QSO stays live because the payload carries `call`. Not treated as done/error, no failure toast. `waitingPartner` captured into `QsoState`.
+- QSO bar renders paused-style on `waiting` — muted background, warn-colored border/text — with the desktop-parity line `⏸ KE4QEG is working W2HTS — waiting to reply`, falling back to "…is working another station — waiting to reply" when `waitingPartner` is empty.
+- iOS has no step tracker; the raw `qso.phase` label is replaced by the descriptive paused line during `waiting`.
+- The existing Cancel button (already fires `jtcat-cancel-qso`) is relabeled "Stop" during `waiting`; the Skip button is hidden (skip-phase is meaningless while the desktop auto-manages the hold/re-arm).
+
+Desktop side verified for this: `jtcat-cancel-qso` (`main.js:6881`) is unconditional cleanup — `_txEnabled = false`, `setTxSlot('auto')` (clears the slot lock the `waiting` phase keeps), `txComplete()`, nulls the QSO regardless of phase. The iOS "Stop" button works against the `waiting` phase with no desktop change.
+
+Flip to `shipped` once it's in a TestFlight build and exercised against a live v1.5.22+ desktop.
+
+## Original handoff
 
 ## Context
 

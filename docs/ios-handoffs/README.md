@@ -12,7 +12,7 @@ This directory holds open requests for the iOS POTACAT app (React Native, repo `
 ## Open
 
 - [audio-restart-button.md](audio-restart-button.md) — Add a "Restart audio" button (and optional auto-banner) that fires the `restart-audio` WS message; recovers the iOS audio bridge from RDP-induced silence without leaving the phone.
-- [jtcat-qso-waiting-phase.md](jtcat-qso-waiting-phase.md) — Render the new JTCAT `waiting` QSO phase: when the called station answers someone else the desktop now holds + auto-re-arms instead of aborting; the iOS app needs to show the "⏸ … waiting to reply" flag and hold the tracker at the reply step.
+- [jtcat-qso-waiting-phase.md](jtcat-qso-waiting-phase.md) — *(in-progress)* Render the new JTCAT `waiting` QSO phase. iOS side implemented in `Ft8Screen.tsx` (type-check clean); pending TestFlight + end-to-end test against a v1.5.22+ desktop.
 
 ## Shipped
 
