@@ -295,6 +295,7 @@ window.api.onStopAudio(() => {
     localStream = null;
   }
   tearDownKiwiGraph();
+  tearDownLocalMixGraph();
   audioSender = null;
   audioEl.srcObject = null;
   stopTxMeter();
@@ -369,14 +370,14 @@ window.api.onKiwiActive((active) => {
       try { startHealthMonitor(kiwiStream); } catch {}
     }
   } else {
-    // Restore the rig audio track. localStream still holds it because we
-    // only swapped at the sender, not the source.
-    const rigTrack = localStream && localStream.getAudioTracks()[0];
+    // Restore the rig audio track — the CW-sidetone mix stream if it was
+    // built this session (so sidetone keeps working), else raw localStream.
+    const rigTrack = rigSenderTrack();
     if (rigTrack) {
       audioSender.replaceTrack(rigTrack).catch((e) => {
         window.api.sendAudioStatus({ error: 'Rig track restore failed: ' + e.message });
       });
-      try { startHealthMonitor(localStream); } catch {}
+      try { startHealthMonitor(mixActive && mixStream ? mixStream : localStream); } catch {}
     }
   }
 });
@@ -472,9 +473,10 @@ function tearDownSmartGraph() {
     try { smartGain.disconnect(); } catch {}
     smartGain = null;
   }
-  if (sidetoneGain) {
+  if (sidetoneGain && sidetoneCtx === smartCtx) {
     try { sidetoneGain.disconnect(); } catch {}
     sidetoneGain = null;
+    sidetoneCtx = null;
   }
   if (smartDest) {
     try { smartDest.disconnect(); } catch {}
@@ -533,11 +535,12 @@ window.api.onSmartSdrAudioFallback(() => {
   // and put DAX (localStream) back on the WebRTC sender.
   tearDownSmartGraph();
   if (pc && audioSender && localStream) {
-    const rigTrack = localStream.getAudioTracks()[0];
+    const rigTrack = rigSenderTrack();
     if (rigTrack) {
       audioSender.replaceTrack(rigTrack).catch(() => {});
-      // Sender is back on localStream — point the health monitor there too.
-      try { startHealthMonitor(localStream); } catch {}
+      // Sender is back on rig audio (mix stream if CW sidetone built one
+      // this session, else raw localStream) — follow it with the monitor.
+      try { startHealthMonitor(mixActive && mixStream ? mixStream : localStream); } catch {}
     }
   }
 });
@@ -545,18 +548,24 @@ window.api.onSmartSdrAudioFallback(() => {
 // --- CW sidetone synthesis -----------------------------------------------
 // Casey K3SBP 2026-05-13: when the desktop fires a CW macro, the iOS
 // listener's audio bridge goes silent for the duration of TX. Root cause
-// is that the Flex slice RX (which dax_rx subscribes to) is muted by
-// firmware during TX — and POTACAT can't fix that with `transmit set
-// mon=1` because MON audio routes to a different Flex output stream
-// than dax_rx. Synthesizing the morse locally and mixing into smartDest
-// (downstream of smartGain so the TX-mute on RX audio still applies)
-// gives the iOS user audible feedback without depending on any rig-
-// specific sidetone routing — works for Yaesu / Icom / Kenwood too.
+// is that the rig's RX audio is muted during TX — the Flex slice RX (which
+// dax_rx subscribes to) is muted by firmware, and a non-Flex rig's USB
+// audio codec goes silent on its own during TX. POTACAT can't fix that on
+// the Flex with `transmit set mon=1` (MON audio routes to a different Flex
+// output stream than dax_rx), so instead we synthesize the morse locally
+// and mix it into whichever stream the WebRTC sender is carrying. This
+// gives the iOS user audible feedback with no dependence on rig-specific
+// sidetone routing — Flex, Yaesu, Icom, Kenwood all get it.
 //
-// We deliberately connect AFTER the smartGain TX-mute: smartGain → 0
-// silences any leaking RX audio (Flex slice RX still mutes itself
-// during TX, so this is belt-and-suspenders), and the sidetone path
-// connects directly to smartDest so it survives the mute.
+// Two mix targets, picked at play time by ensureSidetoneNode():
+//   1. Flex DAX-free path active → mix into smartDest (the synthetic
+//      VITA-49 stream). Connect directly to smartDest, i.e. AFTER the
+//      smartGain TX-mute, so the sidetone survives while leaking RX audio
+//      is silenced.
+//   2. Otherwise (non-Flex, or Flex on plain DAX) → build a Web Audio mix
+//      graph off the rig's getUserMedia stream (localStream) and swap the
+//      WebRTC sender onto it, so the sidetone has a destination that
+//      actually reaches the phone. Built lazily on the first CW send.
 const _MORSE_TABLE = {
   'A':'.-','B':'-...','C':'-.-.','D':'-..','E':'.','F':'..-.','G':'--.','H':'....',
   'I':'..','J':'.---','K':'-.-','L':'.-..','M':'--','N':'-.','O':'---','P':'.--.',
@@ -569,23 +578,96 @@ const SIDETONE_PITCH_DEFAULT_HZ = 600;  // Flex CW default; user override via se
 const SIDETONE_GAIN = 0.25;             // moderate level — won't clip when mixed with any leaking RX
 const SIDETONE_RAMP_MS = 5;             // attack/release shaping to avoid key-clicks at the iOS speaker
 let sidetoneGain = null;
+let sidetoneCtx = null;   // the AudioContext sidetoneGain currently lives on
 
+// Local-mix path (non-Flex / Flex-on-plain-DAX): combine the rig's
+// getUserMedia audio with the CW sidetone in a Web Audio graph and swap
+// the WebRTC sender onto the mixed stream. Built lazily on the first CW
+// send so the normal audio path is untouched until CW is actually used;
+// the rig audio passes straight through (mixSource → mixDest, no gain
+// node) so it behaves exactly as the raw localStream path does today.
+let mixCtx = null;
+let mixDest = null;
+let mixStream = null;
+let mixSource = null;
+let mixActive = false;
+
+function ensureLocalMixTrack() {
+  if (mixStream && mixDest) {
+    const tracks = mixStream.getAudioTracks();
+    if (tracks.length) return tracks[0];
+  }
+  if (!localStream) return null;
+  if (!mixCtx) mixCtx = new AudioContext();
+  if (!mixDest) mixDest = mixCtx.createMediaStreamDestination();
+  if (!mixSource) {
+    try {
+      mixSource = mixCtx.createMediaStreamSource(localStream);
+      mixSource.connect(mixDest);
+    } catch (e) {
+      return null; // localStream has no usable audio track
+    }
+  }
+  mixStream = mixDest.stream;
+  return mixStream.getAudioTracks()[0] || null;
+}
+
+function tearDownLocalMixGraph() {
+  mixActive = false;
+  if (sidetoneGain && sidetoneCtx === mixCtx) {
+    try { sidetoneGain.disconnect(); } catch {}
+    sidetoneGain = null;
+    sidetoneCtx = null;
+  }
+  if (mixSource) { try { mixSource.disconnect(); } catch {} mixSource = null; }
+  if (mixDest) { try { mixDest.disconnect(); } catch {} mixDest = null; }
+  if (mixCtx) { mixCtx.close().catch(() => {}); mixCtx = null; }
+  mixStream = null;
+}
+
+// The track the WebRTC sender should carry as "rig audio" when restoring
+// from a Kiwi/SmartSDR detour — prefers the CW-sidetone mix stream if it's
+// been built this session so sidetone keeps working after the detour.
+// Falls back to the raw localStream track (identical to pre-mix behavior).
+function rigSenderTrack() {
+  if (mixActive && mixStream) {
+    const t = mixStream.getAudioTracks()[0];
+    if (t) return t;
+  }
+  return localStream && localStream.getAudioTracks()[0];
+}
+
+// Returns the gain node the sidetone oscillators connect into, or null if
+// there's no audio bridge to mix into. Prefers the Flex DAX-free synthetic
+// stream when that path is live; otherwise builds/uses the local mix graph
+// and swaps the WebRTC sender onto it (once — replaceTrack is seamless, no
+// renegotiation, and the sender stays on the mixed stream for the session).
 function ensureSidetoneNode() {
-  // Hang off smartCtx — that's the AudioContext whose destination is
-  // already wired to the WebRTC sender on the Flex DAX-free path. We
-  // deliberately do NOT swap the sender's track here: on a non-Flex
-  // setup smartCtx hasn't been wired in, and force-swapping would
-  // disconnect the user from their localStream (mic / system audio)
-  // which is their normal bridge source. Bailing out cleanly is
-  // correct — Casey's reported case is Flex, where smartCtx is alive,
-  // and sidetone needs to mix into the already-active synthetic
-  // stream. Non-Flex sidetone is a follow-up that needs a separate
-  // mix path into localStream's source graph.
-  if (!smartCtx || !smartDest || !smartActive) return null;
-  if (!sidetoneGain) {
-    sidetoneGain = smartCtx.createGain();
+  let ctx = null, dest = null;
+  if (smartCtx && smartDest && smartActive) {
+    ctx = smartCtx; dest = smartDest;
+  } else if (pc && audioSender && localStream) {
+    const mixTrack = ensureLocalMixTrack();
+    if (!mixTrack) return null;
+    if (!mixActive) {
+      mixActive = true;
+      audioSender.replaceTrack(mixTrack).catch((e) => {
+        window.api.sendAudioStatus({ error: 'CW sidetone mix track replace failed: ' + e.message });
+        mixActive = false;
+      });
+      // Health monitor follows the sender onto the mixed stream.
+      try { startHealthMonitor(mixStream); } catch {}
+    }
+    ctx = mixCtx; dest = mixDest;
+  } else {
+    return null;
+  }
+  if (!sidetoneGain || sidetoneCtx !== ctx) {
+    if (sidetoneGain) { try { sidetoneGain.disconnect(); } catch {} }
+    sidetoneGain = ctx.createGain();
     sidetoneGain.gain.value = SIDETONE_GAIN;
-    sidetoneGain.connect(smartDest);
+    sidetoneGain.connect(dest);
+    sidetoneCtx = ctx;
   }
   return sidetoneGain;
 }
@@ -593,20 +675,20 @@ function ensureSidetoneNode() {
 window.api.onCwSidetonePlay((payload) => {
   if (!payload || !payload.text) return;
   const sg = ensureSidetoneNode();
-  if (!sg || !smartCtx) {
-    // Diagnostic — if sidetone is still silent, this line says why.
-    // smartActive false means the WebRTC sender hasn't been swapped to
-    // the SmartSDR-direct stream: either the iOS audio bridge isn't open,
-    // or the user's audioSource isn't 'smartsdr' (no DAX-free frames to
-    // trigger the swap). K3SBP 2026-05-14.
-    console.log('[CW sidetone] skipped — smartCtx=' + !!smartCtx +
-      ' smartDest=' + !!smartDest + ' smartActive=' + smartActive +
-      ' pc=' + !!pc + ' audioSender=' + !!audioSender);
+  if (!sg || !sidetoneCtx) {
+    // Diagnostic — if sidetone is still silent, this line says why. No mix
+    // target means the iOS audio bridge isn't open (no pc / audioSender) or
+    // there's no rig audio stream to mix into yet. K3SBP 2026-05-14.
+    console.log('[CW sidetone] skipped — smartActive=' + smartActive +
+      ' mixActive=' + mixActive + ' pc=' + !!pc +
+      ' audioSender=' + !!audioSender + ' localStream=' + !!localStream);
     return;
   }
-  if (smartCtx.state === 'suspended') smartCtx.resume().catch(() => {});
+  const ctx = sidetoneCtx;
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   console.log('[CW sidetone] playing: "' + payload.text + '" @ ' +
-    (payload.wpm || 20) + ' WPM ' + (payload.pitch || 600) + ' Hz');
+    (payload.wpm || 20) + ' WPM ' + (payload.pitch || 600) + ' Hz via ' +
+    (ctx === smartCtx ? 'smartsdr-direct' : 'local-mix'));
 
   const wpm = Math.max(5, Math.min(60, payload.wpm | 0)) || 20;
   const pitchHz = Math.max(300, Math.min(1200, payload.pitch | 0)) || SIDETONE_PITCH_DEFAULT_HZ;
@@ -617,7 +699,7 @@ window.api.onCwSidetonePlay((payload) => {
   const wordGap = 4 * ditSec;        // total 7 (3 already added at end of last char)
   const ramp = SIDETONE_RAMP_MS / 1000;
 
-  let t = smartCtx.currentTime + 0.05; // 50ms lead-in
+  let t = ctx.currentTime + 0.05; // 50ms lead-in
   const text = String(payload.text).toUpperCase();
   for (const ch of text) {
     if (ch === ' ') { t += wordGap; continue; }
@@ -629,10 +711,10 @@ window.api.onCwSidetonePlay((payload) => {
       // can garbage-collect them once they've played. The envelope ramps
       // shape the on/off transitions — a hard square edge produces audible
       // key-clicks especially through the iOS speaker's small driver.
-      const osc = smartCtx.createOscillator();
+      const osc = ctx.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = pitchHz;
-      const env = smartCtx.createGain();
+      const env = ctx.createGain();
       env.gain.setValueAtTime(0, t);
       env.gain.linearRampToValueAtTime(1, t + ramp);
       env.gain.setValueAtTime(1, t + dur - ramp);
