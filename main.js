@@ -9864,15 +9864,20 @@ function isNewerVersion(current, latest) {
 }
 
 function checkForUpdates() {
-  if (autoUpdater.isUpdaterActive()) {
+  // macOS: our DMGs are ad-hoc signed (no paid Developer ID), so
+  // electron-updater's download → quitAndInstall path fails Gatekeeper
+  // validation and gives the user a "Downloading… → Upgrade" flash with
+  // no actual update. Force the manual / portable path on macOS until
+  // we get notarized builds. WZ1H on v1.5.23 caught this. K3SBP 2026-05-15.
+  const macOsAutoUpdateUnsupported = process.platform === 'darwin';
+  if (autoUpdater.isUpdaterActive() && !macOsAutoUpdateUnsupported) {
     // Installed build — use electron-updater
     autoUpdater.checkForUpdates().catch(() => {});
-    // Also tell renderer that auto-update is available
     if (win && !win.isDestroyed()) {
       win.webContents.send('updater-active', true);
     }
   } else {
-    // Portable build — fall back to manual GitHub API check
+    // Portable build (or macOS) — manual GitHub release check
     if (win && !win.isDestroyed()) {
       win.webContents.send('updater-active', false);
     }
@@ -10273,8 +10278,30 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
   const shouldDisableNativeXit = shouldClearXit || useVfoShift;
 
   const m = (mode || '').toUpperCase();
+  // Group modes into filter categories so we can preserve the operator's live
+  // filter adjustment within a category (e.g. SSB→SSB) while still resetting
+  // when crossing categories (CW→SSB) — which would otherwise leave a 500 Hz
+  // CW filter on an SSB tune. N5WBL on v1.5.23: every SSB spot click was
+  // forcing the rig back to settings.ssbFilterWidth (2400 Hz default),
+  // overwriting filter width adjustments he'd just made on the radio.
+  // commit acfa406 removed the live-preserve fallback but never replaced it
+  // with the promised category-aware version; this is that replacement.
+  // K3SBP 2026-05-15.
+  function _modeCategory(mm) {
+    if (mm === 'CW' || mm === 'CW-R' || mm === 'CWR') return 'CW';
+    if (mm === 'SSB' || mm === 'USB' || mm === 'LSB') return 'SSB';
+    if (mm === 'FT8' || mm === 'FT4' || mm === 'FT2' || mm === 'DIGU' || mm === 'DIGL' ||
+        mm === 'PKTUSB' || mm === 'PKTLSB' || mm === 'RTTY' || mm.startsWith('PSK') || mm === 'JS8') return 'DIG';
+    return mm; // FM, AM, FREEDV, etc. stay as their own category
+  }
+  const prevCategory = _modeCategory((_currentMode || '').toUpperCase());
+  const newCategory  = _modeCategory(m);
+  const sameCategory = prevCategory && prevCategory === newCategory;
   let filterWidth = 0;
-  if (m === 'CW') {
+  if (sameCategory && _currentFilterWidth > 0) {
+    // Stay on the operator's live width — don't snap back to the saved default.
+    filterWidth = _currentFilterWidth;
+  } else if (m === 'CW') {
     filterWidth = settings.cwFilterWidth || 0;
   } else if (m === 'SSB' || m === 'USB' || m === 'LSB') {
     filterWidth = settings.ssbFilterWidth || 0;
@@ -10285,8 +10312,6 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
   } else if (m === 'AM') {
     filterWidth = 0; // AM uses radio default
   }
-  // Only preserve live filter adjustment if staying on the same mode category
-  // (prevents CW filter from bleeding into SSB or vice versa)
 
   // FreeDV: auto-start/stop engine based on spot mode
   const isFreedvMode = m.startsWith('FREEDV') || m === 'DV';

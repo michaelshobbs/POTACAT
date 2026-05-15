@@ -9671,6 +9671,14 @@ window.api.onUpdateError((msg) => {
   actionBtn.textContent = 'Upgrade';
   actionBtn.disabled = false;
   console.error('Update error:', msg);
+  // The button-reset alone produces a "momentary flash" with no user
+  // feedback (WZ1H on macOS v1.5.23). Surface a toast so the user knows
+  // something failed and can grab the build manually if needed.
+  if (typeof showLogToast === 'function') {
+    showLogToast('Auto-update failed: ' + (msg || 'unknown error') +
+      ' — download manually from github.com/Waffleslop/POTACAT/releases',
+      { duration: 8000 });
+  }
 });
 
 window.api.onUpdateDownloaded(() => {
@@ -12998,6 +13006,13 @@ function keyEventToString(e) {
 
 function executeHotkeyAction(binding) {
   const a = binding.action || '';
+  // Surface to the CAT log panel (not just devtools) so users diagnosing
+  // a misbehaving hotkey can actually see what happened. bjh on v1.5.20+:
+  // his Ctrl-F1 fires the binding but visible action depends on the tune
+  // param being non-empty — log loudly if it isn't. K3SBP 2026-05-15.
+  if (window.api && window.api.jtcatLog) {
+    window.api.jtcatLog('[Hotkey] execute ' + a + (binding.param ? ' (' + binding.param + ')' : ''));
+  }
   console.log('[Hotkey] execute', a, binding.param || '');
   const cwMatch = a.match(/^cw-macro-(\d)$/);
   if (cwMatch) {
@@ -13022,11 +13037,24 @@ function executeHotkeyAction(binding) {
     window.api.rigControl({ action: 'set-nb', value: _hotkeyNbState });
     return;
   }
-  if (a === 'tune' && binding.param) {
+  if (a === 'tune') {
+    if (!binding.param) {
+      if (window.api && window.api.jtcatLog) {
+        window.api.jtcatLog('[Hotkey] tune action has no frequency configured — set "<freq kHz> <mode>" (e.g. "14025 CW") in Settings → Hotkeys');
+      }
+      console.warn('[Hotkey] tune action has no param — set "<freq> <mode>" in Settings → Hotkeys');
+      return;
+    }
     const parts = binding.param.split(/\s+/);
     const freq = parseFloat(parts[0]);
     const mode = parts[1] || '';
-    if (freq) window.api.tune(String(freq), mode);
+    if (!freq) {
+      if (window.api && window.api.jtcatLog) {
+        window.api.jtcatLog('[Hotkey] tune param "' + binding.param + '" — could not parse frequency. Format: "<freq kHz> <mode>" (e.g. "14025 CW")');
+      }
+      return;
+    }
+    window.api.tune(String(freq), mode);
     return;
   }
 }
@@ -13041,6 +13069,14 @@ document.addEventListener('keydown', (e) => {
   if (!keyStr || keyStr === 'Control' || keyStr === 'Alt' || keyStr === 'Shift') return;
 
   const binding = hotkeyBindings.find(b => b.key === keyStr);
+  // Diagnostic: route chorded keys (Ctrl/Alt/Meta + key) to the CAT log
+  // panel so users without devtools open can see what their hotkey is
+  // doing. Bare typing keys stay console-only to avoid spam.
+  const isChord = e.ctrlKey || e.altKey || e.metaKey;
+  if (isChord && window.api && window.api.jtcatLog) {
+    window.api.jtcatLog('[Hotkey] keydown ' + JSON.stringify(keyStr) +
+      (binding ? ' → ' + binding.action : ' (no binding configured)'));
+  }
   console.log('[Hotkey] keydown', JSON.stringify(keyStr), binding ? '→ ' + binding.action : '(no binding)');
   if (binding) {
     e.preventDefault();
