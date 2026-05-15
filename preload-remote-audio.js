@@ -35,4 +35,9 @@ contextBridge.exposeInMainWorld('api', {
   // the bridge destination gives the iOS user audible feedback without
   // depending on rig-specific sidetone routing. Casey K3SBP 2026-05-13.
   onCwSidetonePlay: (cb) => ipcRenderer.on('cw-sidetone-play', (_e, payload) => cb(payload)),
+  // DAX TX direct path — forward downsampled (24 kHz mono Float32) WebRTC
+  // mic chunks to main, which wraps them in VITA-49 dax_tx packets and
+  // sends to the radio. Bypasses Windows DAX TX device entirely.
+  // K3SBP 2026-05-15.
+  daxTxChunk: (samples) => ipcRenderer.send('dax-tx-chunk', samples),
 });

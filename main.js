@@ -3655,16 +3655,59 @@ function startJtcat(mode) {
     if (remoteServer && remoteServer.hasClient()) {
       remoteServer.broadcastJtcatTxStatus({ state: 'tx', message: data.message, slot: data.slot, txFreq: ft8Engine._txFreq });
     }
-    setTimeout(() => {
-      if (win && !win.isDestroyed() && ft8Engine && ft8Engine._txActive) {
-        win.webContents.send('jtcat-tx-audio', { samples: Array.from(data.samples), offsetMs: data.offsetMs || 0 });
-      }
-    }, 200);
+
+    // Audio dispatch. Two routes:
+    //
+    //   1. SmartSDR Direct TX (preferred when available) — fire FT8 audio
+    //      as VITA-49 dax_tx packets straight to the radio, no Windows
+    //      DAX device, no DAX program required. Solves the "RDP killed
+    //      DAX, now I can't TX" failure mode entirely (K3SBP 2026-05-15).
+    //      Also eliminates the 200ms IPC + renderer-scheduling latency
+    //      that used to eat into the FT8 safety budget.
+    //
+    //   2. Renderer Windows DAX TX route (the historical path) — kicks
+    //      in when the user is on a non-SmartSDR audio source OR the
+    //      dax_tx subscribe never completed OR the direct send fails
+    //      mid-cycle. Audio still goes to settings.remoteAudioOutput;
+    //      DAX program is required.
+    const directTxOk = settings.audioSource === 'smartsdr' &&
+                       smartSdrAudio &&
+                       smartSdrAudio.connected &&
+                       smartSdrAudio.txReady;
+    if (directTxOk) {
+      sendCatLog(`[SmartSDR-Audio] DAX TX direct → radio (bypassing Windows DAX)`);
+      smartSdrAudio.sendTxAudio(data.samples, data.offsetMs || 0)
+        .then(() => {
+          // Audio fully queued to the rig at real-time pace; small grace
+          // window for the radio to drain its internal buffer before we
+          // release PTT, then signal engine to clear its safety timer.
+          setTimeout(() => {
+            if (ft8Engine && ft8Engine._txActive) ft8Engine.txComplete();
+          }, 150);
+        })
+        .catch((e) => {
+          sendCatLog(`[SmartSDR-Audio] Direct TX failed: ${e.message} — falling back to Windows DAX TX route this cycle`);
+          if (win && !win.isDestroyed() && ft8Engine && ft8Engine._txActive) {
+            win.webContents.send('jtcat-tx-audio', { samples: Array.from(data.samples), offsetMs: data.offsetMs || 0 });
+          }
+        });
+    } else {
+      setTimeout(() => {
+        if (win && !win.isDestroyed() && ft8Engine && ft8Engine._txActive) {
+          win.webContents.send('jtcat-tx-audio', { samples: Array.from(data.samples), offsetMs: data.offsetMs || 0 });
+        }
+      }, 200);
+    }
   });
 
   ft8Engine.on('tx-end', () => {
     console.log('[JTCAT] TX end — PTT off');
     handleRemotePtt(false);
+    // Stop the paced UDP pump if SmartSDR Direct TX was driving this cycle —
+    // otherwise packets keep flowing after PTT release (harmless once the
+    // radio is in RX, but wasted bandwidth, and a cancel mid-cycle would
+    // bleed into the next slot).
+    if (smartSdrAudio) { try { smartSdrAudio.cancelTx(); } catch {} }
     if (win && !win.isDestroyed()) {
       win.webContents.send('jtcat-tx-status', { state: 'rx' });
     }
@@ -7347,6 +7390,8 @@ async function startRemoteAudio() {
       inputDeviceId: settings.remoteAudioInput || '',
       outputDeviceId: settings.remoteAudioOutput || '',
       useStun: !!settings.remoteStun,
+      audioSource: settings.audioSource || 'dax',
+      daxTxDirect: settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady,
     });
     // Re-apply FreeDV mute after audio restart
     if (_freedvAudioMuted) setTimeout(() => applyFreedvAudioMute(), 500);
@@ -7380,6 +7425,8 @@ async function startRemoteAudio() {
       remoteAudioWin.webContents.send('remote-audio-start', {
         inputDeviceId: settings.remoteAudioInput || '',
         outputDeviceId: settings.remoteAudioOutput || '',
+        audioSource: settings.audioSource || 'dax',
+        daxTxDirect: settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady,
       });
       // Apply FreeDV mute if engine is active (audio window created after FreeDV started)
       if (_freedvAudioMuted) applyFreedvAudioMute();
@@ -14630,6 +14677,35 @@ app.whenReady().then(() => {
     console.log('[JTCAT] Auto-CQ mode:', mode);
   });
   ipcMain.on('jtcat-tx-complete', () => { if (ft8Engine) ft8Engine.txComplete(); });
+
+  // DAX TX direct chunks from remote-audio.html (iOS phone mic → WebRTC →
+  // renderer downsample → IPC chunk → here → VITA-49 to radio). Bypasses
+  // the Windows DAX TX device + DAX program for SSB / FM / AM voice when
+  // the user is on the SmartSDR Direct audio source. Each chunk is a
+  // Float32Array of 128 mono samples at 24 kHz (one VITA packet's worth).
+  let _daxTxChunkCount = 0;
+  ipcMain.on('dax-tx-chunk', (_e, buf) => {
+    if (!smartSdrAudio || !smartSdrAudio.txReady) return;
+    let samples;
+    if (buf instanceof Float32Array) samples = buf;
+    else if (ArrayBuffer.isView(buf) || buf instanceof ArrayBuffer) samples = new Float32Array(buf);
+    else if (Array.isArray(buf)) samples = new Float32Array(buf);
+    else { try { samples = new Float32Array(Object.values(buf)); } catch { return; } }
+    _daxTxChunkCount++;
+    // Diagnostic — log first chunk + heartbeat every ~5 s (chunks arrive
+    // at ~188/s) so we can see end-to-end the WebRTC → VITA-49 path is
+    // alive without flooding the log.
+    if (_daxTxChunkCount === 1 || _daxTxChunkCount % 1000 === 0) {
+      let peak = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const v = Math.abs(samples[i]); if (v > peak) peak = v;
+      }
+      sendCatLog(`[SmartSDR-Audio] DAX TX chunk #${_daxTxChunkCount}: ${samples.length} samples, peak=${peak.toFixed(4)}`);
+    }
+    try { smartSdrAudio.pushTxAudioChunk(samples); } catch (e) {
+      console.warn('[SmartSDR-Audio] pushTxAudioChunk error:', e.message);
+    }
+  });
   ipcMain.on('jtcat-log', (_e, msg) => {
     console.log(msg);
     // Also surface in the Verbose CAT log so users diagnosing JTCAT

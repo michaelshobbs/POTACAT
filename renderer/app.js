@@ -18331,6 +18331,31 @@ window.api.onJtcatStatus(function(data) {
 var jtcatTxAudioCtx = null;
 var jtcatTxPlaying = false;
 
+// enumerateDevices() is slow on Chromium (often 500–1000 ms on first call,
+// especially when there are many devices). The safety budget between
+// tx-start and source.start is only ~360 ms for FT8 (cycle 15s, audio
+// 13.14s, main's 200ms IPC delay), so calling it on every TX pushes
+// source.start past the engine's safety timeout and the FT8 envelope
+// gets cut off mid-transmit. Cache the deviceId→label lookup once and
+// refresh it lazily only when the lookup misses. K3SBP 2026-05-15.
+var _jtcatTxDeviceCache = { id: '', label: '', stamp: 0 };
+async function _resolveTxDeviceLabel(deviceId) {
+  if (!deviceId) return { label: '', found: false };
+  if (_jtcatTxDeviceCache.id === deviceId && _jtcatTxDeviceCache.label) {
+    return { label: _jtcatTxDeviceCache.label, found: true };
+  }
+  try {
+    var devices = await navigator.mediaDevices.enumerateDevices();
+    for (var i = 0; i < devices.length; i++) {
+      if (devices[i].kind === 'audiooutput' && devices[i].deviceId === deviceId) {
+        _jtcatTxDeviceCache = { id: deviceId, label: devices[i].label || '(unnamed)', stamp: Date.now() };
+        return { label: _jtcatTxDeviceCache.label, found: true };
+      }
+    }
+  } catch {}
+  return { label: '', found: false };
+}
+
 async function playJtcatTxAudio(data) {
   var samplesArray = data.samples || data;
   var offsetMs = data.offsetMs || 0;
@@ -18349,11 +18374,15 @@ async function playJtcatTxAudio(data) {
     }
 
     // Route to the configured output device (DAX TX, USB soundcard, digirig, etc.)
+    var sinkApplied = false;
+    var sinkError = '';
     if (outputDeviceId && jtcatTxAudioCtx.setSinkId) {
       try {
         await jtcatTxAudioCtx.setSinkId(outputDeviceId);
+        sinkApplied = true;
       } catch (e) {
-        console.warn('[JTCAT] Could not set TX audio output device:', e.message);
+        sinkError = e.message || String(e);
+        console.warn('[JTCAT] Could not set TX audio output device:', sinkError);
       }
     }
 
@@ -18390,8 +18419,42 @@ async function playJtcatTxAudio(data) {
     var SLOT_AUDIO_START_MS = 500; // WSJT-X convention
     var leadingDelaySec = Math.max(0, (SLOT_AUDIO_START_MS - offsetMs) / 1000);
     var startTime = jtcatTxAudioCtx.currentTime + leadingDelaySec;
-    source.start(startTime, 0, buffer.duration);
+    // Pinpoint diagnostic — log just before source.start so a hang/throw
+    // here vs. earlier in the function is unambiguous in the log.
+    window.api.jtcatLog('[JTCAT TX] starting buffer source: bufDur=' + buffer.duration.toFixed(2) +
+      's leadingDelay=' + leadingDelaySec.toFixed(3) + 's ctxState=' + jtcatTxAudioCtx.state);
+    try {
+      source.start(startTime, 0, buffer.duration);
+    } catch (e) {
+      window.api.jtcatLog('[JTCAT TX] source.start() THREW: ' + (e.message || String(e)) +
+        ' — radio will not transmit. Often means the AudioContext sink (DAX device) is in a bad state.');
+      throw e;
+    }
     var totalPlaySec = leadingDelaySec + buffer.duration;
+
+    // Surface where the FT8 audio is actually going — AFTER source.start
+    // so the device-label enumeration (slow on Chromium first call) never
+    // blocks the TX hot path. The 360 ms budget between tx-start and
+    // source.start otherwise gets eaten and the safety timeout chops PTT
+    // mid-cycle. K3SBP 2026-05-15.
+    (function logTxDevice() {
+      if (!outputDeviceId) {
+        window.api.jtcatLog('[JTCAT TX] WARNING: no output device configured — FT8 audio plays to system default. Set "Audio Output" in Settings to your DAX TX (Flex) or rig USB CODEC.');
+        return;
+      }
+      if (!sinkApplied) {
+        window.api.jtcatLog('[JTCAT TX] WARNING: setSinkId failed (' + sinkError + ') — FT8 audio is on system default, radio will NOT transmit. The saved device is stale or missing. Flex users: make sure the DAX program is running with TX1 mapped to your slice, then re-select the device in Settings.');
+        return;
+      }
+      _resolveTxDeviceLabel(outputDeviceId).then(function(r) {
+        if (r.found) {
+          window.api.jtcatLog('[JTCAT TX] Output device: ' + r.label);
+        } else {
+          window.api.jtcatLog('[JTCAT TX] Output device: (label unresolved, sink applied) id=' + outputDeviceId.slice(0, 12) + '…');
+        }
+      });
+    })();
+
     // Fire tx-complete based on the AudioContext clock + small grace,
     // not onended. On Web Audio sinks with deep output buffers (WebRTC-
     // routed devices, USB CODECs with large jitter buffers) onended can

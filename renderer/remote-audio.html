@@ -82,12 +82,27 @@ window.api.onStartAudio(async (config) => {
     // When phone's mic audio arrives, route to radio's USB audio input
     pc.ontrack = async (event) => {
       audioEl.srcObject = event.streams[0];
-      // Route to specific output device (radio's USB audio input)
-      if (config.outputDeviceId && typeof audioEl.setSinkId === 'function') {
-        try {
-          await audioEl.setSinkId(config.outputDeviceId);
-        } catch (e) {
-          window.api.sendAudioStatus({ error: 'Failed to set output device: ' + e.message });
+      // Direct DAX TX path: when the user is on the SmartSDR Direct audio
+      // source AND the dax_tx stream is subscribed in main, we bypass the
+      // Windows DAX TX device entirely — tap the WebRTC stream through an
+      // AudioWorklet and forward 24 kHz mono chunks via IPC to main, which
+      // wraps them in VITA-49 dax_tx packets straight to the radio. The
+      // <audio> element stays muted in this mode so the audio doesn't
+      // also reach a Windows DAX device (which would double-feed the
+      // slice and produce echo / distortion). K3SBP 2026-05-15.
+      if (config.daxTxDirect) {
+        audioEl.muted = true;
+        try { await startDaxTxTap(event.streams[0]); }
+        catch (e) { window.api.sendAudioStatus({ error: 'DAX TX tap init failed: ' + e.message }); }
+      } else {
+        audioEl.muted = false;
+        // Route to specific output device (radio's USB audio input via DAX program)
+        if (config.outputDeviceId && typeof audioEl.setSinkId === 'function') {
+          try {
+            await audioEl.setSinkId(config.outputDeviceId);
+          } catch (e) {
+            window.api.sendAudioStatus({ error: 'Failed to set output device: ' + e.message });
+          }
         }
       }
       // PC-side TX peak meter — tap the incoming stream with an AnalyserNode
@@ -163,6 +178,41 @@ window.api.onFreedvMute((muted) => {
     localStream.getAudioTracks().forEach(t => { t.enabled = !muted; });
   }
 });
+
+// --- DAX TX direct tap (bypasses Windows DAX TX device) ---
+// Forwards the WebRTC phone-mic audio to main as 24 kHz mono Float32 chunks,
+// which main wraps in VITA-49 dax_tx packets and ships to the radio. The
+// parent AudioContext is created at sampleRate: 24000 so the engine handles
+// the 48k→24k resample for us — process() sees one packet's worth (128
+// frames) per tick, which is exactly what main wants per IPC chunk.
+let _daxTxCtx = null;
+let _daxTxNode = null;
+let _daxTxSource = null;
+async function startDaxTxTap(stream) {
+  stopDaxTxTap();
+  if (!stream || !window.api.daxTxChunk) {
+    window.api.sendAudioStatus({ error: 'DAX TX tap: missing api.daxTxChunk in preload' });
+    return;
+  }
+  _daxTxCtx = new AudioContext({ sampleRate: 24000 });
+  await _daxTxCtx.audioWorklet.addModule('dax-tx-worklet.js');
+  _daxTxSource = _daxTxCtx.createMediaStreamSource(stream);
+  _daxTxNode = new AudioWorkletNode(_daxTxCtx, 'dax-tx-processor');
+  _daxTxNode.port.onmessage = (ev) => {
+    if (ev.data) window.api.daxTxChunk(ev.data);
+  };
+  _daxTxSource.connect(_daxTxNode);
+  // Connect to destination so the worklet stays scheduled. The dest is
+  // muted (default 0 gain on a hidden window output) so this doesn't
+  // make sound; it just keeps the audio graph alive.
+  _daxTxNode.connect(_daxTxCtx.destination);
+  if (_daxTxCtx.state === 'suspended') { try { await _daxTxCtx.resume(); } catch {} }
+}
+function stopDaxTxTap() {
+  if (_daxTxNode) { try { _daxTxNode.disconnect(); } catch {} _daxTxNode = null; }
+  if (_daxTxSource) { try { _daxTxSource.disconnect(); } catch {} _daxTxSource = null; }
+  if (_daxTxCtx) { _daxTxCtx.close().catch(() => {}); _daxTxCtx = null; }
+}
 
 // --- TX peak meter (PC-side) ---
 // Taps the WebRTC track with an AnalyserNode in a parallel AudioContext. The
@@ -296,6 +346,7 @@ window.api.onStopAudio(() => {
   }
   tearDownKiwiGraph();
   tearDownLocalMixGraph();
+  stopDaxTxTap();
   audioSender = null;
   audioEl.srcObject = null;
   stopTxMeter();
