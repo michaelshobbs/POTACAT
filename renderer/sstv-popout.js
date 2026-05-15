@@ -1471,6 +1471,12 @@ async function startRxAudio() {
     sstvWorkletNode.connect(sstvAudioCtx.destination); // needed to keep processing
 
     sstvWorkletNode.port.onmessage = (e) => {
+      // SmartSDR Direct: the VITA-49 path in main feeds both the decoder
+      // and the waterfall (see onSstvVita49Audio handler below). Skip the
+      // local Windows-DAX capture entirely on this path so silent samples
+      // don't pile into the waterfall accumulator and dilute the FFT
+      // output. K3SBP 2026-05-15.
+      if (settings && settings.audioSource === 'smartsdr') return;
       // Send audio samples to main process for SSTV decoder (skip during TX to avoid self-decode)
       if (!isTx) window.api.sstvAudio(e.data);
       // Feed waterfall
@@ -1491,6 +1497,21 @@ async function startRxAudio() {
     rxInfo.textContent = 'No audio input';
     statusBar.textContent = 'Audio error: ' + err.message;
   }
+}
+
+// SmartSDR Direct: main forwards VITA-49 dax_rx audio (already 2x-upsampled
+// to 48 kHz to match WF_SAMPLE_RATE) so the waterfall renders even though
+// the local Windows DAX RX getUserMedia capture is silent on this path.
+// The decoder itself is fed by main from the same VITA-49 stream — see the
+// `sstv-audio` IPC drop in main when audioSource === 'smartsdr'. K3SBP
+// 2026-05-15.
+if (window.api && window.api.onSstvVita49Audio) {
+  window.api.onSstvVita49Audio((frame) => {
+    if (!frame || !frame.pcm || !frame.pcm.length) return;
+    if (isTx) return; // don't paint the waterfall during own TX
+    const samples = (frame.pcm instanceof Float32Array) ? frame.pcm : new Float32Array(frame.pcm);
+    feedWaterfall(samples);
+  });
 }
 
 // ===== MULTI-SLICE =========================================================

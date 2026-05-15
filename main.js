@@ -3951,6 +3951,26 @@ function startSmartSdrAudio() {
     // sitting at max=0.0000 / 0 decodes — it never honored the audio-source
     // setting. The FT8 engine wants 12 kHz mono; dax_rx is 24 kHz, so
     // average sample pairs (cheap 2-tap LP + 2:1 decimate). K3SBP 2026-05-14.
+    if (settings.audioSource === 'smartsdr' && sstvEngine) {
+      // SSTV decoder + waterfall need audio too. sstvEngine expects 48 kHz
+      // and the pop-out's waterfall hard-codes WF_SAMPLE_RATE=48000 for
+      // its FFT bin mapping; VITA-49 dax_rx is 24 kHz, so 2x upsample
+      // with linear interpolation and forward the same 48 kHz buffer to
+      // both. Without this the waterfall is blank on SmartSDR Direct
+      // (Windows DAX RX device is bypassed and silent). K3SBP 2026-05-15.
+      const srcSstv = (pcm instanceof Float32Array) ? pcm : new Float32Array(pcm);
+      const upsampled = new Float32Array(srcSstv.length * 2);
+      for (let i = 0; i < srcSstv.length; i++) {
+        const s0 = srcSstv[i];
+        const s1 = (i + 1 < srcSstv.length) ? srcSstv[i + 1] : s0;
+        upsampled[i * 2]     = s0;
+        upsampled[i * 2 + 1] = (s0 + s1) * 0.5;
+      }
+      sstvEngine.feedAudio(upsampled);
+      if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
+        sstvPopoutWin.webContents.send('sstv-vita49-audio', { pcm: Array.from(upsampled), sampleRate: 48000 });
+      }
+    }
     if (settings.audioSource === 'smartsdr' && jtcatManager && jtcatManager.running) {
       const src = (pcm instanceof Float32Array) ? pcm : new Float32Array(pcm);
       const out = new Float32Array(src.length >> 1);
@@ -12132,6 +12152,10 @@ app.whenReady().then(() => {
 
   ipcMain.on('sstv-audio', (_e, buf) => {
     if (!sstvEngine) return;
+    // SmartSDR Direct: VITA-49 audio is fed straight from main's audio-frame
+    // handler. Drop the renderer's (silent on this path) Windows-DAX-RX
+    // capture so the same audio isn't double-fed at the decoder.
+    if (settings.audioSource === 'smartsdr' && smartSdrAudio) return;
     let samples;
     if (buf instanceof Float32Array) samples = buf;
     else if (Array.isArray(buf)) samples = new Float32Array(buf);

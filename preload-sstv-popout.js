@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('api', {
   onSstvRxVis: (cb) => ipcRenderer.on('sstv-rx-vis', (_e, d) => cb(d)),
   onSstvStatus: (cb) => ipcRenderer.on('sstv-status', (_e, d) => cb(d)),
   onSstvRxDebug: (cb) => ipcRenderer.on('sstv-rx-debug', (_e, d) => cb(d)),
+  // SmartSDR Direct: VITA-49 audio frames forwarded from main so the SSTV
+  // waterfall can render without depending on a Windows DAX RX device
+  // (which is silent on the SmartSDR Direct path). K3SBP 2026-05-15.
+  onSstvVita49Audio: (cb) => ipcRenderer.on('sstv-vita49-audio', (_e, frame) => cb(frame)),
   // Gallery
   sstvGetGallery: () => ipcRenderer.invoke('sstv-get-gallery'),
   sstvOpenGalleryFolder: () => ipcRenderer.send('sstv-open-gallery-folder'),
