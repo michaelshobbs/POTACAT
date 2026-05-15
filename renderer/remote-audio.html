@@ -270,15 +270,20 @@ let _healthTimer = null;
 let _healthSilentCount = 0;
 let _healthState = 'unknown'; // 'ok' | 'silent' | 'unknown'
 let _txEndedAtMs = 0;          // last kiwiTxMuted true→false transition
-const HEALTH_SILENT_THRESHOLD = 15;  // 15 × 1s = 15 s of zero before flagging
+const HEALTH_SILENT_THRESHOLD = 90;  // 90 × 1s = 90 s of zero before flagging
 const HEALTH_PEAK_FLOOR = 0.0005;    // below this is "no audio"
-// 2026-05-15: bumped 5s → 15s after K3SBP saw a false-positive silent-restart
-// kick off mid-session while listening to a quiet 20m freq. Auto-restart
-// killed iOS WebRTC and the post-restart mic path didn't recover cleanly,
-// so the user's next voice TX went out silent. A quiet-band stretch of
-// 5–15s of zero RX is common operating behavior; 15s still catches real
-// dax_rx stalls (Flex slice mute → no recovery) faster than a user would
-// give up and click Restart manually.
+// 2026-05-15: a previous tighter threshold (5s, then 15s) kept triggering
+// auto-restart while users were legitimately listening on a quiet freq —
+// "is this frequency in use?" → wait → set up gear → call CQ is a 30s+
+// silent stretch every time. Bumped to 90s.
+//
+// On SmartSDR Direct (smartActive=true), the peak-zero detector is
+// *disabled entirely* — VITA-49 frames legitimately carry silence on a
+// quiet frequency, so peak-zero is meaningless there. The real failure
+// case for the SmartSDR Direct path (Flex stops sending UDP frames
+// post-TX) is caught directly by smartSdrAudio's frame-stall detector
+// in main, which already triggers a clean re-subscribe without killing
+// iOS WebRTC. See the `if (smartActive)` skip below.
 const HEALTH_POST_TX_GRACE_MS = 1500; // suppress detection after PTT release
                                       // so the rig's audio path can settle
                                       // (DAX RX hand-off, USB codec AGC) without
@@ -312,6 +317,16 @@ function startHealthMonitor(stream) {
     // counter was creeping up before the gate activated.
     const inGrace = _txEndedAtMs && (Date.now() - _txEndedAtMs) < HEALTH_POST_TX_GRACE_MS;
     if (kiwiTxMuted || inGrace) {
+      _healthSilentCount = 0;
+      return;
+    }
+    // On SmartSDR Direct, the sender carries smartStream (synthetic from
+    // VITA-49 frames). Silence on the wire just means a quiet frequency
+    // — peak-zero is meaningless. The genuine failure mode (Flex stops
+    // sending UDP frames after TX) is caught directly by smartSdrAudio's
+    // frame-stall detector in main.js, which re-subscribes without
+    // tearing down the iOS WebRTC session.
+    if (smartActive) {
       _healthSilentCount = 0;
       return;
     }
