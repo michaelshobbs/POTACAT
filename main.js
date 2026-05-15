@@ -14727,6 +14727,8 @@ app.whenReady().then(() => {
   // the user is on the SmartSDR Direct audio source. Each chunk is a
   // Float32Array of 128 mono samples at 24 kHz (one VITA packet's worth).
   let _daxTxChunkCount = 0;
+  let _daxTxLastVoiceLogMs = 0;
+  let _daxTxLastPeakReport = 0;
   ipcMain.on('dax-tx-chunk', (_e, buf) => {
     if (!smartSdrAudio || !smartSdrAudio.txReady) return;
     let samples;
@@ -14735,15 +14737,28 @@ app.whenReady().then(() => {
     else if (Array.isArray(buf)) samples = new Float32Array(buf);
     else { try { samples = new Float32Array(Object.values(buf)); } catch { return; } }
     _daxTxChunkCount++;
-    // Diagnostic — log first chunk + heartbeat every ~5 s (chunks arrive
-    // at ~188/s) so we can see end-to-end the WebRTC → VITA-49 path is
-    // alive without flooding the log.
+    let peak = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const v = Math.abs(samples[i]); if (v > peak) peak = v;
+    }
+    // Heartbeat every ~5s (chunks land at ~188/s) so we can see the
+    // pipe is alive at all. Captures running peak between heartbeats
+    // so we don't undersample voice that falls between sample points.
+    if (peak > _daxTxLastPeakReport) _daxTxLastPeakReport = peak;
     if (_daxTxChunkCount === 1 || _daxTxChunkCount % 1000 === 0) {
-      let peak = 0;
-      for (let i = 0; i < samples.length; i++) {
-        const v = Math.abs(samples[i]); if (v > peak) peak = v;
+      sendCatLog(`[SmartSDR-Audio] DAX TX chunk #${_daxTxChunkCount}: pipe alive, max peak since last report=${_daxTxLastPeakReport.toFixed(4)}`);
+      _daxTxLastPeakReport = 0;
+    }
+    // Voice-activity log: fires once per second when a clearly-real-audio
+    // chunk (peak > 0.02, ~ -34 dBFS) arrives. Lets us confirm whether
+    // iOS is actually streaming mic audio during a TX cycle vs. sending
+    // silent chunks (a known iOS bug after WebRTC re-negotiation).
+    if (peak > 0.02) {
+      const now = Date.now();
+      if (now - _daxTxLastVoiceLogMs > 1000) {
+        _daxTxLastVoiceLogMs = now;
+        sendCatLog(`[SmartSDR-Audio] DAX TX voice: peak=${peak.toFixed(3)} (${(20 * Math.log10(peak)).toFixed(0)} dBFS)`);
       }
-      sendCatLog(`[SmartSDR-Audio] DAX TX chunk #${_daxTxChunkCount}: ${samples.length} samples, peak=${peak.toFixed(4)}`);
     }
     try { smartSdrAudio.pushTxAudioChunk(samples); } catch (e) {
       console.warn('[SmartSDR-Audio] pushTxAudioChunk error:', e.message);
