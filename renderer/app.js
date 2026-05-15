@@ -1281,6 +1281,7 @@ async function loadPrefs() {
   showDxBar = settings.showDxBar === true;
   dxCommandPreferredNode = localStorage.getItem('dx-command-node') || '';
   updateDxCommandBar();
+  applyClusterSpotterFilters(settings);
   enableRbn = settings.enableRbn === true; // default false
   enablePskr = settings.enablePskr === true; // default false
   enablePskrMap = settings.enablePskrMap === true; // default false
@@ -4545,6 +4546,14 @@ function getFiltered() {
     if (bands && !bands.has(s.band)) return false;
     if (!modeMatches(s.mode, modes)) return false;
     if (continents && !continents.has(s.continent)) return false;
+    // Cluster spotter-origin filter (F4HXJ): hide spots reported by stations
+    // in regions/zones the user doesn't care about. Unknown spotters
+    // (no resolution from cty.dat) always pass through.
+    if (s.source === 'dxc') {
+      if (_clusterSpotterContSet && s.spotterContinent && !_clusterSpotterContSet.has(s.spotterContinent)) return false;
+      if (_clusterSpotterCqZoneSet && s.spotterCqZone != null && !_clusterSpotterCqZoneSet.has(s.spotterCqZone)) return false;
+      if (_clusterSpotterItuZoneSet && s.spotterItuZone != null && !_clusterSpotterItuZoneSet.has(s.spotterItuZone)) return false;
+    }
     if (hideOutOfBand && isOutOfPrivilege(parseFloat(s.frequency), s.mode, licenseClass)) return false;
     if (hideWorked && isWorkedSpot(s)) return false;
     if (hideWorkedCallRef && isWorkedSpotStrict(s)) return false;
@@ -6050,6 +6059,49 @@ const dxSpotNote = document.getElementById('dx-spot-note');
 let showDxBar = false;
 let dxCommandPreferredNode = '';
 let dxSpotComment = localStorage.getItem('dx-spot-comment') || 'great signal';
+
+// Spotter-origin filter for DX cluster spots (F4HXJ 2026-05-15: hide spots
+// reported by stations in regions whose propagation isn't useful from your
+// QTH). Each var is null = "no filter on this dimension". The renderer
+// resolves the spotter's continent/CQ/ITU zone in main's buildClusterSpot.
+let _clusterSpotterContSet = null;     // Set of 'AF','AS',... or null
+let _clusterSpotterCqZoneSet = null;   // Set of integers or null
+let _clusterSpotterItuZoneSet = null;  // Set of integers or null
+
+/** Parse "14,15,33" or "1-10,15,27-30" → Set of ints. Empty/blank → null. */
+function _parseZoneSpec(text) {
+  if (!text || !String(text).trim()) return null;
+  const set = new Set();
+  String(text).split(',').forEach((part) => {
+    const t = part.trim();
+    if (!t) return;
+    const range = t.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const lo = parseInt(range[1], 10);
+      const hi = parseInt(range[2], 10);
+      if (Number.isFinite(lo) && Number.isFinite(hi) && lo <= hi) {
+        for (let i = lo; i <= hi; i++) set.add(i);
+      }
+    } else {
+      const n = parseInt(t, 10);
+      if (Number.isFinite(n)) set.add(n);
+    }
+  });
+  return set.size ? set : null;
+}
+
+/** Continents array → Set or null. Empty / all-6 → null (= pass everything). */
+function _parseContinentList(arr) {
+  const all = ['AF', 'AS', 'EU', 'NA', 'OC', 'SA'];
+  if (!Array.isArray(arr) || !arr.length || arr.length >= all.length) return null;
+  return new Set(arr.map((c) => String(c).toUpperCase()).filter((c) => all.includes(c)));
+}
+
+function applyClusterSpotterFilters(settings) {
+  _clusterSpotterContSet     = _parseContinentList(settings.clusterSpotterContinents);
+  _clusterSpotterCqZoneSet   = _parseZoneSpec(settings.clusterSpotterCqZones);
+  _clusterSpotterItuZoneSet  = _parseZoneSpec(settings.clusterSpotterItuZones);
+}
 
 function prefillDxCommand(spot) {
   if (!spot || spot.source !== 'dxc' || !showDxBar || !enableCluster) return;
@@ -8791,6 +8843,18 @@ async function openSettingsDialog(tab) {
   renderClusterNodeList(currentClusterNodes);
   setEnableClusterTerminal.checked = s.enableClusterTerminal === true;
   clusterTerminalBtn.classList.toggle('hidden', !s.enableClusterTerminal);
+  // Spotter origin filter — populate continent checkboxes + zone inputs.
+  // Default (no saved setting): all continents checked, no zone filters.
+  {
+    const saved = Array.isArray(s.clusterSpotterContinents) ? s.clusterSpotterContinents : null;
+    document.querySelectorAll('#set-cluster-spotter-continents input[data-spotter-cont]').forEach((cb) => {
+      cb.checked = !saved || saved.includes(cb.dataset.spotterCont);
+    });
+    const cqEl = document.getElementById('set-cluster-spotter-cq-zones');
+    if (cqEl) cqEl.value = s.clusterSpotterCqZones || '';
+    const ituEl = document.getElementById('set-cluster-spotter-itu-zones');
+    if (ituEl) ituEl.value = s.clusterSpotterItuZones || '';
+  }
   // Load net reminders
   currentNetReminders = Array.isArray(s.netReminders) ? JSON.parse(JSON.stringify(s.netReminders)) : [];
   renderNetList(currentNetReminders);
@@ -9121,6 +9185,13 @@ settingsSave.addEventListener('click', async () => {
   const showDxBarEnabled = setShowDxBar.checked;
   showDxBar = showDxBarEnabled;
   updateDxCommandBar();
+  // Collect spotter-origin filter state — array of checked continents,
+  // plus the two zone strings verbatim (the parser handles ranges).
+  const clusterSpotterContinents = Array.from(
+    document.querySelectorAll('#set-cluster-spotter-continents input[data-spotter-cont]:checked')
+  ).map((cb) => cb.dataset.spotterCont);
+  const clusterSpotterCqZonesStr = (document.getElementById('set-cluster-spotter-cq-zones')?.value || '').trim();
+  const clusterSpotterItuZonesStr = (document.getElementById('set-cluster-spotter-itu-zones')?.value || '').trim();
   const clusterTerminalEnabled = setEnableClusterTerminal.checked;
   clusterTerminalBtn.classList.toggle('hidden', !clusterTerminalEnabled);
   const wsjtxEnabled = setEnableWsjtx.checked;
@@ -9281,6 +9352,9 @@ settingsSave.addEventListener('click', async () => {
     wsjtxAutoLog: wsjtxAutoLogEnabled,
     myCallsign: myCallsign,
     clusterNodes: clusterNodes,
+    clusterSpotterContinents,
+    clusterSpotterCqZones: clusterSpotterCqZonesStr,
+    clusterSpotterItuZones: clusterSpotterItuZonesStr,
     netReminders: currentNetReminders,
     enableDirectory: setEnableDirectory.checked,
     showBeacons: showBeaconsEnabled,
@@ -9431,6 +9505,14 @@ settingsSave.addEventListener('click', async () => {
   enableRbn = rbnEnabled;
   enablePskr = pskrEnabled;
   enablePskrMap = pskrMapEnabledVal;
+  // Refresh cluster spotter-origin filter cache from the values we just saved
+  // so the new filter applies on the next getFiltered() pass without waiting
+  // for the next settings broadcast.
+  applyClusterSpotterFilters({
+    clusterSpotterContinents,
+    clusterSpotterCqZones: clusterSpotterCqZonesStr,
+    clusterSpotterItuZones: clusterSpotterItuZonesStr,
+  });
   enableRemote = remoteEnabled;
   enableWsjtx = wsjtxEnabled;
   updateWsjtxStatusVisibility();

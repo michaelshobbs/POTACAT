@@ -1317,6 +1317,10 @@ function buildClusterSpot(raw, myPos, myEntity) {
   const spot = {
     source: 'dxc',
     callsign: raw.callsign,
+    spotter: raw.spotter || '',
+    spotterContinent: '',
+    spotterCqZone: null,
+    spotterItuZone: null,
     frequency: raw.frequency,
     freqMHz: raw.freqMHz,
     mode: raw.mode,
@@ -1333,6 +1337,20 @@ function buildClusterSpot(raw, myPos, myEntity) {
   };
 
   if (ctyDb) {
+    // Resolve the SPOTTER's continent / CQ zone / ITU zone so the renderer
+    // can filter cluster spots by who heard them (F4HXJ 2026-05-15: an EU
+    // operator doesn't care about spots only reported by AS stations —
+    // they reflect propagation he can't use). Unknown spotters leave the
+    // fields empty/null so the renderer passes them through.
+    if (raw.spotter) {
+      const sp = resolveCallsign(raw.spotter, ctyDb);
+      if (sp) {
+        spot.spotterContinent = sp.continent || '';
+        spot.spotterCqZone = Number.isFinite(sp.cqZone) ? sp.cqZone : null;
+        spot.spotterItuZone = Number.isFinite(sp.ituZone) ? sp.ituZone : null;
+      }
+    }
+
     const entity = resolveCallsign(raw.callsign, ctyDb);
     if (entity) {
       spot.locationDesc = entity.name;

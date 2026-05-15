@@ -1377,6 +1377,25 @@
         <label class="checkbox-label" style="margin-top:6px;"><input type="checkbox" id="set-show-beacons"> Show /B beacon stations</label>
         <label class="checkbox-label" style="margin-top:6px;"><input type="checkbox" id="set-show-dx-bar"> Show DX command bar below spot table</label>
         <label class="checkbox-label" style="margin-top:6px;"><input type="checkbox" id="set-enable-cluster-terminal"> Show DX Cluster Terminal button</label>
+        <div style="margin-top:8px;border-top:1px solid var(--border-dim, #2c2c44);padding-top:6px;">
+          <span style="font-size:12px;font-weight:600;">Spotter origin filter</span>
+          <span class="help-text" style="display:block;font-size:11px;margin-top:2px;">Hide cluster spots reported by stations in regions you don't care about — a spot heard only by AS stations is noise for an EU op. Unknown spotters always pass through.</span>
+          <div id="set-cluster-spotter-continents" style="display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:4px;">
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="AF" checked> AF</label>
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="AS" checked> AS</label>
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="EU" checked> EU</label>
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="NA" checked> NA</label>
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="OC" checked> OC</label>
+            <label class="checkbox-label" style="font-size:12px;"><input type="checkbox" data-spotter-cont="SA" checked> SA</label>
+          </div>
+          <label style="display:block;margin-top:6px;font-size:12px;">Spotter CQ zones (optional):
+            <input type="text" id="set-cluster-spotter-cq-zones" placeholder="e.g. 14,15,33 or 1-10" style="width:180px;font-size:11px;">
+          </label>
+          <label style="display:block;margin-top:4px;font-size:12px;">Spotter ITU zones (optional):
+            <input type="text" id="set-cluster-spotter-itu-zones" placeholder="e.g. 27,28,37-40" style="width:180px;font-size:11px;">
+          </label>
+          <span class="help-text" style="display:block;font-size:11px;margin-top:2px;">Empty zone field = no zone filter. Comma-separated; ranges OK like "1-10".</span>
+        </div>
       </div>
       <label class="checkbox-label"><input type="checkbox" id="set-enable-cwspots"> CW Spots (CW club members)</label>
       <div id="cwspots-config" class="radio-sub hidden">
