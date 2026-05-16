@@ -702,6 +702,11 @@ let dirActiveTab = 'nets'; // 'nets' or 'swl'
 // Directory View (top-level)
 const viewDirectoryBtn = document.getElementById('view-directory-btn');
 const directoryView = document.getElementById('directory-view');
+const viewConditionsBtn = document.getElementById('view-conditions-btn');
+const conditionsView = document.getElementById('conditions-view');
+const conditionsBody = document.getElementById('conditions-body');
+const conditionsUpdated = document.getElementById('conditions-updated');
+const conditionsRefreshBtn = document.getElementById('conditions-refresh-btn');
 const dirvTabNets = document.getElementById('dirv-tab-nets');
 const dirvTabSwl = document.getElementById('dirv-tab-swl');
 const dirvSearch = document.getElementById('dirv-search');
@@ -1444,6 +1449,8 @@ async function loadPrefs() {
         setView('dxcc');
       } else if (viewState.lastView === 'directory' && settings.enableDirectory) {
         setView('directory');
+      } else if (viewState.lastView === 'conditions') {
+        setView('conditions');
       } else {
         showTable = viewState.showTable !== false;
         showMap = viewState.showMap === true;
@@ -6534,8 +6541,8 @@ window.api.onJtcatPopoutStatus((open) => {
 // RBN and DXCC are exclusive views that hide the split container.
 
 function setView(view) {
-  // Called for exclusive views (rbn, dxcc, directory) or to force a specific state
-  if (view === 'rbn' || view === 'dxcc' || view === 'directory') {
+  // Called for exclusive views (rbn, dxcc, directory, conditions) or to force a specific state
+  if (view === 'rbn' || view === 'dxcc' || view === 'directory' || view === 'conditions') {
     currentView = view;
     showTable = false;
     showMap = false;
@@ -6558,6 +6565,7 @@ function updateViewLayout() {
   rbnView.classList.add('hidden');
   jtcatView.classList.add('hidden');
   if (directoryView) directoryView.classList.add('hidden');
+  if (conditionsView) conditionsView.classList.add('hidden');
   stopDirvAutoRefresh();
 
   // Deactivate all view buttons
@@ -6594,6 +6602,18 @@ function updateViewLayout() {
     if (viewDirectoryBtn) viewDirectoryBtn.classList.add('active');
     renderDirectoryView();
     startDirvAutoRefresh();
+    updateParksStatsOverlay();
+    saveViewState();
+    return;
+  }
+
+  if (currentView === 'conditions') {
+    splitContainerEl.classList.add('hidden');
+    if (conditionsView) conditionsView.classList.remove('hidden');
+    // Pull cached payload immediately (so the panel isn't blank for 10 min
+    // if the user just opened the app), then re-render lands via the
+    // solar-data IPC when fetchAllSolar finishes.
+    openConditionsView();
     updateParksStatsOverlay();
     saveViewState();
     return;
@@ -6655,7 +6675,7 @@ function saveViewState() {
 }
 
 viewTableBtn.addEventListener('click', () => {
-  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory') {
+  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory' || currentView === 'conditions') {
     // Switching from exclusive view -> table only
     if (currentView === 'jtcat') stopJtcatView();
     currentView = 'table';
@@ -6686,7 +6706,7 @@ viewMapBtn.addEventListener('click', () => {
     window.api.popoutMapOpen(); // focuses existing window
     return;
   }
-  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory') {
+  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory' || currentView === 'conditions') {
     // Switching from exclusive view -> map only
     if (currentView === 'jtcat') stopJtcatView();
     currentView = 'map';
@@ -6712,6 +6732,11 @@ viewMapBtn.addEventListener('click', () => {
 });
 
 viewRbnBtn.addEventListener('click', () => setView('rbn'));
+if (viewConditionsBtn) viewConditionsBtn.addEventListener('click', () => setView('conditions'));
+if (conditionsRefreshBtn) conditionsRefreshBtn.addEventListener('click', () => {
+  conditionsUpdated.textContent = 'refreshing…';
+  window.api.refreshSolar();
+});
 if (viewDirectoryBtn) viewDirectoryBtn.addEventListener('click', () => {
   if (directoryNets.length === 0 && directorySwl.length === 0) {
     window.api.fetchDirectory();
@@ -11909,24 +11934,223 @@ function updateSolarVisibility() {
   aStatusEl.classList[method]('hidden');
 }
 
-window.api.onSolarData(({ sfi, kIndex, aIndex }) => {
+let _lastSolarPayload = null;
+
+window.api.onSolarData((payload) => {
+  _lastSolarPayload = payload;
+  const { sfi, kIndex, aIndex } = payload || {};
   const hidden = enableSolar ? '' : ' hidden';
 
-  // SFI: higher is better
-  const sfiClass = sfi >= 100 ? 'connected' : sfi >= 70 ? 'warn' : 'disconnected';
-  sfiStatusEl.textContent = `SFI ${sfi}`;
-  sfiStatusEl.className = `status solar-pill ${sfiClass}${hidden}`;
+  if (sfi != null) {
+    const sfiClass = sfi >= 100 ? 'connected' : sfi >= 70 ? 'warn' : 'disconnected';
+    sfiStatusEl.textContent = `SFI ${sfi}`;
+    sfiStatusEl.className = `status solar-pill ${sfiClass}${hidden}`;
+  }
+  if (kIndex != null) {
+    const kClass = kIndex <= 2 ? 'connected' : kIndex <= 4 ? 'warn' : 'disconnected';
+    kStatusEl.textContent = `K ${kIndex}`;
+    kStatusEl.className = `status solar-pill ${kClass}${hidden}`;
+  }
+  if (aIndex != null) {
+    const aClass = aIndex <= 7 ? 'connected' : aIndex <= 20 ? 'warn' : 'disconnected';
+    aStatusEl.textContent = `A ${aIndex}`;
+    aStatusEl.className = `status solar-pill ${aClass}${hidden}`;
+  }
 
-  // K-index: lower is better
-  const kClass = kIndex <= 2 ? 'connected' : kIndex <= 4 ? 'warn' : 'disconnected';
-  kStatusEl.textContent = `K ${kIndex}`;
-  kStatusEl.className = `status solar-pill ${kClass}${hidden}`;
-
-  // A-index: lower is better
-  const aClass = aIndex <= 7 ? 'connected' : aIndex <= 20 ? 'warn' : 'disconnected';
-  aStatusEl.textContent = `A ${aIndex}`;
-  aStatusEl.className = `status solar-pill ${aClass}${hidden}`;
+  // Re-render Conditions view if it's currently visible.
+  if (conditionsView && !conditionsView.classList.contains('hidden')) {
+    renderConditions(payload);
+  }
 });
+
+async function openConditionsView() {
+  // Render whatever's already cached so the panel isn't blank, then let
+  // the next solar-data IPC tick refresh it. The handle call returns null
+  // if main has never fetched yet (cold start before the 10-min timer).
+  try {
+    const cached = await window.api.getSolar();
+    if (cached && (cached.sfi != null || cached.kpHistory || cached.alerts)) {
+      _lastSolarPayload = cached;
+      renderConditions(cached);
+    } else {
+      renderConditions(null);
+      conditionsUpdated.textContent = 'fetching…';
+      window.api.refreshSolar();
+    }
+  } catch {
+    renderConditions(_lastSolarPayload);
+  }
+}
+
+function _condClass(condition) {
+  const c = String(condition || '').toLowerCase();
+  if (c === 'good') return 'good';
+  if (c === 'fair') return 'fair';
+  if (c === 'poor') return 'poor';
+  return 'unknown';
+}
+function _vhfClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('open')) return 'open';
+  if (s.includes('closed')) return 'closed';
+  return 'unknown';
+}
+function _vhfLabel(name) {
+  return ({
+    'vhf-aurora':         'VHF Aurora',
+    'e-skip_6m':          'E-skip 6m',
+    'e-skip_4m':          'E-skip 4m',
+    'e-skip_2m':          'E-skip 2m',
+    'path_eu_6m':         '6m → EU',
+    'path_na_6m':         '6m → NA',
+  }[name] || name.replace(/_/g, ' '));
+}
+function _kpBarClass(kp) {
+  if (kp <= 2) return '';
+  if (kp <= 4) return 'warn';
+  return 'bad';
+}
+function _formatKpTime(t) {
+  // SWPC: "2026-05-16 09:00:00"
+  if (!t) return '';
+  const parts = t.split(' ');
+  if (parts.length < 2) return t;
+  return parts[1].slice(0, 5) + 'Z';
+}
+
+function renderConditions(payload) {
+  if (!payload || payload.sfi == null) {
+    conditionsBody.innerHTML = '<div class="conditions-empty">No data yet — waiting for hamqsl.com / NOAA SWPC…</div>';
+    conditionsUpdated.textContent = '—';
+    return;
+  }
+
+  const p = payload;
+  conditionsUpdated.textContent = p.updated ? ('Updated ' + p.updated) : 'Updated just now';
+
+  const sfiClass = p.sfi >= 100 ? 'good' : p.sfi >= 70 ? 'warn' : 'bad';
+  const kClass   = p.kIndex <= 2 ? 'good' : p.kIndex <= 4 ? 'warn' : 'bad';
+  const aClass   = p.aIndex <= 7 ? 'good' : p.aIndex <= 20 ? 'warn' : 'bad';
+
+  // -- Solar card -----------------------------------------------------------
+  const solarCard = `
+    <div class="cond-card">
+      <h3>Solar</h3>
+      <div class="cond-grid">
+        <div class="label">SFI (10.7 cm)</div><div class="value ${sfiClass}">${p.sfi}</div>
+        <div class="label">Sunspots</div><div class="value">${p.sunspots ?? '—'}</div>
+        <div class="label">X-Ray</div><div class="value">${p.xray ?? '—'}</div>
+        <div class="label">304 Å</div><div class="value">${p.heliumLine ?? '—'}</div>
+        <div class="label">Proton flux</div><div class="value">${p.protonFlux ?? '—'}</div>
+        <div class="label">Electron flux</div><div class="value">${p.electronFlux ?? '—'}</div>
+        <div class="label">MUF</div><div class="value">${p.muf ? p.muf + ' MHz' : '—'}</div>
+        <div class="label">foF2</div><div class="value">${p.fof2 ? p.fof2 + ' MHz' : '—'}</div>
+        <div class="label">Signal noise</div><div class="value">${p.signalNoise ?? '—'}</div>
+      </div>
+    </div>`;
+
+  // -- Geomagnetic card -----------------------------------------------------
+  const geoCard = `
+    <div class="cond-card">
+      <h3>Geomagnetic</h3>
+      <div class="cond-grid">
+        <div class="label">K-index</div><div class="value ${kClass}">${p.kIndex}</div>
+        <div class="label">A-index</div><div class="value ${aClass}">${p.aIndex}</div>
+        <div class="label">Field</div><div class="value">${p.geomagField ?? '—'}</div>
+        <div class="label">Bz</div><div class="value">${p.magneticField ?? '—'}</div>
+        <div class="label">Solar wind</div><div class="value">${p.solarWind ? p.solarWind + ' km/s' : '—'}</div>
+        <div class="label">Aurora</div><div class="value">${p.aurora ?? '—'}</div>
+        <div class="label">Aurora limit</div><div class="value">${p.latDegree ? p.latDegree + '°' : '—'}</div>
+      </div>
+    </div>`;
+
+  // -- Band conditions matrix (day vs night) --------------------------------
+  let bandsRows = '';
+  if (Array.isArray(p.bands) && p.bands.length) {
+    const byBand = new Map();
+    for (const b of p.bands) {
+      if (!byBand.has(b.band)) byBand.set(b.band, { day: null, night: null });
+      byBand.get(b.band)[b.time] = b.condition;
+    }
+    for (const [band, slot] of byBand) {
+      bandsRows += `<tr>
+        <td class="band-name">${band}</td>
+        <td><span class="cond-cell ${_condClass(slot.day)}">${slot.day || '—'}</span></td>
+        <td><span class="cond-cell ${_condClass(slot.night)}">${slot.night || '—'}</span></td>
+      </tr>`;
+    }
+  }
+  const bandsCard = `
+    <div class="cond-card">
+      <h3>HF Band Conditions</h3>
+      ${bandsRows
+        ? `<table class="cond-bands-table">
+             <thead><tr><th>Band</th><th>Day</th><th>Night</th></tr></thead>
+             <tbody>${bandsRows}</tbody>
+           </table>`
+        : '<div class="cond-alerts-empty">No band ratings reported.</div>'}
+    </div>`;
+
+  // -- VHF / E-skip ---------------------------------------------------------
+  let vhfRows = '';
+  if (Array.isArray(p.vhf) && p.vhf.length) {
+    for (const v of p.vhf) {
+      vhfRows += `<tr>
+        <td>${_vhfLabel(v.phenomenon)}</td>
+        <td>${v.location.replace(/_/g, ' ')}</td>
+        <td><span class="cond-cell ${_vhfClass(v.status)}">${v.status}</span></td>
+      </tr>`;
+    }
+  }
+  const vhfCard = `
+    <div class="cond-card">
+      <h3>VHF / E-Skip</h3>
+      ${vhfRows
+        ? `<table class="cond-bands-table">
+             <thead><tr><th>Phenomenon</th><th>Region</th><th>Status</th></tr></thead>
+             <tbody>${vhfRows}</tbody>
+           </table>`
+        : '<div class="cond-alerts-empty">No VHF data.</div>'}
+    </div>`;
+
+  // -- Kp 24h sparkline -----------------------------------------------------
+  let kpSparkHtml = '<div class="cond-alerts-empty">No Kp history yet.</div>';
+  if (Array.isArray(p.kpHistory) && p.kpHistory.length) {
+    const bars = p.kpHistory.map((s) => {
+      const h = Math.max(2, Math.min(100, (s.kp / 9) * 100));
+      return `<div class="bar ${_kpBarClass(s.kp)}" style="height:${h}%" title="${s.time}  Kp=${s.kp.toFixed(2)}"><span class="lbl">${s.kp.toFixed(1)}</span></div>`;
+    }).join('');
+    kpSparkHtml = `
+      <div class="kp-spark">${bars}</div>
+      <div class="kp-spark-axis"><span>${_formatKpTime(p.kpHistory[0].time)}</span><span>${_formatKpTime(p.kpHistory[p.kpHistory.length - 1].time)}</span></div>`;
+  }
+  const kpCard = `
+    <div class="cond-card">
+      <h3>Kp — Last 24 h</h3>
+      ${kpSparkHtml}
+    </div>`;
+
+  // -- SWPC alerts ----------------------------------------------------------
+  let alertsHtml = '<div class="cond-alerts-empty">No space-weather alerts in the last 24 hours.</div>';
+  if (Array.isArray(p.alerts) && p.alerts.length) {
+    alertsHtml = '<ul class="cond-alerts">' + p.alerts.map((a) => {
+      const msg = (a.message || '').slice(0, 360);
+      const severity = /severe|extreme|G[45]/i.test(msg) ? 'severe'
+                     : /moderate|warning|alert|G[123]|M\d|X\d/i.test(msg) ? 'warn' : '';
+      return `<li class="${severity}">
+        <span class="alert-time">${a.issue_datetime || ''}</span>
+        <span class="alert-msg">${msg.replace(/</g, '&lt;')}</span>
+      </li>`;
+    }).join('') + '</ul>';
+  }
+  const alertsCard = `
+    <div class="cond-card full">
+      <h3>NOAA SWPC Alerts</h3>
+      ${alertsHtml}
+    </div>`;
+
+  conditionsBody.innerHTML = solarCard + geoCard + bandsCard + vhfCard + kpCard + alertsCard;
+}
 
 // --- Band Activity Heatmap ---
 const HEATMAP_BANDS = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '4m', '2m', '70cm'];

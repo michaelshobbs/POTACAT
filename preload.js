@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld('api', {
   onAgPortStatus: (cb) => ipcRenderer.on('ag-port-status', (_e, s) => cb(s)),
   clearRbn: () => ipcRenderer.send('rbn-clear'),
   onSolarData: (cb) => ipcRenderer.on('solar-data', (_e, d) => cb(d)),
+  getSolar: () => ipcRenderer.invoke('get-solar'),
+  refreshSolar: () => ipcRenderer.send('refresh-solar'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_e, d) => cb(d)),
   onUpdaterActive: (cb) => ipcRenderer.on('updater-active', (_e, active) => cb(active)),
   onDownloadProgress: (cb) => ipcRenderer.on('update-download-progress', (_e, d) => cb(d)),

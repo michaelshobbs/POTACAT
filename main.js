@@ -7813,8 +7813,59 @@ function disconnectKeyer() {
   }
 }
 
-// --- Solar data ---
+// --- Solar / propagation data ---
+// Original scope was the three status-bar pills (SFI/A/K). The Conditions
+// view in the More dropdown needs the rest of the hamqsl XML (band-by-band
+// day/night ratings, VHF/E-skip, X-ray, 304Å, MUF, signal noise, aurora,
+// solar wind, Bz) plus NOAA SWPC pieces hamqsl doesn't carry — last-24h Kp
+// for a sparkline and recent storm/flare alerts. We always include the
+// flat sfi/aIndex/kIndex keys at the top of the payload so the existing
+// pill listener and the VFO popout don't have to change. K3SBP 2026-05-16.
 let _cachedSolarData = null;
+let _cachedKpHistory = null;     // [{time_tag, kp}, ...] last 24h
+let _cachedSwpcAlerts = null;    // [{issued, message, ...}, ...] last 24h
+
+function _matchTag(body, tag) {
+  const re = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*<\\/${tag}>`, 'i');
+  const m = body.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function _parseHamqslBandConditions(body) {
+  // <calculatedconditions> wraps <band name="80m-40m" time="day">Good</band>
+  // entries. Return [{band, time, condition}, ...].
+  const out = [];
+  const block = (body.match(/<calculatedconditions>([\s\S]*?)<\/calculatedconditions>/i) || [])[1] || '';
+  const re = /<band\s+name="([^"]+)"\s+time="([^"]+)"\s*>\s*([^<]+?)\s*<\/band>/gi;
+  let m;
+  while ((m = re.exec(block)) !== null) {
+    out.push({ band: m[1], time: m[2].toLowerCase(), condition: m[3].trim() });
+  }
+  return out;
+}
+
+function _parseHamqslVhfConditions(body) {
+  // <calculatedvhfconditions> wraps
+  //   <phenomenon name="vhf-aurora" location="northern_hemi">Band Closed</phenomenon>
+  const out = [];
+  const block = (body.match(/<calculatedvhfconditions>([\s\S]*?)<\/calculatedvhfconditions>/i) || [])[1] || '';
+  const re = /<phenomenon\s+name="([^"]+)"\s+location="([^"]+)"\s*>\s*([^<]+?)\s*<\/phenomenon>/gi;
+  let m;
+  while ((m = re.exec(block)) !== null) {
+    out.push({ phenomenon: m[1], location: m[2], status: m[3].trim() });
+  }
+  return out;
+}
+
+function _broadcastSolar() {
+  const payload = {
+    ..._cachedSolarData,
+    kpHistory: _cachedKpHistory,
+    alerts: _cachedSwpcAlerts,
+  };
+  if (win && !win.isDestroyed()) win.webContents.send('solar-data', payload);
+  if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('solar-data', payload);
+}
 
 function fetchSolarData() {
   const https = require('https');
@@ -7822,18 +7873,99 @@ function fetchSolarData() {
     let body = '';
     res.on('data', (chunk) => { body += chunk; });
     res.on('end', () => {
-      const sfi = (body.match(/<solarflux>\s*(\d+)\s*<\/solarflux>/) || [])[1];
-      const aIndex = (body.match(/<aindex>\s*(\d+)\s*<\/aindex>/) || [])[1];
-      const kIndex = (body.match(/<kindex>\s*(\d+)\s*<\/kindex>/) || [])[1];
-      if (sfi && aIndex && kIndex) {
-        const data = { sfi: parseInt(sfi, 10), aIndex: parseInt(aIndex, 10), kIndex: parseInt(kIndex, 10) };
-        _cachedSolarData = data;
-        if (win && !win.isDestroyed()) win.webContents.send('solar-data', data);
-        if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('solar-data', data);
-      }
+      const sfi = parseInt(_matchTag(body, 'solarflux') || '', 10);
+      const aIndex = parseInt(_matchTag(body, 'aindex') || '', 10);
+      const kIndex = parseInt(_matchTag(body, 'kindex') || '', 10);
+      // Without these three we don't bother — the pills depend on them
+      // and a partial parse usually means hamqsl returned an error page.
+      if (Number.isNaN(sfi) || Number.isNaN(aIndex) || Number.isNaN(kIndex)) return;
+      _cachedSolarData = {
+        sfi,
+        aIndex,
+        kIndex,
+        // Optional / softer fields — null when absent so the renderer can
+        // gracefully fall back to em-dash without try/catch.
+        sunspots: parseInt(_matchTag(body, 'sunspots') || '', 10) || null,
+        xray: _matchTag(body, 'xray'),                          // e.g. "B1.2"
+        heliumLine: _matchTag(body, 'heliumline'),              // 304Å index
+        protonFlux: _matchTag(body, 'protonflux'),
+        electronFlux: _matchTag(body, 'electonflux'),           // hamqsl typo
+        aurora: _matchTag(body, 'aurora'),                      // 0-10 activity
+        normalization: _matchTag(body, 'normalization'),
+        latDegree: _matchTag(body, 'latdegree'),                // aurora southern limit
+        solarWind: _matchTag(body, 'solarwind'),                // km/s
+        magneticField: _matchTag(body, 'magneticfield'),        // Bz nT
+        geomagField: _matchTag(body, 'geomagfield'),            // text label
+        signalNoise: _matchTag(body, 'signalnoise'),            // e.g. "S2"
+        muf: _matchTag(body, 'muf'),                            // MHz
+        fof2: _matchTag(body, 'fof2'),                          // F2 critical freq, MHz
+        kIndexNt: _matchTag(body, 'kindexnt'),                  // Kp from hamqsl
+        updated: _matchTag(body, 'updated'),
+        bands: _parseHamqslBandConditions(body),
+        vhf: _parseHamqslVhfConditions(body),
+      };
+      _broadcastSolar();
     });
   });
   req.on('error', () => { /* silently ignore — pills keep last known values */ });
+}
+
+// 24-hour planetary Kp from NOAA SWPC. Their feed returns a CSV-ish array
+// where row 0 is the header and the rest are [time_tag, Kp, ...]. We keep
+// only the last 24 hours (8 samples) so the renderer can plot a sparkline.
+function fetchKpHistory() {
+  const https = require('https');
+  const req = https.get('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json', { timeout: 10000 }, (res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => {
+      try {
+        const rows = JSON.parse(body);
+        if (!Array.isArray(rows) || !rows.length) return;
+        // SWPC returns array-of-objects: [{time_tag, Kp, a_running, station_count}, ...]
+        // (Their older CSV-style "header row + arrays" format is gone as of
+        // mid-2026. Sample row: {"time_tag":"2026-05-16T09:00:00","Kp":3.67}.)
+        const last = rows.slice(-8); // 8 x 3h = 24h
+        _cachedKpHistory = last.map((r) => ({
+          time: (r.time_tag || '').replace('T', ' '),
+          kp: Number(r.Kp),
+        })).filter((s) => !Number.isNaN(s.kp));
+        _broadcastSolar();
+      } catch { /* feed malformed; ignore */ }
+    });
+  });
+  req.on('error', () => { /* network blip; keep cached */ });
+}
+
+// SWPC alerts feed — space-weather warnings, watches, alerts. Keep the
+// last 24 hours so the Conditions view can show a recent-activity list.
+function fetchSwpcAlerts() {
+  const https = require('https');
+  const req = https.get('https://services.swpc.noaa.gov/products/alerts.json', { timeout: 10000 }, (res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => {
+      try {
+        const all = JSON.parse(body);
+        if (!Array.isArray(all)) return;
+        const cutoff = Date.now() - 24 * 3600 * 1000;
+        _cachedSwpcAlerts = all.filter((a) => {
+          if (!a || !a.issue_datetime) return false;
+          // SWPC uses "YYYY-MM-DD HH:MM:SS.fff" (no Z); treat as UTC.
+          const t = Date.parse(a.issue_datetime.replace(' ', 'T') + 'Z');
+          return !Number.isNaN(t) && t >= cutoff;
+        }).slice(0, 20); // hard cap so a storm cluster doesn't flood IPC
+        _broadcastSolar();
+      } catch { /* feed malformed; ignore */ }
+    });
+  });
+  req.on('error', () => { /* network blip; keep cached */ });
+}
+
+function fetchAllSolar() {
+  fetchSolarData();
+  fetchKpHistory();
+  fetchSwpcAlerts();
 }
 
 // --- Spot processing ---
@@ -9550,7 +9682,7 @@ function createWindow() {
       if (pskrMapSpots.length > 0) sendPskrMapSpots();
     }
     refreshSpots();
-    fetchSolarData();
+    fetchAllSolar();
     // Auto-send DXCC data if enabled and ADIF path is set
     if (settings.enableDxcc) {
       sendDxccData();
@@ -12908,8 +13040,8 @@ app.whenReady().then(() => {
   const refreshMs = Math.max(15, settings.refreshInterval || 30) * 1000;
   spotTimer = setInterval(refreshSpots, refreshMs);
 
-  // Start solar data fetching (every 10 minutes)
-  solarTimer = setInterval(fetchSolarData, 600000);
+  // Start solar / propagation data fetching (every 10 minutes)
+  solarTimer = setInterval(fetchAllSolar, 600000);
 
   // Start auto-SSTV idle timer
   startAutoSstvTimer();
@@ -13302,6 +13434,15 @@ app.whenReady().then(() => {
 
   ipcMain.on('app-relaunch', () => { app.relaunch(); app.exit(0); });
   ipcMain.handle('get-settings', () => ({ ...settings, appVersion: require('./package.json').version }));
+  // Conditions view: returns whatever is in cache (renderer wants something
+  // to draw immediately on open) and kicks an out-of-cycle refresh in the
+  // background so a stale value gets replaced soon after.
+  ipcMain.handle('get-solar', () => ({
+    ..._cachedSolarData,
+    kpHistory: _cachedKpHistory,
+    alerts: _cachedSwpcAlerts,
+  }));
+  ipcMain.on('refresh-solar', () => { fetchAllSolar(); });
   ipcMain.handle('get-rig-models', () => getModelList());
   ipcMain.handle('get-sdr-directory', () => require('./lib/sdr-directory').STATIONS);
 
