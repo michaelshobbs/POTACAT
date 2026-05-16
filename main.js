@@ -1027,6 +1027,13 @@ async function connectCat() {
     // SIRF packets every ~1s without being polled. Skip meter polls for
     // both paths to keep the CAT log clean of "? (command error)" noise.
     cat._skipMeters = true;
+    // K4 over network handles native XIT via XT1;/RO+nnnn; (sent in
+    // CatClient.tune when opts.xit is set). Without this flag, main's
+    // tuneRadio() falls through to the VFO-shift fallback — moves the dial
+    // by the XIT offset instead of using the rig's actual XIT register.
+    // Plain Flex TCP doesn't claim native XIT here (it's handled via the
+    // SmartSDR API path; see smartSdr.setSliceXit). N7QT 2026-05-16.
+    cat.hasNativeXit = (target.type === 'k4-network');
     // Pull rig-model-driven CAT overrides that CatClient's TCP path used to
     // ignore (the old code assumed every TCP target was Flex). The K4 in
     // particular uses DT instead of DA for the DATA sub-mode toggle, and
