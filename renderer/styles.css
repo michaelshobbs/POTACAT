@@ -37,6 +37,19 @@
   --scrollbar-thumb: #0f3460;
   --scrollbar-track: #0a0a1a;
   --map-tile-filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+  /* Conditions view severity palette — readable on dark bg. The light
+     theme block below overrides with darker, higher-contrast equivalents
+     so the same .good/.warn/.bad classes work on both backgrounds. */
+  --cond-good: var(--accent-green);
+  --cond-warn: #ffe933;
+  --cond-bad:  var(--accent-red);
+  --cond-good-bg: rgba(78,204,163,0.18);
+  --cond-warn-bg: rgba(255,233,51,0.18);
+  --cond-bad-bg:  rgba(233,69,96,0.18);
+  --cond-good-border: var(--accent-green);
+  --cond-warn-border: #ffe933;
+  --cond-bad-border:  var(--accent-red);
+  --cond-warn-shadow: 0 0 1px rgba(0,0,0,0.4);
 }
 
 [data-theme="light"] {
@@ -68,6 +81,19 @@
   --scrollbar-thumb: #c0c4cc;
   --scrollbar-track: #e8eaed;
   --map-tile-filter: none;
+  /* Conditions view: darker hues for legible text on light backgrounds.
+     The bright lemon warn is essentially invisible on #fff — switching
+     to a dark amber that hits ~6:1 contrast on the light card surface. */
+  --cond-good: #1b5e3f;
+  --cond-warn: #a36a00;
+  --cond-bad:  #b71c1c;
+  --cond-good-bg: rgba(46,125,90,0.14);
+  --cond-warn-bg: rgba(180,120,0,0.16);
+  --cond-bad-bg:  rgba(211,47,47,0.13);
+  --cond-good-border: #2e7d5a;
+  --cond-warn-border: #c98a00;
+  --cond-bad-border:  #d32f2f;
+  --cond-warn-shadow: none;
 }
 
 /* WCAG AA — dark theme overrides */
@@ -6244,20 +6270,20 @@ main.banner-logger-active #event-progress-overlay {
   font-size:9px;color:var(--text-secondary);font-family:monospace;
   line-height:1.1;
 }
-/* Warn yellow needs to be bright + dense to read at hero font sizes on
-   dark backgrounds — original #ffd75a was perceptually washed out. Using
-   a pure lemon yellow with a subtle dark text-shadow for edge definition.
-   Bad/Good keep their accent vars (already high-contrast). */
-.cond-hero.good .hero-value { color:var(--accent-green); }
-.cond-hero.warn .hero-value { color:#ffe933; text-shadow:0 0 1px rgba(0,0,0,0.4); }
-.cond-hero.bad  .hero-value { color:var(--accent-red); }
-.cond-hero.good .hero-sub   { color:var(--accent-green);font-weight:600; }
-.cond-hero.warn .hero-sub   { color:#ffe933;            font-weight:600; }
-.cond-hero.bad  .hero-sub   { color:var(--accent-red);  font-weight:600; }
-.cond-hero.good { border-color:var(--accent-green); box-shadow:inset 0 0 0 1px rgba(78,204,163,0.15); }
-.cond-hero.warn { border-color:#ffe933;            box-shadow:inset 0 0 0 1px rgba(255,233,51,0.18); }
-.cond-hero.bad  { border-color:var(--accent-red);  box-shadow:inset 0 0 0 1px rgba(233,69,96,0.18); }
-/* Subtle help cursor on every hero so the tooltips are discoverable. */
+/* Severity colors come from --cond-* tokens defined in :root and the
+   [data-theme="light"] block, so the same .good/.warn/.bad classes
+   read well on both backgrounds. text-shadow is dark-only (a thin
+   black halo helps the bright lemon read on midnight blue; on light
+   bg it'd just smudge the dark amber). */
+.cond-hero.good .hero-value { color:var(--cond-good); }
+.cond-hero.warn .hero-value { color:var(--cond-warn); text-shadow:var(--cond-warn-shadow); }
+.cond-hero.bad  .hero-value { color:var(--cond-bad); }
+.cond-hero.good .hero-sub   { color:var(--cond-good); font-weight:600; }
+.cond-hero.warn .hero-sub   { color:var(--cond-warn); font-weight:600; }
+.cond-hero.bad  .hero-sub   { color:var(--cond-bad);  font-weight:600; }
+.cond-hero.good { border-color:var(--cond-good-border); background:var(--cond-good-bg); }
+.cond-hero.warn { border-color:var(--cond-warn-border); background:var(--cond-warn-bg); }
+.cond-hero.bad  { border-color:var(--cond-bad-border);  background:var(--cond-bad-bg); }
 .cond-hero { cursor:help; }
 
 /* Secondary metrics — small two-column key/value strip. */
@@ -6276,9 +6302,9 @@ main.banner-logger-active #event-progress-overlay {
   color:var(--text-primary);font-family:monospace;font-size:11px;
   font-weight:600;
 }
-.cond-kv .kv-value.good { color:var(--accent-green); }
-.cond-kv .kv-value.warn { color:#ffe933; }
-.cond-kv .kv-value.bad  { color:var(--accent-red); }
+.cond-kv .kv-value.good { color:var(--cond-good); }
+.cond-kv .kv-value.warn { color:var(--cond-warn); }
+.cond-kv .kv-value.bad  { color:var(--cond-bad); }
 .cond-kv .kv-value.dim  { color:var(--text-tertiary);font-weight:normal; }
 
 /* Bands table */
@@ -6305,10 +6331,10 @@ main.banner-logger-active #event-progress-overlay {
   font-size:10px;font-weight:700;font-family:monospace;
   text-transform:uppercase;letter-spacing:0.5px;min-width:42px;text-align:center;
 }
-.cond-cell.good    { background:rgba(78,204,163,0.18); color:var(--accent-green); }
-.cond-cell.fair    { background:rgba(255,233,51,0.20); color:#ffe933; }
-.cond-cell.poor    { background:rgba(233,69,96,0.18);  color:var(--accent-red); }
-.cond-cell.open    { background:rgba(78,204,163,0.18); color:var(--accent-green); }
+.cond-cell.good    { background:var(--cond-good-bg); color:var(--cond-good); }
+.cond-cell.fair    { background:var(--cond-warn-bg); color:var(--cond-warn); text-shadow:var(--cond-warn-shadow); }
+.cond-cell.poor    { background:var(--cond-bad-bg);  color:var(--cond-bad); }
+.cond-cell.open    { background:var(--cond-good-bg); color:var(--cond-good); }
 .cond-cell.closed  { background:rgba(160,160,180,0.10); color:var(--text-dim); }
 .cond-cell.unknown { background:rgba(160,160,180,0.10); color:var(--text-dim); }
 
@@ -6327,11 +6353,11 @@ main.banner-logger-active #event-progress-overlay {
 }
 .kp-spark .bar {
   flex:1;min-width:10px;border-radius:3px 3px 0 0;position:relative;
-  background:linear-gradient(to top, var(--accent-green), rgba(78,204,163,0.6));
+  background:var(--cond-good);
   transition:height 0.3s ease-out;cursor:default;
 }
-.kp-spark .bar.warn { background:linear-gradient(to top, #ffd75a, rgba(255,215,90,0.6)); }
-.kp-spark .bar.bad  { background:linear-gradient(to top, var(--accent-red), rgba(233,69,96,0.6)); }
+.kp-spark .bar.warn { background:var(--cond-warn); }
+.kp-spark .bar.bad  { background:var(--cond-bad); }
 .kp-spark .bar:hover { filter:brightness(1.25); }
 .kp-spark .bar .lbl {
   position:absolute;top:-14px;left:50%;transform:translateX(-50%);
@@ -6363,8 +6389,8 @@ main.banner-logger-active #event-progress-overlay {
   border-radius:3px;
   padding:4px 8px;font-size:11px;
 }
-.cond-alerts li.warn   { border-left-color:#ffd75a; background:rgba(255,215,90,0.04); }
-.cond-alerts li.severe { border-left-color:var(--accent-red); background:rgba(233,69,96,0.05); }
+.cond-alerts li.warn   { border-left-color:var(--cond-warn-border); background:var(--cond-warn-bg); }
+.cond-alerts li.severe { border-left-color:var(--cond-bad-border); background:var(--cond-bad-bg); }
 .cond-alerts .alert-time {
   color:var(--text-tertiary);font-family:monospace;font-size:9px;
   display:inline-block;margin-right:6px;text-transform:uppercase;letter-spacing:0.5px;
