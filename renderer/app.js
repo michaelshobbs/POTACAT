@@ -8505,6 +8505,20 @@ if (setTxEqPreset) {
     });
   });
 }
+// Keep Settings dropdown synced when EQ state changes elsewhere (VFO
+// popout, iOS WS, etc.) so reopening Settings always shows truth.
+if (window.api.onTxEqUpdate) {
+  window.api.onTxEqUpdate((eq) => {
+    if (!eq) return;
+    if (setTxEqEnabled && typeof eq.enabled === 'boolean' && setTxEqEnabled.checked !== eq.enabled) {
+      setTxEqEnabled.checked = eq.enabled;
+      if (setTxEqPresetRow) setTxEqPresetRow.style.opacity = eq.enabled ? '1' : '0.5';
+    }
+    if (setTxEqPreset && typeof eq.preset === 'string' && setTxEqPreset.value !== eq.preset) {
+      setTxEqPreset.value = eq.preset;
+    }
+  });
+}
 
 // S-Meter / SWR quick toggle
 quickShowMeter.addEventListener('change', () => {

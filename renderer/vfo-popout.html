@@ -424,6 +424,21 @@
         <button class="ptt-btn" id="ptt-btn" style="display:none;">PTT</button>
         <button class="log-btn-vfo" id="log-btn-vfo" style="display:none;">LOG</button>
       </div>
+      <!-- TX EQ + compressor controls. Visible whenever the PTT widget
+           is on; the actual DSP only fires while PTT is held + the mic
+           is open. State is shared with Settings dialog + ECHOCAT iOS
+           via the tx-eq-update broadcast. -->
+      <div class="vfo-tx-eq-row" id="vfo-tx-eq-row" style="display:none;padding:4px 8px;font-size:11px;color:var(--text-muted);align-items:center;gap:6px;">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="vfo-tx-eq-enabled">
+          <span>TX EQ</span>
+        </label>
+        <select id="vfo-tx-eq-preset" style="flex:1;background:var(--bg-input);border:1px solid var(--border);color:var(--text-primary);padding:2px 4px;border-radius:3px;font-size:11px;">
+          <option value="ragchew">Ragchew</option>
+          <option value="pileup">Pileup</option>
+          <option value="dx">DX</option>
+        </select>
+      </div>
     </div>
     <div class="widget-section" id="widget-kiwi">
       <div class="ptt-log-row" id="kiwi-btn-row"></div>
@@ -596,6 +611,9 @@
   </div>
   <div class="vfo-lock-toast" id="vfo-lock-toast">🔒 VFO Locked — Unlock VFO to change frequency</div>
 
+<!-- Shared TX EQ chain (Phase 1). Also loaded by remote-audio.html so
+     both audio sources apply identical DSP. -->
+<script src="tx-eq-chain.js"></script>
 <script>
 // --- State ---
 let currentFreqHz = 0;
@@ -1324,6 +1342,8 @@ function applyWidgets() {
   pttBtnEl.style.display = vfoWidgets.ptt ? '' : 'none';
   logBtnEl.style.display = vfoWidgets.log ? '' : 'none';
   if (micSelectRow) micSelectRow.style.display = vfoWidgets.ptt ? '' : 'none';
+  const vfoTxEqRowEl = document.getElementById('vfo-tx-eq-row');
+  if (vfoTxEqRowEl) vfoTxEqRowEl.style.display = vfoWidgets.ptt ? 'flex' : 'none';
   if (vfoWidgets.ptt) populateMicDevices();
 }
 
@@ -1604,6 +1624,18 @@ const pttBtn = document.getElementById('ptt-btn');
 let pttDown = false;
 let pttMicCtx = null;
 let pttMicStream = null;
+// Two output paths depending on the active rig:
+//   - daxTxDirect (SmartSDR Direct, K4 network): mic → EQ → AudioWorklet
+//     → IPC chunks → main packages as VITA-49 / K4 Opus → radio.
+//   - traditional rig: mic → EQ → AudioContext destination (setSinkId
+//     to the rig's USB CODEC sink).
+// Whichever applies, the EQ chain sits in the same spot, so toggling
+// the EQ on/off mid-cycle works identically for both rig types.
+let pttDaxWorklet = null;     // AudioWorkletNode that emits 24 kHz mono chunks
+let pttDaxCtx = null;          // AudioContext sized at 24 kHz when on daxTxDirect
+let pttSourceNode = null;      // active MediaStreamSource (held so live EQ updates can re-wire it)
+const pttEqChain = TxEqChain.create();
+let pttTxEqState = { enabled: false, preset: 'ragchew' };
 
 async function pttStart() {
   if (pttDown) return;
@@ -1618,14 +1650,42 @@ async function pttStart() {
       const micConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
       if (pttMicDeviceId) micConstraints.deviceId = { exact: pttMicDeviceId };
       pttMicStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints });
-      pttMicCtx = new AudioContext();
-      if (pttMicCtx.state === 'suspended') await pttMicCtx.resume();
-      if (s.remoteAudioOutput && pttMicCtx.setSinkId) {
-        await pttMicCtx.setSinkId(s.remoteAudioOutput);
+
+      // Same rule the audio bridge uses to decide between VITA-49 direct
+      // and the legacy DAX/CODEC sink path. Computed here from settings
+      // because the VFO popout doesn't get the bridge's config object.
+      const isDaxTxDirect =
+        (s.audioSource === 'smartsdr') ||
+        (s.catTarget && s.catTarget.type === 'k4-network');
+
+      if (isDaxTxDirect && window.api.daxTxChunk) {
+        // Direct path: mic → EQ → AudioWorklet → dax-tx-chunk IPC. Use a
+        // 24 kHz context so the worklet's downsample logic matches the
+        // bridge's. AudioWorklet module is shared with the bridge.
+        pttDaxCtx = new AudioContext({ sampleRate: 24000 });
+        await pttDaxCtx.audioWorklet.addModule('dax-tx-worklet.js');
+        if (pttDaxCtx.state === 'suspended') await pttDaxCtx.resume();
+        pttSourceNode = pttDaxCtx.createMediaStreamSource(pttMicStream);
+        pttDaxWorklet = new AudioWorkletNode(pttDaxCtx, 'dax-tx-processor');
+        pttDaxWorklet.port.onmessage = (ev) => {
+          if (ev.data) window.api.daxTxChunk(ev.data);
+        };
+        TxEqChain.wire(pttEqChain, pttDaxCtx, pttSourceNode, pttDaxWorklet, pttTxEqState);
+        // Keep the graph scheduled by terminating at a (muted) destination.
+        pttDaxWorklet.connect(pttDaxCtx.destination);
+        attachTxMeter(pttDaxCtx, pttSourceNode);
+      } else {
+        // Legacy path: mic → EQ → ctx.destination (setSinkId routes to
+        // the rig's USB CODEC sink via DAX or a USB audio device).
+        pttMicCtx = new AudioContext();
+        if (pttMicCtx.state === 'suspended') await pttMicCtx.resume();
+        if (s.remoteAudioOutput && pttMicCtx.setSinkId) {
+          await pttMicCtx.setSinkId(s.remoteAudioOutput);
+        }
+        pttSourceNode = pttMicCtx.createMediaStreamSource(pttMicStream);
+        TxEqChain.wire(pttEqChain, pttMicCtx, pttSourceNode, pttMicCtx.destination, pttTxEqState);
+        attachTxMeter(pttMicCtx, pttSourceNode);
       }
-      const source = pttMicCtx.createMediaStreamSource(pttMicStream);
-      source.connect(pttMicCtx.destination);
-      attachTxMeter(pttMicCtx, source);
     } catch (e) {
       console.error('[VFO] Mic PTT failed:', e.message);
     }
@@ -1643,10 +1703,79 @@ function pttStop() {
   pttBtn.textContent = 'PTT';
   window.api.nakedPtt(false);
   if (kiwiGainNode) kiwiGainNode.gain.value = kiwiVolume;
-  // Stop mic
+  // Stop mic + tear down whichever audio context was used.
   if (pttMicStream) { pttMicStream.getTracks().forEach(t => t.stop()); pttMicStream = null; }
+  if (pttSourceNode) { try { pttSourceNode.disconnect(); } catch {} pttSourceNode = null; }
+  if (pttDaxWorklet) { try { pttDaxWorklet.disconnect(); } catch {} pttDaxWorklet = null; }
+  if (pttDaxCtx) { pttDaxCtx.close().catch(() => {}); pttDaxCtx = null; }
   if (pttMicCtx) { pttMicCtx.close().catch(() => {}); pttMicCtx = null; }
   releaseTxMeter();
+}
+
+// --- TX EQ widget (Phase 1) ---
+const vfoTxEqEnabled = document.getElementById('vfo-tx-eq-enabled');
+const vfoTxEqPreset  = document.getElementById('vfo-tx-eq-preset');
+const vfoTxEqRow     = document.getElementById('vfo-tx-eq-row');
+function applyVfoTxEqUiState() {
+  if (vfoTxEqPreset) vfoTxEqPreset.style.opacity = pttTxEqState.enabled ? '1' : '0.5';
+}
+// Re-wire the live EQ chain in whichever context is currently running.
+// Reuses the persistent pttSourceNode rather than creating a new
+// MediaStreamSource per change (which would leak a node per click).
+function _rewireVfoTxEqLive() {
+  if (!pttSourceNode) return; // PTT not held — picked up on next pttStart
+  if (pttDaxCtx && pttDaxWorklet) {
+    TxEqChain.wire(pttEqChain, pttDaxCtx, pttSourceNode, pttDaxWorklet, pttTxEqState);
+  } else if (pttMicCtx) {
+    TxEqChain.wire(pttEqChain, pttMicCtx, pttSourceNode, pttMicCtx.destination, pttTxEqState);
+  }
+}
+if (vfoTxEqEnabled) {
+  vfoTxEqEnabled.addEventListener('change', () => {
+    pttTxEqState = {
+      enabled: vfoTxEqEnabled.checked,
+      preset:  vfoTxEqPreset ? vfoTxEqPreset.value : 'ragchew',
+    };
+    applyVfoTxEqUiState();
+    _rewireVfoTxEqLive();
+    // Persist + broadcast via main so Settings dialog + bridge + iOS WS
+    // all see this change. main echoes the new state back through
+    // tx-eq-update; our onTxEqUpdate handler no-ops if the values match.
+    window.api.setTxEq(pttTxEqState);
+  });
+}
+if (vfoTxEqPreset) {
+  vfoTxEqPreset.addEventListener('change', () => {
+    pttTxEqState = {
+      enabled: vfoTxEqEnabled ? vfoTxEqEnabled.checked : false,
+      preset:  vfoTxEqPreset.value,
+    };
+    _rewireVfoTxEqLive();
+    window.api.setTxEq(pttTxEqState);
+  });
+}
+// Push from main — initial state on did-finish-load, and any change
+// from Settings dialog / ECHOCAT iOS / etc.
+if (window.api.onTxEqUpdate) {
+  window.api.onTxEqUpdate((eq) => {
+    if (!eq) return;
+    const next = {
+      enabled: !!eq.enabled,
+      preset:  eq.preset || 'ragchew',
+    };
+    const changed = next.enabled !== pttTxEqState.enabled || next.preset !== pttTxEqState.preset;
+    pttTxEqState = next;
+    if (vfoTxEqEnabled && vfoTxEqEnabled.checked !== pttTxEqState.enabled) {
+      vfoTxEqEnabled.checked = pttTxEqState.enabled;
+    }
+    if (vfoTxEqPreset && vfoTxEqPreset.value !== pttTxEqState.preset) {
+      vfoTxEqPreset.value = pttTxEqState.preset;
+    }
+    applyVfoTxEqUiState();
+    // Apply live if PTT is currently held (e.g. iOS user flips preset
+    // while desktop op is transmitting).
+    if (changed) _rewireVfoTxEqLive();
+  });
 }
 
 pttBtn.addEventListener('mousedown', (e) => { e.preventDefault(); pttStart(); });

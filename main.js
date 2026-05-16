@@ -5320,6 +5320,14 @@ function connectRemote() {
     remoteServer.sendRigsToClient(rigs, settings.activeRigId || null);
     // Push activator state
     pushActivatorStateToPhone();
+    // Push TX EQ state so the iOS app's EQ controls hydrate to current
+    // desktop state on connect, without a polling round-trip.
+    try {
+      remoteServer.broadcastTxEqState({
+        enabled: !!settings.txEqEnabled,
+        preset:  settings.txEqPreset || 'ragchew',
+      });
+    } catch { /* ignore */ }
     // Send worked parks for new-to-me filter
     if (workedParks.size > 0) {
       remoteServer.sendWorkedParks([...workedParks.keys()]);
@@ -6102,6 +6110,26 @@ function connectRemote() {
     return true;
   }
   ipcMain.on('external-atu-cancel', () => { _externalAtuCancel = true; });
+
+  // TX EQ + compressor — mobile read/write. Reuses the in-process
+  // tx-eq-set IPC pathway so the persist + broadcast logic stays in one
+  // place. tx-eq-get just replies with current cached state.
+  remoteServer.on('tx-eq-get', () => {
+    if (remoteServer && remoteServer.running) {
+      try {
+        remoteServer.broadcastTxEqState({
+          enabled: !!settings.txEqEnabled,
+          preset:  settings.txEqPreset || 'ragchew',
+        });
+      } catch { /* ignore */ }
+    }
+  });
+  remoteServer.on('tx-eq-set', (eqConfig) => {
+    // Funnel through the same IPC path the desktop UIs use so settings
+    // persistence + bridge update + VFO update + broadcastTxEqState
+    // happen in one place. _e is null since this isn't a renderer call.
+    ipcMain.emit('tx-eq-set', null, eqConfig);
+  });
 
   // Unified rig-control from ECHOCAT phone (same dispatch as desktop IPC)
   remoteServer.on('rig-control', (data) => {
@@ -12169,6 +12197,13 @@ app.whenReady().then(() => {
       sendVfoState();
       if (_cachedSolarData) vfoPopoutWin.webContents.send('solar-data', _cachedSolarData);
       vfoPopoutWin.webContents.send('vfo-popout-theme', settings.lightMode ? 'light' : 'dark');
+      // Initial TX EQ state so the popout's controls hydrate to the
+      // current setting on every open (live updates flow through
+      // tx-eq-update broadcasts below).
+      vfoPopoutWin.webContents.send('tx-eq-update', {
+        enabled: !!settings.txEqEnabled,
+        preset:  settings.txEqPreset || 'ragchew',
+      });
     });
     vfoPopoutWin.on('close', () => {
       if (vfoPopoutWin && !vfoPopoutWin.isDestroyed() && !vfoPopoutWin.isMaximized() && !vfoPopoutWin.isMinimized()) {
@@ -13856,11 +13891,27 @@ app.whenReady().then(() => {
       if (typeof eqConfig.preset === 'string')   settings.txEqPreset = eqConfig.preset;
       saveSettings(settings);
     }
+    const payload = {
+      enabled: !!settings.txEqEnabled,
+      preset:  settings.txEqPreset || 'ragchew',
+    };
     if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-      remoteAudioWin.webContents.send('tx-eq-update', {
-        enabled: !!settings.txEqEnabled,
-        preset:  settings.txEqPreset || 'ragchew',
-      });
+      remoteAudioWin.webContents.send('tx-eq-update', payload);
+    }
+    if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) {
+      vfoPopoutWin.webContents.send('tx-eq-update', payload);
+    }
+    // Mirror to the main window so its Settings dialog inputs (if open)
+    // stay in sync when the change came from somewhere else (VFO popout
+    // or iOS WS). Renderer ignores updates if the values haven't changed.
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('tx-eq-update', payload);
+    }
+    // Also broadcast to ECHOCAT mobile clients so an iOS UI reflecting
+    // EQ state can refresh without polling. Same payload, transported
+    // as the standard `tx-eq-state` message.
+    if (remoteServer && remoteServer.running) {
+      try { remoteServer.broadcastTxEqState(payload); } catch { /* ignore */ }
     }
   });
 

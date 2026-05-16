@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   conditionsPopoutOpen: () => ipcRenderer.send('conditions-popout-open'),
   conditionsPopoutTheme: (theme) => ipcRenderer.send('conditions-popout-theme', theme),
   setTxEq: (eqConfig) => ipcRenderer.send('tx-eq-set', eqConfig),
+  onTxEqUpdate: (cb) => ipcRenderer.on('tx-eq-update', (_e, eqConfig) => cb(eqConfig)),
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_e, d) => cb(d)),
   onUpdaterActive: (cb) => ipcRenderer.on('updater-active', (_e, active) => cb(active)),
   onDownloadProgress: (cb) => ipcRenderer.on('update-download-progress', (_e, d) => cb(d)),

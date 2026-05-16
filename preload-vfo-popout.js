@@ -48,4 +48,15 @@ contextBridge.exposeInMainWorld('api', {
   minimize: () => ipcRenderer.send('vfo-popout-minimize'),
   maximize: () => ipcRenderer.send('vfo-popout-maximize'),
   close: () => ipcRenderer.send('vfo-popout-close'),
+  // PC-mic PTT path: the VFO popout captures from a local mic and needs
+  // to feed the same VITA-49 dax_tx / K4 Opus pipeline the ECHOCAT
+  // bridge uses for the iOS mic stream. Reusing the dax-tx-chunk IPC
+  // means main doesn't care which window sent the chunks.
+  daxTxChunk: (samples) => ipcRenderer.send('dax-tx-chunk', samples),
+  // TX EQ + compressor — shared state with the bridge + Settings dialog.
+  // setTxEq persists + broadcasts to bridge + VFO; onTxEqUpdate hydrates
+  // the VFO's UI when state changes from any source (Settings dropdown,
+  // iOS WS, this popout's own controls).
+  setTxEq: (eqConfig) => ipcRenderer.send('tx-eq-set', eqConfig),
+  onTxEqUpdate: (cb) => ipcRenderer.on('tx-eq-update', (_e, eqConfig) => cb(eqConfig)),
 });

@@ -3,6 +3,9 @@
 <head><title>ECHOCAT Audio Bridge</title></head>
 <body>
 <audio id="remote-playback" autoplay></audio>
+<!-- Shared TX EQ chain (Phase 1). Also loaded by vfo-popout.html so
+     both audio sources apply identical DSP. -->
+<script src="tx-eq-chain.js"></script>
 <script>
 // Hidden BrowserWindow — WebRTC audio bridge between radio USB audio and phone
 let pc = null;
@@ -188,80 +191,11 @@ window.api.onFreedvMute((muted) => {
 let _daxTxCtx = null;
 let _daxTxNode = null;
 let _daxTxSource = null;
-// --- TX EQ + Compressor (Phase 1) ---
-// Three presets, low/high shelf + dynamics compressor. Inserted between
-// the WebRTC MediaStreamSource and the AudioWorklet that emits 24 kHz
-// mono chunks for the rig. Compensates for radios that disable their
-// internal speech processing in DATA mode (IC-7300 and similar) — which
-// is the mode SSB-over-DATA forces on the audio bridge path.
-//
-// Low shelf @ 120 Hz, high shelf @ 2 kHz — bands suggested by the user
-// who filed this. Defaults are conservative; the cohort who really needs
-// this opts in explicitly.
-const TX_EQ_PRESETS = {
-  ragchew: { lowGainDb: 0,  highGainDb: 0,  threshold: -24, ratio: 2, attack: 0.003, release: 0.25, knee: 30, makeupDb: 0 },
-  pileup:  { lowGainDb: -3, highGainDb: 6,  threshold: -18, ratio: 4, attack: 0.003, release: 0.15, knee: 20, makeupDb: 4 },
-  dx:      { lowGainDb: -6, highGainDb: 9,  threshold: -16, ratio: 6, attack: 0.001, release: 0.10, knee: 15, makeupDb: 6 },
-};
-const TX_EQ_LOW_HZ  = 120;
-const TX_EQ_HIGH_HZ = 2000;
-let _txEqLowShelf = null;
-let _txEqHighShelf = null;
-let _txEqCompressor = null;
-let _txEqMakeupGain = null;
-let _txEqEnabled = false;
-let _txEqPreset = 'ragchew';
-
-function _dbToLinear(db) { return Math.pow(10, db / 20); }
-
-// Build the EQ + comp chain inside the existing DAX TX AudioContext and
-// splice it between `source` and `worklet`. Returns the final node that
-// the worklet should connect to. When `enabled` is false this is just a
-// pass-through (source → worklet directly) so the chain has zero impact.
-function _wireTxEqChain(ctx, source, worklet, enabled, presetName) {
-  // Tear down any existing chain first so reconfigure doesn't leak nodes
-  // or stack filters from previous calls.
-  try { source.disconnect(); } catch {}
-  if (_txEqLowShelf)    { try { _txEqLowShelf.disconnect(); } catch {} _txEqLowShelf = null; }
-  if (_txEqHighShelf)   { try { _txEqHighShelf.disconnect(); } catch {} _txEqHighShelf = null; }
-  if (_txEqCompressor)  { try { _txEqCompressor.disconnect(); } catch {} _txEqCompressor = null; }
-  if (_txEqMakeupGain)  { try { _txEqMakeupGain.disconnect(); } catch {} _txEqMakeupGain = null; }
-
-  if (!enabled) {
-    source.connect(worklet);
-    return;
-  }
-
-  const p = TX_EQ_PRESETS[presetName] || TX_EQ_PRESETS.ragchew;
-  _txEqLowShelf = ctx.createBiquadFilter();
-  _txEqLowShelf.type = 'lowshelf';
-  _txEqLowShelf.frequency.value = TX_EQ_LOW_HZ;
-  _txEqLowShelf.gain.value = p.lowGainDb;
-
-  _txEqHighShelf = ctx.createBiquadFilter();
-  _txEqHighShelf.type = 'highshelf';
-  _txEqHighShelf.frequency.value = TX_EQ_HIGH_HZ;
-  _txEqHighShelf.gain.value = p.highGainDb;
-
-  _txEqCompressor = ctx.createDynamicsCompressor();
-  _txEqCompressor.threshold.value = p.threshold;
-  _txEqCompressor.ratio.value     = p.ratio;
-  _txEqCompressor.attack.value    = p.attack;
-  _txEqCompressor.release.value   = p.release;
-  _txEqCompressor.knee.value      = p.knee;
-
-  _txEqMakeupGain = ctx.createGain();
-  _txEqMakeupGain.gain.value = _dbToLinear(p.makeupDb);
-
-  // Chain: source → low shelf → high shelf → compressor → makeup → worklet
-  source.connect(_txEqLowShelf);
-  _txEqLowShelf.connect(_txEqHighShelf);
-  _txEqHighShelf.connect(_txEqCompressor);
-  _txEqCompressor.connect(_txEqMakeupGain);
-  _txEqMakeupGain.connect(worklet);
-
-  console.log(`[remote-audio] TX EQ enabled: preset=${presetName} low=${p.lowGainDb}dB@120Hz high=${p.highGainDb}dB@2kHz comp=${p.ratio}:1@${p.threshold}dB+${p.makeupDb}dB`);
-}
+// --- TX EQ + Compressor ---
+// DSP chain lives in renderer/tx-eq-chain.js (shared with vfo-popout).
+// This file just owns the bridge-side wiring + live-update plumbing.
+const _txEqChain = TxEqChain.create();
+let _txEqState = { enabled: false, preset: 'ragchew' };
 
 async function startDaxTxTap(stream, eqConfig) {
   stopDaxTxTap();
@@ -278,9 +212,11 @@ async function startDaxTxTap(stream, eqConfig) {
   };
   // Remember the requested EQ state so live updates have something to
   // reconfigure on top of, even when the user later flips enabled off.
-  _txEqEnabled = !!(eqConfig && eqConfig.enabled);
-  _txEqPreset  = (eqConfig && eqConfig.preset) || 'ragchew';
-  _wireTxEqChain(_daxTxCtx, _daxTxSource, _daxTxNode, _txEqEnabled, _txEqPreset);
+  _txEqState = {
+    enabled: !!(eqConfig && eqConfig.enabled),
+    preset:  (eqConfig && eqConfig.preset) || 'ragchew',
+  };
+  TxEqChain.wire(_txEqChain, _daxTxCtx, _daxTxSource, _daxTxNode, _txEqState);
 
   // Connect to destination so the worklet stays scheduled. The dest is
   // muted (default 0 gain on a hidden window output) so this doesn't
@@ -289,10 +225,11 @@ async function startDaxTxTap(stream, eqConfig) {
   if (_daxTxCtx.state === 'suspended') { try { await _daxTxCtx.resume(); } catch {} }
 }
 function stopDaxTxTap() {
-  if (_txEqLowShelf)   { try { _txEqLowShelf.disconnect(); } catch {} _txEqLowShelf = null; }
-  if (_txEqHighShelf)  { try { _txEqHighShelf.disconnect(); } catch {} _txEqHighShelf = null; }
-  if (_txEqCompressor) { try { _txEqCompressor.disconnect(); } catch {} _txEqCompressor = null; }
-  if (_txEqMakeupGain) { try { _txEqMakeupGain.disconnect(); } catch {} _txEqMakeupGain = null; }
+  // Drop the EQ nodes by wiring through "disabled" once (which disconnects
+  // and nulls them out) so we don't leak references on stop.
+  if (_daxTxSource && _daxTxNode) {
+    try { TxEqChain.wire(_txEqChain, _daxTxCtx, _daxTxSource, _daxTxNode, { enabled: false }); } catch {}
+  }
   if (_daxTxNode) { try { _daxTxNode.disconnect(); } catch {} _daxTxNode = null; }
   if (_daxTxSource) { try { _daxTxSource.disconnect(); } catch {} _daxTxSource = null; }
   if (_daxTxCtx) { _daxTxCtx.close().catch(() => {}); _daxTxCtx = null; }
@@ -300,12 +237,14 @@ function stopDaxTxTap() {
 
 // Live update — reconfigure the existing chain without rebuilding the
 // AudioContext / WebRTC peer. Fired from main when the user changes the
-// Settings dropdown.
+// Settings dropdown or the VFO popout's EQ controls.
 window.api.onTxEqUpdate((eqConfig) => {
-  _txEqEnabled = !!(eqConfig && eqConfig.enabled);
-  _txEqPreset  = (eqConfig && eqConfig.preset) || 'ragchew';
+  _txEqState = {
+    enabled: !!(eqConfig && eqConfig.enabled),
+    preset:  (eqConfig && eqConfig.preset) || 'ragchew',
+  };
   if (_daxTxCtx && _daxTxSource && _daxTxNode) {
-    _wireTxEqChain(_daxTxCtx, _daxTxSource, _daxTxNode, _txEqEnabled, _txEqPreset);
+    TxEqChain.wire(_txEqChain, _daxTxCtx, _daxTxSource, _daxTxNode, _txEqState);
   }
 });
 

@@ -13,6 +13,7 @@ This directory holds open requests for the iOS POTACAT app (React Native, repo `
 
 - [audio-restart-button.md](audio-restart-button.md) — Add a "Restart audio" button (and optional auto-banner) that fires the `restart-audio` WS message; recovers the iOS audio bridge from RDP-induced silence without leaving the phone.
 - [jtcat-qso-waiting-phase.md](jtcat-qso-waiting-phase.md) — *(in-progress)* Render the new JTCAT `waiting` QSO phase. iOS side implemented in `Ft8Screen.tsx` (type-check clean); pending TestFlight + end-to-end test against a v1.5.22+ desktop.
+- [tx-audio-eq.md](tx-audio-eq.md) — TX EQ + compressor UI. Desktop ships the DSP + 3 presets + WS protocol; iOS just needs to add the toggle + preset picker and listen for `tx-eq-state` pushes.
 
 ## Shipped
 
