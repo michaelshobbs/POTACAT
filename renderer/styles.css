@@ -53,6 +53,7 @@
   /* Filled shapes (Kp bars, etc.) can use a punchier hue than text-warn,
      since large fills aren't constrained by character-edge legibility. */
   --cond-warn-fill: #ffe933;
+}
 
 [data-theme="light"] {
   --bg-primary: #f0f2f5;
@@ -99,6 +100,7 @@
   /* Bars/fills get a punchier yellow than text-warn — amber is readable
      for characters but reads "boring brown" as a big rectangle. */
   --cond-warn-fill: #f5c518;
+}
 
 /* WCAG AA — dark theme overrides */
 [data-wcag] {
