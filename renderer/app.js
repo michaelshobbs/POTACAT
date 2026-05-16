@@ -703,10 +703,6 @@ let dirActiveTab = 'nets'; // 'nets' or 'swl'
 const viewDirectoryBtn = document.getElementById('view-directory-btn');
 const directoryView = document.getElementById('directory-view');
 const viewConditionsBtn = document.getElementById('view-conditions-btn');
-const conditionsView = document.getElementById('conditions-view');
-const conditionsBody = document.getElementById('conditions-body');
-const conditionsUpdated = document.getElementById('conditions-updated');
-const conditionsRefreshBtn = document.getElementById('conditions-refresh-btn');
 const dirvTabNets = document.getElementById('dirv-tab-nets');
 const dirvTabSwl = document.getElementById('dirv-tab-swl');
 const dirvSearch = document.getElementById('dirv-search');
@@ -1449,8 +1445,6 @@ async function loadPrefs() {
         setView('dxcc');
       } else if (viewState.lastView === 'directory' && settings.enableDirectory) {
         setView('directory');
-      } else if (viewState.lastView === 'conditions') {
-        setView('conditions');
       } else {
         showTable = viewState.showTable !== false;
         showMap = viewState.showMap === true;
@@ -6541,8 +6535,8 @@ window.api.onJtcatPopoutStatus((open) => {
 // RBN and DXCC are exclusive views that hide the split container.
 
 function setView(view) {
-  // Called for exclusive views (rbn, dxcc, directory, conditions) or to force a specific state
-  if (view === 'rbn' || view === 'dxcc' || view === 'directory' || view === 'conditions') {
+  // Called for exclusive views (rbn, dxcc, directory) or to force a specific state
+  if (view === 'rbn' || view === 'dxcc' || view === 'directory') {
     currentView = view;
     showTable = false;
     showMap = false;
@@ -6565,7 +6559,6 @@ function updateViewLayout() {
   rbnView.classList.add('hidden');
   jtcatView.classList.add('hidden');
   if (directoryView) directoryView.classList.add('hidden');
-  if (conditionsView) conditionsView.classList.add('hidden');
   stopDirvAutoRefresh();
 
   // Deactivate all view buttons
@@ -6602,18 +6595,6 @@ function updateViewLayout() {
     if (viewDirectoryBtn) viewDirectoryBtn.classList.add('active');
     renderDirectoryView();
     startDirvAutoRefresh();
-    updateParksStatsOverlay();
-    saveViewState();
-    return;
-  }
-
-  if (currentView === 'conditions') {
-    splitContainerEl.classList.add('hidden');
-    if (conditionsView) conditionsView.classList.remove('hidden');
-    // Pull cached payload immediately (so the panel isn't blank for 10 min
-    // if the user just opened the app), then re-render lands via the
-    // solar-data IPC when fetchAllSolar finishes.
-    openConditionsView();
     updateParksStatsOverlay();
     saveViewState();
     return;
@@ -6675,7 +6656,7 @@ function saveViewState() {
 }
 
 viewTableBtn.addEventListener('click', () => {
-  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory' || currentView === 'conditions') {
+  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory') {
     // Switching from exclusive view -> table only
     if (currentView === 'jtcat') stopJtcatView();
     currentView = 'table';
@@ -6706,7 +6687,7 @@ viewMapBtn.addEventListener('click', () => {
     window.api.popoutMapOpen(); // focuses existing window
     return;
   }
-  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory' || currentView === 'conditions') {
+  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory') {
     // Switching from exclusive view -> map only
     if (currentView === 'jtcat') stopJtcatView();
     currentView = 'map';
@@ -6732,10 +6713,11 @@ viewMapBtn.addEventListener('click', () => {
 });
 
 viewRbnBtn.addEventListener('click', () => setView('rbn'));
-if (viewConditionsBtn) viewConditionsBtn.addEventListener('click', () => setView('conditions'));
-if (conditionsRefreshBtn) conditionsRefreshBtn.addEventListener('click', () => {
-  conditionsUpdated.textContent = 'refreshing…';
-  window.api.refreshSolar();
+if (viewConditionsBtn) viewConditionsBtn.addEventListener('click', () => {
+  // Conditions is a popout, not an in-window view — keeps the main app
+  // on whatever spot view the user was hunting from, and the panel can
+  // ride along on a second monitor.
+  window.api.conditionsPopoutOpen();
 });
 if (viewDirectoryBtn) viewDirectoryBtn.addEventListener('click', () => {
   if (directoryNets.length === 0 && directorySwl.length === 0) {
@@ -8477,6 +8459,7 @@ quickLightMode.addEventListener('change', async () => {
   if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(light ? 'light' : 'dark');
   window.api.sstvPopoutTheme(light ? 'light' : 'dark');
   window.api.vfoPopoutTheme(light ? 'light' : 'dark');
+  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(light ? 'light' : 'dark');
   window.api.sendBandspreadPopoutTheme(light ? 'light' : 'dark');
   await window.api.saveSettings({ lightMode: light });
 });
@@ -9611,6 +9594,7 @@ settingsSave.addEventListener('click', async () => {
   if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(lightModeEnabled ? 'light' : 'dark');
   if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(lightModeEnabled ? 'light' : 'dark');
   window.api.sstvPopoutTheme(lightModeEnabled ? 'light' : 'dark');
+  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(lightModeEnabled ? 'light' : 'dark');
   window.api.sendBandspreadPopoutTheme(lightModeEnabled ? 'light' : 'dark');
   enableDxcc = dxccEnabled;
   licenseClass = licenseClassVal;
@@ -11934,10 +11918,7 @@ function updateSolarVisibility() {
   aStatusEl.classList[method]('hidden');
 }
 
-let _lastSolarPayload = null;
-
 window.api.onSolarData((payload) => {
-  _lastSolarPayload = payload;
   const { sfi, kIndex, aIndex } = payload || {};
   const hidden = enableSolar ? '' : ' hidden';
 
@@ -11956,316 +11937,13 @@ window.api.onSolarData((payload) => {
     aStatusEl.textContent = `A ${aIndex}`;
     aStatusEl.className = `status solar-pill ${aClass}${hidden}`;
   }
-
-  // Re-render Conditions view if it's currently visible.
-  if (conditionsView && !conditionsView.classList.contains('hidden')) {
-    renderConditions(payload);
-  }
+  // Note: the full Conditions panel lives in conditions-popout.html and
+  // subscribes to its own solar-data IPC — no in-window render here.
 });
 
-async function openConditionsView() {
-  // Render whatever's already cached so the panel isn't blank, then let
-  // the next solar-data IPC tick refresh it. The handle call returns null
-  // if main has never fetched yet (cold start before the 10-min timer).
-  try {
-    const cached = await window.api.getSolar();
-    if (cached && (cached.sfi != null || cached.kpHistory || cached.alerts)) {
-      _lastSolarPayload = cached;
-      renderConditions(cached);
-    } else {
-      renderConditions(null);
-      conditionsUpdated.textContent = 'fetching…';
-      window.api.refreshSolar();
-    }
-  } catch {
-    renderConditions(_lastSolarPayload);
-  }
-}
+// Conditions popout owns its own render — see renderer/conditions-popout.js.
 
-function _condClass(condition) {
-  const c = String(condition || '').toLowerCase();
-  if (c === 'good') return 'good';
-  if (c === 'fair') return 'fair';
-  if (c === 'poor') return 'poor';
-  return 'unknown';
-}
-function _vhfClass(status) {
-  const s = String(status || '').toLowerCase();
-  if (s.includes('open')) return 'open';
-  if (s.includes('closed')) return 'closed';
-  return 'unknown';
-}
-function _vhfLabel(name) {
-  return ({
-    'vhf-aurora':         'VHF Aurora',
-    'e-skip_6m':          'E-skip 6m',
-    'e-skip_4m':          'E-skip 4m',
-    'e-skip_2m':          'E-skip 2m',
-    'path_eu_6m':         '6m → EU',
-    'path_na_6m':         '6m → NA',
-  }[name] || name.replace(/_/g, ' '));
-}
-function _kpBarClass(kp) {
-  if (kp <= 2) return '';
-  if (kp <= 4) return 'warn';
-  return 'bad';
-}
-function _formatKpTime(t) {
-  // SWPC: "2026-05-16 09:00:00"
-  if (!t) return '';
-  const parts = t.split(' ');
-  if (parts.length < 2) return t;
-  return parts[1].slice(0, 5) + 'Z';
-}
 
-function renderConditions(payload) {
-  if (!payload || payload.sfi == null) {
-    conditionsBody.innerHTML = '<div class="conditions-empty">No data yet — waiting for hamqsl.com / NOAA SWPC…</div>';
-    conditionsUpdated.textContent = '—';
-    return;
-  }
-
-  const p = payload;
-  conditionsUpdated.textContent = p.updated ? ('Updated ' + p.updated) : 'Updated just now';
-
-  const sfiClass = p.sfi >= 120 ? 'good' : p.sfi >= 90 ? 'warn' : 'bad';
-  const snClass  = (p.sunspots ?? 0) >= 100 ? 'good' : (p.sunspots ?? 0) >= 40 ? 'warn' : 'bad';
-  const kClass   = p.kIndex <= 2 ? 'good' : p.kIndex <= 4 ? 'warn' : 'bad';
-  const aClass   = p.aIndex <= 7 ? 'good' : p.aIndex <= 20 ? 'warn' : 'bad';
-
-  // X-Ray flare class. A and B = background / quiet; C = minor flare;
-  // M = moderate (R1-R2 radio blackout possible); X = major (R3+).
-  // hamqsl renders as a class letter + magnitude like "B1.2" or "M2.5".
-  const xrayLetter = (p.xray || '').trim().charAt(0).toUpperCase();
-  const xrayClass = (xrayLetter === 'A' || xrayLetter === 'B') ? 'good'
-                  : (xrayLetter === 'C') ? 'warn'
-                  : (xrayLetter === 'M' || xrayLetter === 'X') ? 'bad' : '';
-
-  // 304Å EUV drives F-layer ionization. Higher = better HF DX.
-  // Rough bands: >150 strong, 100-150 moderate, <100 weak.
-  const heNum = parseInt(p.heliumLine, 10);
-  const heClass = !Number.isNaN(heNum)
-    ? (heNum >= 150 ? 'good' : heNum >= 100 ? 'warn' : 'bad') : '';
-
-  // Solar wind speed — lower is calmer. <400 nominal, 400-600 elevated,
-  // >600 high (storm risk). Color is inverted from the others (high = bad).
-  const swNum = parseInt(p.solarWind, 10);
-  const swClass = !Number.isNaN(swNum)
-    ? (swNum < 400 ? 'good' : swNum < 600 ? 'warn' : 'bad') : '';
-
-  // Bz (IMF Z-component, nT) drives geomagnetic coupling. Positive Bz
-  // is benign; strong negative Bz reconnects with Earth's field and
-  // triggers storms. >0 good, 0 to -5 mild, -5 to -10 warn, <-10 bad.
-  const bzNum = parseFloat(p.magneticField);
-  const bzClass = !Number.isNaN(bzNum)
-    ? (bzNum >= 0 ? 'good' : bzNum > -5 ? 'warn' : 'bad') : '';
-
-  const sfiSub = p.sfi >= 120 ? 'strong' : p.sfi >= 90 ? 'moderate' : p.sfi >= 70 ? 'weak' : 'very weak';
-  const snSub  = (p.sunspots ?? 0) >= 100 ? 'high' : (p.sunspots ?? 0) >= 40 ? 'moderate' : 'low';
-  const xraySub = xrayLetter === 'X' ? 'major flare' : xrayLetter === 'M' ? 'moderate' : xrayLetter === 'C' ? 'minor' : 'quiet';
-  const heSub  = !Number.isNaN(heNum) ? (heNum >= 150 ? 'strong' : heNum >= 100 ? 'moderate' : 'weak') : 'helium';
-  const swSub  = !Number.isNaN(swNum) ? (swNum < 400 ? 'calm' : swNum < 600 ? 'elevated' : 'high') : 'km/s';
-  const bzSub  = !Number.isNaN(bzNum) ? (bzNum >= 0 ? 'northward' : bzNum > -5 ? 'mild south' : 'storm-prone') : 'nT';
-  const kSub   = p.kIndex <= 1 ? 'very quiet' : p.kIndex <= 2 ? 'quiet'
-               : p.kIndex <= 3 ? 'unsettled' : p.kIndex <= 4 ? 'active'
-               : p.kIndex <= 5 ? 'minor storm' : p.kIndex <= 6 ? 'moderate storm'
-               : p.kIndex <= 7 ? 'strong storm' : 'severe storm';
-  const aSub   = p.aIndex <= 7 ? 'quiet' : p.aIndex <= 15 ? 'unsettled'
-               : p.aIndex <= 30 ? 'active' : p.aIndex <= 50 ? 'minor storm'
-               : 'major storm';
-
-  // Tooltips — these are the "what is this number?" explanations every
-  // ham asks when they first see the panel. Plain text so the browser's
-  // native title tooltip can show them.
-  const TIP = {
-    sfi:    'Solar Flux Index — 10.7 cm radio flux from the Sun, a proxy for ionization. >120 supports good HF DX; <90 means weak F-layer.',
-    sn:     'International Sunspot Number — Wolf number. Higher = more solar activity = better HF propagation.',
-    xray:   'Background X-ray flux class. A/B = quiet, C = minor flare, M = moderate (R1–R2 blackout possible), X = major (R3+).',
-    he304:  '304 Å EUV emission (helium II). Drives F-layer ionization that bends HF signals back to Earth. >150 strong.',
-    muf:    'Maximum Usable Frequency — highest frequency that reflects off the F-layer for a typical 3000 km hop right now.',
-    fof2:   'F2 critical frequency — highest signal a vertical wave will reflect back. Sets your local NVIS ceiling.',
-    proton: 'Proton flux (≥10 MeV). Elevated levels indicate a solar particle event and may cause polar HF blackouts.',
-    electron:'Electron flux (≥2 MeV). Elevated levels stress satellites and can degrade VHF/UHF satellite QSOs.',
-    snoise: 'Estimated band noise floor in S-units. Higher = more atmospheric / geomagnetic QRN.',
-    norm:   'Hamqsl normalization factor used in the band conditions calculation.',
-    k:      'Planetary K-index — 3-hour geomagnetic activity (0–9 quasi-log scale). 0–2 quiet, 5+ storm.',
-    a:      'Planetary A-index — daily linear-scale geomagnetic activity. <7 quiet, >30 storm.',
-    sw:     'Solar wind speed at L1 (km/s). <400 nominal, >600 elevated and likely to disturb the geomagnetic field.',
-    bz:     'Bz — Z-component of the interplanetary magnetic field (nT). Strong negative Bz couples with Earth\'s field and triggers storms.',
-    field:  'Geomagnetic field state — N0NBH descriptor (quiet / unsettled / active / storm).',
-    aurora: 'Aurora activity level (0–10). Higher = stronger oval = more chance of VHF aurora and HF polar blackouts.',
-    auroraLat:'Estimated southernmost latitude where the aurora oval is currently visible.',
-    kpnt:   'Estimated near-real-time Kp from N0NBH (NoaaTec) — finer-grained companion to the planetary K above.',
-  };
-
-  // -- Solar card (hero metrics + secondary KV) -----------------------------
-  const solarCard = `
-    <div class="cond-card card-solar">
-      <h3>Solar Activity</h3>
-      <div class="cond-hero-row">
-        <div class="cond-hero ${sfiClass}" title="${TIP.sfi}">
-          <div class="hero-label">SFI</div>
-          <div class="hero-value">${p.sfi}</div>
-          <div class="hero-sub">${sfiSub}</div>
-        </div>
-        <div class="cond-hero ${snClass}" title="${TIP.sn}">
-          <div class="hero-label">Sunspots</div>
-          <div class="hero-value">${p.sunspots ?? '—'}</div>
-          <div class="hero-sub">${snSub}</div>
-        </div>
-        <div class="cond-hero ${xrayClass}" title="${TIP.xray}">
-          <div class="hero-label">X-Ray</div>
-          <div class="hero-value" style="font-size:18px">${p.xray ?? '—'}</div>
-          <div class="hero-sub">${xraySub}</div>
-        </div>
-        <div class="cond-hero ${heClass}" title="${TIP.he304}">
-          <div class="hero-label">304 Å</div>
-          <div class="hero-value" style="font-size:18px">${p.heliumLine ?? '—'}</div>
-          <div class="hero-sub">${heSub}</div>
-        </div>
-      </div>
-      <div class="cond-kv">
-        <div class="kv-row" title="${TIP.muf}"><span class="kv-label">MUF</span><span class="kv-value">${p.muf ? p.muf + ' MHz' : '—'}</span></div>
-        <div class="kv-row" title="${TIP.fof2}"><span class="kv-label">foF2</span><span class="kv-value">${p.fof2 ? p.fof2 + ' MHz' : '—'}</span></div>
-        <div class="kv-row" title="${TIP.proton}"><span class="kv-label">Proton flux</span><span class="kv-value dim">${p.protonFlux ?? '—'}</span></div>
-        <div class="kv-row" title="${TIP.electron}"><span class="kv-label">Electron flux</span><span class="kv-value dim">${p.electronFlux ?? '—'}</span></div>
-        <div class="kv-row" title="${TIP.snoise}"><span class="kv-label">Signal noise</span><span class="kv-value">${p.signalNoise ?? '—'}</span></div>
-        <div class="kv-row" title="${TIP.norm}"><span class="kv-label">Normalization</span><span class="kv-value dim">${p.normalization ?? '—'}</span></div>
-      </div>
-    </div>`;
-
-  // -- Geomagnetic card (hero metrics + secondary KV) -----------------------
-  const geoCard = `
-    <div class="cond-card card-geo">
-      <h3>Geomagnetic</h3>
-      <div class="cond-hero-row">
-        <div class="cond-hero ${kClass}" title="${TIP.k}">
-          <div class="hero-label">K-index</div>
-          <div class="hero-value">${p.kIndex}</div>
-          <div class="hero-sub">${kSub}</div>
-        </div>
-        <div class="cond-hero ${aClass}" title="${TIP.a}">
-          <div class="hero-label">A-index</div>
-          <div class="hero-value">${p.aIndex}</div>
-          <div class="hero-sub">${aSub}</div>
-        </div>
-        <div class="cond-hero ${swClass}" title="${TIP.sw}">
-          <div class="hero-label">SW Speed</div>
-          <div class="hero-value" style="font-size:18px">${p.solarWind ?? '—'}</div>
-          <div class="hero-sub">${swSub}</div>
-        </div>
-        <div class="cond-hero ${bzClass}" title="${TIP.bz}">
-          <div class="hero-label">Bz</div>
-          <div class="hero-value" style="font-size:18px">${p.magneticField ?? '—'}</div>
-          <div class="hero-sub">${bzSub}</div>
-        </div>
-      </div>
-      <div class="cond-kv">
-        <div class="kv-row" title="${TIP.field}"><span class="kv-label">Field state</span><span class="kv-value">${p.geomagField ?? '—'}</span></div>
-        <div class="kv-row" title="${TIP.aurora}"><span class="kv-label">Aurora</span><span class="kv-value">${p.aurora ?? '—'}</span></div>
-        <div class="kv-row" title="${TIP.auroraLat}"><span class="kv-label">Aurora limit</span><span class="kv-value">${p.latDegree ? p.latDegree + '°' : '—'}</span></div>
-        <div class="kv-row" title="${TIP.kpnt}"><span class="kv-label">Kp (NT)</span><span class="kv-value dim">${p.kIndexNt ?? '—'}</span></div>
-      </div>
-    </div>`;
-
-  // -- Band conditions matrix (day vs night) --------------------------------
-  let bandsRows = '';
-  if (Array.isArray(p.bands) && p.bands.length) {
-    const byBand = new Map();
-    for (const b of p.bands) {
-      if (!byBand.has(b.band)) byBand.set(b.band, { day: null, night: null });
-      byBand.get(b.band)[b.time] = b.condition;
-    }
-    for (const [band, slot] of byBand) {
-      bandsRows += `<tr>
-        <td class="band-name">${band}</td>
-        <td><span class="cond-cell ${_condClass(slot.day)}">${slot.day || '—'}</span></td>
-        <td><span class="cond-cell ${_condClass(slot.night)}">${slot.night || '—'}</span></td>
-      </tr>`;
-    }
-  }
-  const bandsCard = `
-    <div class="cond-card card-bands">
-      <h3>HF Bands</h3>
-      ${bandsRows
-        ? `<table class="cond-bands-table">
-             <thead><tr><th>Band</th><th>Day</th><th>Night</th></tr></thead>
-             <tbody>${bandsRows}</tbody>
-           </table>`
-        : '<div class="cond-alerts-empty">No band ratings reported.</div>'}
-    </div>`;
-
-  // -- VHF / E-skip ---------------------------------------------------------
-  let vhfRows = '';
-  if (Array.isArray(p.vhf) && p.vhf.length) {
-    for (const v of p.vhf) {
-      vhfRows += `<tr>
-        <td>${_vhfLabel(v.phenomenon)}</td>
-        <td style="color:var(--text-tertiary);font-size:11px">${v.location.replace(/_/g, ' ')}</td>
-        <td><span class="cond-cell ${_vhfClass(v.status)}">${v.status}</span></td>
-      </tr>`;
-    }
-  }
-  const vhfCard = `
-    <div class="cond-card card-vhf">
-      <h3>VHF / E-Skip</h3>
-      ${vhfRows
-        ? `<table class="cond-bands-table">
-             <thead><tr><th>Mode</th><th>Region</th><th>Status</th></tr></thead>
-             <tbody>${vhfRows}</tbody>
-           </table>`
-        : '<div class="cond-alerts-empty">No VHF data.</div>'}
-    </div>`;
-
-  // -- Kp 24h sparkline -----------------------------------------------------
-  let kpSparkHtml = '<div class="cond-alerts-empty">No Kp history yet.</div>';
-  if (Array.isArray(p.kpHistory) && p.kpHistory.length) {
-    const bars = p.kpHistory.map((s) => {
-      const h = Math.max(8, Math.min(100, (s.kp / 9) * 100));
-      return `<div class="bar ${_kpBarClass(s.kp)}" style="height:${h}%" title="${s.time}  Kp=${s.kp.toFixed(2)}"><span class="lbl">${s.kp.toFixed(1)}</span></div>`;
-    }).join('');
-    const latest = p.kpHistory[p.kpHistory.length - 1];
-    const peak = p.kpHistory.reduce((m, s) => s.kp > m ? s.kp : m, 0);
-    kpSparkHtml = `
-      <div class="kp-spark-wrap">
-        <div class="kp-spark">${bars}</div>
-        <div class="kp-spark-axis">
-          <span>${_formatKpTime(p.kpHistory[0].time)}</span>
-          <span>now</span>
-        </div>
-      </div>
-      <div class="kp-current-strip">
-        <span>Current: <strong>${latest.kp.toFixed(2)}</strong></span>
-        <span>24h peak: <strong>${peak.toFixed(2)}</strong></span>
-      </div>`;
-  }
-  const kpCard = `
-    <div class="cond-card card-kp">
-      <h3>Kp — last 24 hours</h3>
-      ${kpSparkHtml}
-    </div>`;
-
-  // -- SWPC alerts ----------------------------------------------------------
-  let alertsHtml = '<div class="cond-alerts-empty">No space-weather alerts in the last 24 hours.</div>';
-  if (Array.isArray(p.alerts) && p.alerts.length) {
-    alertsHtml = '<ul class="cond-alerts">' + p.alerts.map((a) => {
-      const msg = (a.message || '').slice(0, 360);
-      const severity = /severe|extreme|G[45]/i.test(msg) ? 'severe'
-                     : /moderate|warning|alert|G[123]|M\d|X\d/i.test(msg) ? 'warn' : '';
-      return `<li class="${severity}">
-        <span class="alert-time">${a.issue_datetime || ''}</span>
-        <span class="alert-msg">${msg.replace(/</g, '&lt;')}</span>
-      </li>`;
-    }).join('') + '</ul>';
-  }
-  const alertsCard = `
-    <div class="cond-card card-alerts">
-      <h3>NOAA SWPC Alerts (last 24 h)</h3>
-      ${alertsHtml}
-    </div>`;
-
-  conditionsBody.innerHTML = solarCard + geoCard + bandsCard + vhfCard + kpCard + alertsCard;
-}
 
 // --- Band Activity Heatmap ---
 const HEATMAP_BANDS = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '4m', '2m', '70cm'];

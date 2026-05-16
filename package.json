@@ -51,6 +51,7 @@
       "preload-pair-popout.js",
       "preload-prop-popout.js",
       "preload-log-popout.js",
+      "preload-conditions-popout.js",
       "lib/**/*",
       "renderer/**/*",
       "assets/icon.png",

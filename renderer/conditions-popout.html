@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <title>POTACAT — Conditions</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Popout-only: make the .conditions-view height fill the window
+       (the in-window version subtracted the main header). */
+    html, body {
+      margin:0; padding:0; height:100%; overflow:hidden;
+      background:var(--bg-primary); color:var(--text-primary);
+      font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    body { display:flex; flex-direction:column; }
+    #conditions-view {
+      flex:1;
+      height:auto;       /* override the main-window calc(100vh - 96px) */
+      min-height:0;
+    }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="titlebar-drag">
+      <span class="titlebar-title">POTACAT — Conditions</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="tb-min"   title="Minimize">&#x2013;</button>
+      <button class="titlebar-btn" id="tb-max"   title="Maximize">&#x25A1;</button>
+      <button class="titlebar-btn titlebar-close" id="tb-close" title="Close">&#x2715;</button>
+    </div>
+  </div>
+
+  <!-- Same DOM contract as the in-window Conditions view: a header
+       with refresh button and updated label, plus a #conditions-body
+       container that the render function writes into. -->
+  <div id="conditions-view">
+    <div class="conditions-header">
+      <h2 style="margin:0;font-size:13px;">Solar &amp; Propagation Conditions</h2>
+      <span id="conditions-updated" class="conditions-updated">&mdash;</span>
+      <button id="conditions-refresh-btn" type="button" title="Force refresh">&#x21bb; Refresh</button>
+      <span class="conditions-help-text">Solar from hamqsl.com (N0NBH) &middot; Kp history &amp; alerts from NOAA SWPC &middot; auto-refresh every 10 min</span>
+    </div>
+    <div id="conditions-body" class="conditions-body">
+      <div class="conditions-empty">Loading conditions&hellip;</div>
+    </div>
+  </div>
+
+  <script src="conditions-popout.js"></script>
+</body>
+</html>

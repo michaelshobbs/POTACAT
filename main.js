@@ -298,6 +298,7 @@ let clusterPopoutWin = null; // pop-out DX cluster terminal window
 let propPopoutWin = null;    // pop-out propagation map window
 let pairPopoutWin = null;    // pop-out ECHOCAT pairing QR window
 let vfoPopoutWin = null;     // pop-out VFO window
+let conditionsPopoutWin = null; // pop-out Conditions (solar / propagation)
 let jtcatPopoutWin = null;   // pop-out JTCAT window
 let sstvPopoutWin = null;    // pop-out SSTV window
 let bandspreadPopoutWin = null; // pop-out bandspread window
@@ -7865,6 +7866,7 @@ function _broadcastSolar() {
   };
   if (win && !win.isDestroyed()) win.webContents.send('solar-data', payload);
   if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('solar-data', payload);
+  if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) conditionsPopoutWin.webContents.send('solar-data', payload);
 }
 
 function fetchSolarData() {
@@ -12155,6 +12157,61 @@ app.whenReady().then(() => {
 
   ipcMain.on('vfo-popout-theme', (_e, theme) => {
     if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) vfoPopoutWin.webContents.send('vfo-popout-theme', theme);
+  });
+
+  // Conditions popout — solar / propagation panel in its own window.
+  // Mirrors the VFO popout pattern: frameless on win/linux, hiddenInset
+  // titlebar on mac, bounds restored across sessions, theme propagated
+  // on open + on every theme toggle.
+  ipcMain.on('conditions-popout-open', () => {
+    if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) { conditionsPopoutWin.focus(); return; }
+    const isMac = process.platform === 'darwin';
+    conditionsPopoutWin = new BrowserWindow({
+      width: 1100, height: 720, title: 'POTACAT — Conditions',
+      show: false,
+      ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
+      icon: getIconPath(),
+      webPreferences: {
+        preload: path.join(__dirname, 'preload-conditions-popout.js'),
+        contextIsolation: true, nodeIntegration: false,
+      },
+    });
+    const saved = settings.conditionsPopoutBounds;
+    if (saved && saved.width > 400 && saved.height > 300 && isOnScreen(saved)) {
+      conditionsPopoutWin.setBounds(clampToWorkArea(saved));
+    }
+    conditionsPopoutWin.show();
+    conditionsPopoutWin.setMenuBarVisibility(false);
+    conditionsPopoutWin.loadFile(path.join(__dirname, 'renderer', 'conditions-popout.html'));
+    conditionsPopoutWin.webContents.on('did-finish-load', () => {
+      conditionsPopoutWin.webContents.send('conditions-popout-theme', settings.lightMode ? 'light' : 'dark');
+      // Push whatever's in cache so the panel paints instantly. If
+      // nothing cached yet, kick a refresh — keeps cold-open from
+      // staring at "Loading…" for up to 10 minutes.
+      if (_cachedSolarData) _broadcastSolar();
+      else fetchAllSolar();
+    });
+    conditionsPopoutWin.on('close', () => {
+      if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()
+          && !conditionsPopoutWin.isMaximized() && !conditionsPopoutWin.isMinimized()) {
+        settings.conditionsPopoutBounds = conditionsPopoutWin.getBounds();
+        saveSettings(settings);
+      }
+    });
+    conditionsPopoutWin.on('closed', () => { conditionsPopoutWin = null; });
+    conditionsPopoutWin.webContents.on('before-input-event', (_e, input) => {
+      if (input.key === 'F12' && input.type === 'keyDown') conditionsPopoutWin.webContents.toggleDevTools();
+    });
+  });
+  ipcMain.on('conditions-popout-minimize', () => { if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) conditionsPopoutWin.minimize(); });
+  ipcMain.on('conditions-popout-maximize', () => {
+    if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) {
+      conditionsPopoutWin.isMaximized() ? conditionsPopoutWin.unmaximize() : conditionsPopoutWin.maximize();
+    }
+  });
+  ipcMain.on('conditions-popout-close', () => { if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) conditionsPopoutWin.close(); });
+  ipcMain.on('conditions-popout-theme', (_e, theme) => {
+    if (conditionsPopoutWin && !conditionsPopoutWin.isDestroyed()) conditionsPopoutWin.webContents.send('conditions-popout-theme', theme);
   });
 
   ipcMain.on('vfo-tuned-spot', (_e, spot) => {
