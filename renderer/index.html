@@ -1114,7 +1114,7 @@
         </div>
         <label class="radio-label"><input type="radio" name="radio-type" value="k4network"> K4 Remote (network)</label>
         <div id="k4network-config" class="radio-sub hidden">
-          <span class="help-text" style="font-size:12px;">Reach an Elecraft K4 / K4D over the network using the radio's built-in remote protocol. Set a remote password in the K4's menu first. Port 9205 (plain) is the default; TLS-PSK on 9204 is not yet supported. Tested with K4 firmware via the QK4 reference protocol.</span>
+          <span class="help-text" style="font-size:12px;">Reach an Elecraft K4 / K4D over the network using the radio's built-in remote protocol. Set a remote password in the K4's menu first. Port 9205 = plain TCP (password sent as SHA-384 hash). Port 9204 = TLS-PSK encrypted (recommended for connections over the public internet); password is used as the pre-shared key.</span>
           <label>Host:
             <input type="text" id="set-k4network-host" placeholder="k4.example.com">
           </label>
