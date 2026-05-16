@@ -938,6 +938,9 @@ const setSsbOverData = document.getElementById('set-ssb-over-data');
 const setRemoteCwEnabled = document.getElementById('set-remote-cw-enabled');
 const setRemoteStun = document.getElementById('set-remote-stun');
 const setAudioSource = document.getElementById('set-audio-source');
+const setTxEqEnabled = document.getElementById('set-tx-eq-enabled');
+const setTxEqPreset = document.getElementById('set-tx-eq-preset');
+const setTxEqPresetRow = document.getElementById('set-tx-eq-preset-row');
 const setCwKeyPort = document.getElementById('set-cw-key-port');
 const remoteUrlDisplay = document.getElementById('remote-url-display');
 // Mobile-app pairing UI (Phase 0 of native app)
@@ -8482,6 +8485,27 @@ quickHideWorkedParks.addEventListener('change', async () => {
   await window.api.saveSettings({ hideWorkedParks });
 });
 
+// TX EQ — live update on every change so the user can A/B presets while
+// transmitting without reopening Settings. setTxEq persists to settings
+// AND pushes the new config to the audio bridge in one IPC.
+if (setTxEqEnabled) {
+  setTxEqEnabled.addEventListener('change', () => {
+    if (setTxEqPresetRow) setTxEqPresetRow.style.opacity = setTxEqEnabled.checked ? '1' : '0.5';
+    window.api.setTxEq({
+      enabled: setTxEqEnabled.checked,
+      preset:  setTxEqPreset ? setTxEqPreset.value : 'ragchew',
+    });
+  });
+}
+if (setTxEqPreset) {
+  setTxEqPreset.addEventListener('change', () => {
+    window.api.setTxEq({
+      enabled: setTxEqEnabled ? setTxEqEnabled.checked : false,
+      preset:  setTxEqPreset.value,
+    });
+  });
+}
+
 // S-Meter / SWR quick toggle
 quickShowMeter.addEventListener('change', () => {
   meterBoxVisible = quickShowMeter.checked;
@@ -9062,6 +9086,17 @@ async function openSettingsDialog(tab) {
   setRemoteCwEnabled.checked = !!s.remoteCwEnabled;
   setRemoteStun.checked = !!s.remoteStun;
   if (setAudioSource) setAudioSource.value = (s.audioSource === 'smartsdr') ? 'smartsdr' : 'dax';
+  // TX EQ — load saved state into the Settings dialog. Live updates go
+  // through window.api.setTxEq() so toggling the checkbox / dropdown
+  // doesn't require reopening Settings or clicking Save.
+  if (setTxEqEnabled) {
+    setTxEqEnabled.checked = !!s.txEqEnabled;
+    if (setTxEqPresetRow) setTxEqPresetRow.style.opacity = s.txEqEnabled ? '1' : '0.5';
+  }
+  if (setTxEqPreset) {
+    const preset = (s.txEqPreset === 'pileup' || s.txEqPreset === 'dx') ? s.txEqPreset : 'ragchew';
+    setTxEqPreset.value = preset;
+  }
   // Populate CW Key Port datalist
   try {
     const cwPorts = await window.api.listPorts();

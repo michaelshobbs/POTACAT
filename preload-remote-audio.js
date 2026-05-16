@@ -40,4 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   // sends to the radio. Bypasses Windows DAX TX device entirely.
   // K3SBP 2026-05-15.
   daxTxChunk: (samples) => ipcRenderer.send('dax-tx-chunk', samples),
+  // TX EQ + compressor — main pushes live updates here when the user
+  // toggles enable/preset in Settings without rebuilding WebRTC.
+  onTxEqUpdate: (cb) => ipcRenderer.on('tx-eq-update', (_e, eqConfig) => cb(eqConfig)),
 });

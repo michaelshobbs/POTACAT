@@ -7628,6 +7628,34 @@ function broadcastRemoteRadioStatus() {
 }
 
 // --- Remote Audio (hidden BrowserWindow for WebRTC) ---
+// Single source of truth for the config payload sent to the audio bridge
+// renderer on every (re)start. Both the "window already open" hot path
+// and the "fresh window" cold path used to duplicate this, including the
+// daxTxDirect formula — easy to forget to update one of them when adding
+// a new field (e.g. txEq for Phase 1 TX-side EQ + compression).
+function _buildAudioBridgeConfig() {
+  const t = settings.catTarget || {};
+  const daxTxDirect =
+    (settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady) ||
+    (t.type === 'k4-network' && cat && cat.connected);
+  return {
+    inputDeviceId:  settings.remoteAudioInput  || '',
+    outputDeviceId: settings.remoteAudioOutput || '',
+    useStun:        !!settings.remoteStun,
+    audioSource:    settings.audioSource || 'dax',
+    daxTxDirect,
+    // TX EQ + compressor — applied in the bridge renderer to mic audio
+    // BEFORE the AudioWorklet that feeds dax_tx packets to the rig.
+    // Compensates for the IC-7300 / similar rigs disabling their internal
+    // EQ + compression in DATA mode (which SSB-over-DATA forces). Off by
+    // default so existing users don't get a silent audio change.
+    txEq: {
+      enabled: !!settings.txEqEnabled,
+      preset:  settings.txEqPreset || 'ragchew',
+    },
+  };
+}
+
 async function startRemoteAudio() {
   // On macOS, request microphone permission before creating the audio window.
   // Without this, getUserMedia() silently returns an empty/silent stream.
@@ -7645,14 +7673,7 @@ async function startRemoteAudio() {
 
   // If window already exists, tell it to restart a fresh WebRTC session
   if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-    remoteAudioWin.webContents.send('remote-audio-start', {
-      inputDeviceId: settings.remoteAudioInput || '',
-      outputDeviceId: settings.remoteAudioOutput || '',
-      useStun: !!settings.remoteStun,
-      audioSource: settings.audioSource || 'dax',
-      daxTxDirect: (settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady) ||
-                   (settings.catTarget && settings.catTarget.type === 'k4-network' && cat && cat.connected),
-    });
+    remoteAudioWin.webContents.send('remote-audio-start', _buildAudioBridgeConfig());
     // Re-apply FreeDV mute after audio restart
     if (_freedvAudioMuted) setTimeout(() => applyFreedvAudioMute(), 500);
     return;
@@ -7682,13 +7703,7 @@ async function startRemoteAudio() {
 
   remoteAudioWin.webContents.on('did-finish-load', () => {
     if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
-      remoteAudioWin.webContents.send('remote-audio-start', {
-        inputDeviceId: settings.remoteAudioInput || '',
-        outputDeviceId: settings.remoteAudioOutput || '',
-        audioSource: settings.audioSource || 'dax',
-        daxTxDirect: (settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady) ||
-                   (settings.catTarget && settings.catTarget.type === 'k4-network' && cat && cat.connected),
-      });
+      remoteAudioWin.webContents.send('remote-audio-start', _buildAudioBridgeConfig());
       // Apply FreeDV mute if engine is active (audio window created after FreeDV started)
       if (_freedvAudioMuted) applyFreedvAudioMute();
       // If Kiwi is already streaming when the bridge starts, tell the window
@@ -13831,6 +13846,23 @@ app.whenReady().then(() => {
   // (reading 'on')" whenever ECHOCAT was disabled, aborting every
   // subsequent ipcMain.handle in this block (the v1.5.17 regression).
   ipcMain.handle('echocat-restart-audio', () => restartEchoAudio('desktop'));
+
+  // TX EQ live update — push from app.js settings UI to the audio bridge
+  // without tearing down WebRTC. The bridge maintains an active filter
+  // chain; this just retargets its filter params + compressor knobs.
+  ipcMain.on('tx-eq-set', (_e, eqConfig) => {
+    if (eqConfig && typeof eqConfig === 'object') {
+      if (typeof eqConfig.enabled === 'boolean') settings.txEqEnabled = eqConfig.enabled;
+      if (typeof eqConfig.preset === 'string')   settings.txEqPreset = eqConfig.preset;
+      saveSettings(settings);
+    }
+    if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
+      remoteAudioWin.webContents.send('tx-eq-update', {
+        enabled: !!settings.txEqEnabled,
+        preset:  settings.txEqPreset || 'ragchew',
+      });
+    }
+  });
 
   // Ragchew log pop-out: combined callsign lookup. Returns the QRZ result
   // (live network call) AND the past-QSO history from the in-memory index in
