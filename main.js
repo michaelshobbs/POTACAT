@@ -9999,12 +9999,50 @@ async function fetchDirectory() {
   pushDirectoryToRenderer();
 }
 
+// Map settings.netReminders into the NetEntry shape the mobile Dir tab
+// expects. Mirrors the local render path in renderer/app.js:10578-10587
+// — but with empty notes because mobile flags user-defined entries
+// through the new NetEntry.isUser field rather than via the notes text.
+// See docs/desktop-handoffs/sync-user-defined-nets.md for the contract.
+function buildUserNetsForBroadcast() {
+  const reminders = Array.isArray(settings.netReminders) ? settings.netReminders : [];
+  return reminders
+    .filter((nr) => nr && nr.enabled !== false)
+    .map((nr) => {
+      const sched = nr.schedule || {};
+      let days;
+      if (sched.type === 'daily') {
+        days = 'Daily';
+      } else if (sched.type === 'weekly') {
+        const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        days = (sched.days || []).map((d) => dayNames[d]).filter(Boolean).join(',');
+      } else {
+        days = 'Custom';
+      }
+      return {
+        name:         nr.name || '',
+        frequency:    nr.frequency,
+        mode:         nr.mode || 'SSB',
+        days,
+        startTimeUtc: nr.startTime || '',
+        duration:     nr.duration || 60,
+        region:       '',
+        notes:        '',
+      };
+    });
+}
+
 function pushDirectoryToRenderer() {
-  if (!win || win.isDestroyed()) return;
-  win.webContents.send('directory-data', { nets: directoryNets, swl: directorySwl });
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('directory-data', { nets: directoryNets, swl: directorySwl });
+  }
   // Also push to ECHOCAT phone client (only when directory feature is enabled)
   if (remoteServer && remoteServer.running && settings.enableDirectory) {
-    remoteServer.broadcastDirectory({ nets: directoryNets, swl: directorySwl });
+    remoteServer.broadcastDirectory({
+      nets: directoryNets,
+      swl: directorySwl,
+      userNets: buildUserNetsForBroadcast(),
+    });
   }
 }
 
@@ -14215,6 +14253,15 @@ app.whenReady().then(() => {
     const activatorStateChanged = (has('appMode') && newSettings.appMode !== settings.appMode) ||
       (has('activatorParkRefs') && JSON.stringify(newSettings.activatorParkRefs) !== JSON.stringify(settings.activatorParkRefs));
 
+    // Net reminders: deep-equal so the common case (user toggling
+    // Enabled on a single reminder) is detected — reference equality
+    // would miss it because the array is replaced wholesale by the
+    // settings dialog. Re-broadcasts the directory push when changed so
+    // ECHOCAT phone clients see the new / removed user-net within
+    // seconds (without waiting for the next 5-min community refetch).
+    const netRemindersChanged = has('netReminders') &&
+      JSON.stringify(newSettings.netReminders) !== JSON.stringify(settings.netReminders);
+
     const isPartialSave = !has('enablePota'); // hotkey saves only send 1-2 keys
 
     settings = { ...settings, ...newSettings };
@@ -14266,6 +14313,14 @@ app.whenReady().then(() => {
       } else {
         disconnectCluster();
       }
+    }
+
+    // Re-push the directory snapshot so ECHOCAT phone clients see new /
+    // edited / removed user-defined nets within seconds, without waiting
+    // for the next community-feed refetch. Reuses the existing cached
+    // directoryNets/directorySwl arrays — only userNets is recomputed.
+    if (netRemindersChanged) {
+      pushDirectoryToRenderer();
     }
 
     // Reconnect CW Spots if settings changed
