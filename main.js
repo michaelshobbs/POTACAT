@@ -1022,9 +1022,11 @@ async function connectCat() {
   if (target.type === 'tcp' || target.type === 'k4-network') {
     cat = new CatClient();
     cat._debug = true;
-    // Flex's TS-2000 emulation doesn't support SM;/RM1; — skip meter polls
-    // there. The K4 does answer SM/RM, so leave them enabled.
-    cat._skipMeters = (target.type === 'tcp');
+    // Flex's TS-2000 emulation doesn't support SM;/RM1; and the K4 (in K41
+    // extended mode) doesn't either — it sends its own auto-info SIDA/SIFP/
+    // SIRF packets every ~1s without being polled. Skip meter polls for
+    // both paths to keep the CAT log clean of "? (command error)" noise.
+    cat._skipMeters = true;
     // Pull rig-model-driven CAT overrides that CatClient's TCP path used to
     // ignore (the old code assumed every TCP target was Flex). The K4 in
     // particular uses DT instead of DA for the DATA sub-mode toggle, and
