@@ -12028,39 +12028,87 @@ function renderConditions(payload) {
   const p = payload;
   conditionsUpdated.textContent = p.updated ? ('Updated ' + p.updated) : 'Updated just now';
 
-  const sfiClass = p.sfi >= 100 ? 'good' : p.sfi >= 70 ? 'warn' : 'bad';
+  const sfiClass = p.sfi >= 120 ? 'good' : p.sfi >= 90 ? 'warn' : 'bad';
+  const snClass  = (p.sunspots ?? 0) >= 100 ? 'good' : (p.sunspots ?? 0) >= 40 ? 'warn' : 'bad';
   const kClass   = p.kIndex <= 2 ? 'good' : p.kIndex <= 4 ? 'warn' : 'bad';
   const aClass   = p.aIndex <= 7 ? 'good' : p.aIndex <= 20 ? 'warn' : 'bad';
 
-  // -- Solar card -----------------------------------------------------------
+  const sfiSub = p.sfi >= 120 ? 'strong' : p.sfi >= 90 ? 'moderate' : p.sfi >= 70 ? 'weak' : 'very weak';
+  const kSub   = p.kIndex <= 1 ? 'very quiet' : p.kIndex <= 2 ? 'quiet'
+               : p.kIndex <= 3 ? 'unsettled' : p.kIndex <= 4 ? 'active'
+               : p.kIndex <= 5 ? 'minor storm' : p.kIndex <= 6 ? 'moderate storm'
+               : p.kIndex <= 7 ? 'strong storm' : 'severe storm';
+  const aSub   = p.aIndex <= 7 ? 'quiet' : p.aIndex <= 15 ? 'unsettled'
+               : p.aIndex <= 30 ? 'active' : p.aIndex <= 50 ? 'minor storm'
+               : 'major storm';
+
+  // -- Solar card (hero metrics + secondary KV) -----------------------------
   const solarCard = `
-    <div class="cond-card">
-      <h3>Solar</h3>
-      <div class="cond-grid">
-        <div class="label">SFI (10.7 cm)</div><div class="value ${sfiClass}">${p.sfi}</div>
-        <div class="label">Sunspots</div><div class="value">${p.sunspots ?? '—'}</div>
-        <div class="label">X-Ray</div><div class="value">${p.xray ?? '—'}</div>
-        <div class="label">304 Å</div><div class="value">${p.heliumLine ?? '—'}</div>
-        <div class="label">Proton flux</div><div class="value">${p.protonFlux ?? '—'}</div>
-        <div class="label">Electron flux</div><div class="value">${p.electronFlux ?? '—'}</div>
-        <div class="label">MUF</div><div class="value">${p.muf ? p.muf + ' MHz' : '—'}</div>
-        <div class="label">foF2</div><div class="value">${p.fof2 ? p.fof2 + ' MHz' : '—'}</div>
-        <div class="label">Signal noise</div><div class="value">${p.signalNoise ?? '—'}</div>
+    <div class="cond-card card-solar">
+      <h3>Solar Activity</h3>
+      <div class="cond-hero-row">
+        <div class="cond-hero ${sfiClass}">
+          <div class="hero-label">SFI</div>
+          <div class="hero-value">${p.sfi}</div>
+          <div class="hero-sub">${sfiSub}</div>
+        </div>
+        <div class="cond-hero ${snClass}">
+          <div class="hero-label">Sunspots</div>
+          <div class="hero-value">${p.sunspots ?? '—'}</div>
+          <div class="hero-sub">SN R</div>
+        </div>
+        <div class="cond-hero">
+          <div class="hero-label">X-Ray</div>
+          <div class="hero-value" style="font-size:18px">${p.xray ?? '—'}</div>
+          <div class="hero-sub">class</div>
+        </div>
+        <div class="cond-hero">
+          <div class="hero-label">304 Å</div>
+          <div class="hero-value" style="font-size:18px">${p.heliumLine ?? '—'}</div>
+          <div class="hero-sub">helium</div>
+        </div>
+      </div>
+      <div class="cond-kv">
+        <div class="kv-row"><span class="kv-label">MUF</span><span class="kv-value">${p.muf ? p.muf + ' MHz' : '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">foF2</span><span class="kv-value">${p.fof2 ? p.fof2 + ' MHz' : '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Proton flux</span><span class="kv-value dim">${p.protonFlux ?? '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Electron flux</span><span class="kv-value dim">${p.electronFlux ?? '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Signal noise</span><span class="kv-value">${p.signalNoise ?? '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Normalization</span><span class="kv-value dim">${p.normalization ?? '—'}</span></div>
       </div>
     </div>`;
 
-  // -- Geomagnetic card -----------------------------------------------------
+  // -- Geomagnetic card (hero metrics + secondary KV) -----------------------
   const geoCard = `
-    <div class="cond-card">
+    <div class="cond-card card-geo">
       <h3>Geomagnetic</h3>
-      <div class="cond-grid">
-        <div class="label">K-index</div><div class="value ${kClass}">${p.kIndex}</div>
-        <div class="label">A-index</div><div class="value ${aClass}">${p.aIndex}</div>
-        <div class="label">Field</div><div class="value">${p.geomagField ?? '—'}</div>
-        <div class="label">Bz</div><div class="value">${p.magneticField ?? '—'}</div>
-        <div class="label">Solar wind</div><div class="value">${p.solarWind ? p.solarWind + ' km/s' : '—'}</div>
-        <div class="label">Aurora</div><div class="value">${p.aurora ?? '—'}</div>
-        <div class="label">Aurora limit</div><div class="value">${p.latDegree ? p.latDegree + '°' : '—'}</div>
+      <div class="cond-hero-row">
+        <div class="cond-hero ${kClass}">
+          <div class="hero-label">K-index</div>
+          <div class="hero-value">${p.kIndex}</div>
+          <div class="hero-sub">${kSub}</div>
+        </div>
+        <div class="cond-hero ${aClass}">
+          <div class="hero-label">A-index</div>
+          <div class="hero-value">${p.aIndex}</div>
+          <div class="hero-sub">${aSub}</div>
+        </div>
+        <div class="cond-hero">
+          <div class="hero-label">SW Speed</div>
+          <div class="hero-value" style="font-size:18px">${p.solarWind ?? '—'}</div>
+          <div class="hero-sub">km/s</div>
+        </div>
+        <div class="cond-hero">
+          <div class="hero-label">Bz</div>
+          <div class="hero-value" style="font-size:18px">${p.magneticField ?? '—'}</div>
+          <div class="hero-sub">nT</div>
+        </div>
+      </div>
+      <div class="cond-kv">
+        <div class="kv-row"><span class="kv-label">Field state</span><span class="kv-value">${p.geomagField ?? '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Aurora</span><span class="kv-value">${p.aurora ?? '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Aurora limit</span><span class="kv-value">${p.latDegree ? p.latDegree + '°' : '—'}</span></div>
+        <div class="kv-row"><span class="kv-label">Kp (NT)</span><span class="kv-value dim">${p.kIndexNt ?? '—'}</span></div>
       </div>
     </div>`;
 
@@ -12081,8 +12129,8 @@ function renderConditions(payload) {
     }
   }
   const bandsCard = `
-    <div class="cond-card">
-      <h3>HF Band Conditions</h3>
+    <div class="cond-card card-bands">
+      <h3>HF Bands</h3>
       ${bandsRows
         ? `<table class="cond-bands-table">
              <thead><tr><th>Band</th><th>Day</th><th>Night</th></tr></thead>
@@ -12097,17 +12145,17 @@ function renderConditions(payload) {
     for (const v of p.vhf) {
       vhfRows += `<tr>
         <td>${_vhfLabel(v.phenomenon)}</td>
-        <td>${v.location.replace(/_/g, ' ')}</td>
+        <td style="color:var(--text-tertiary);font-size:11px">${v.location.replace(/_/g, ' ')}</td>
         <td><span class="cond-cell ${_vhfClass(v.status)}">${v.status}</span></td>
       </tr>`;
     }
   }
   const vhfCard = `
-    <div class="cond-card">
+    <div class="cond-card card-vhf">
       <h3>VHF / E-Skip</h3>
       ${vhfRows
         ? `<table class="cond-bands-table">
-             <thead><tr><th>Phenomenon</th><th>Region</th><th>Status</th></tr></thead>
+             <thead><tr><th>Mode</th><th>Region</th><th>Status</th></tr></thead>
              <tbody>${vhfRows}</tbody>
            </table>`
         : '<div class="cond-alerts-empty">No VHF data.</div>'}
@@ -12117,16 +12165,27 @@ function renderConditions(payload) {
   let kpSparkHtml = '<div class="cond-alerts-empty">No Kp history yet.</div>';
   if (Array.isArray(p.kpHistory) && p.kpHistory.length) {
     const bars = p.kpHistory.map((s) => {
-      const h = Math.max(2, Math.min(100, (s.kp / 9) * 100));
+      const h = Math.max(8, Math.min(100, (s.kp / 9) * 100));
       return `<div class="bar ${_kpBarClass(s.kp)}" style="height:${h}%" title="${s.time}  Kp=${s.kp.toFixed(2)}"><span class="lbl">${s.kp.toFixed(1)}</span></div>`;
     }).join('');
+    const latest = p.kpHistory[p.kpHistory.length - 1];
+    const peak = p.kpHistory.reduce((m, s) => s.kp > m ? s.kp : m, 0);
     kpSparkHtml = `
-      <div class="kp-spark">${bars}</div>
-      <div class="kp-spark-axis"><span>${_formatKpTime(p.kpHistory[0].time)}</span><span>${_formatKpTime(p.kpHistory[p.kpHistory.length - 1].time)}</span></div>`;
+      <div class="kp-spark-wrap">
+        <div class="kp-spark">${bars}</div>
+        <div class="kp-spark-axis">
+          <span>${_formatKpTime(p.kpHistory[0].time)}</span>
+          <span>now</span>
+        </div>
+      </div>
+      <div class="kp-current-strip">
+        <span>Current: <strong>${latest.kp.toFixed(2)}</strong></span>
+        <span>24h peak: <strong>${peak.toFixed(2)}</strong></span>
+      </div>`;
   }
   const kpCard = `
-    <div class="cond-card">
-      <h3>Kp — Last 24 h</h3>
+    <div class="cond-card card-kp">
+      <h3>Kp — last 24 hours</h3>
       ${kpSparkHtml}
     </div>`;
 
@@ -12144,8 +12203,8 @@ function renderConditions(payload) {
     }).join('') + '</ul>';
   }
   const alertsCard = `
-    <div class="cond-card full">
-      <h3>NOAA SWPC Alerts</h3>
+    <div class="cond-card card-alerts">
+      <h3>NOAA SWPC Alerts (last 24 h)</h3>
       ${alertsHtml}
     </div>`;
 
