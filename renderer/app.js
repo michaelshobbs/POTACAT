@@ -535,6 +535,10 @@ const setRigctldnetHost = document.getElementById('set-rigctldnet-host');
 const setRigctldnetPort = document.getElementById('set-rigctldnet-port');
 const setTcpcatHost = document.getElementById('set-tcpcat-host');
 const setTcpcatPort = document.getElementById('set-tcpcat-port');
+const k4networkConfig = document.getElementById('k4network-config');
+const setK4networkHost = document.getElementById('set-k4network-host');
+const setK4networkPort = document.getElementById('set-k4network-port');
+const setK4networkPassword = document.getElementById('set-k4network-password');
 const setFlexSlice = document.getElementById('set-flex-slice');
 const setSerialcatPort = document.getElementById('set-serialcat-port');
 const setSerialcatPortManual = document.getElementById('set-serialcat-port-manual');
@@ -1487,6 +1491,7 @@ function updateRadioSubPanels() {
   const type = getSelectedRadioType();
   flexConfig.classList.toggle('hidden', type !== 'flex');
   tcpcatConfig.classList.toggle('hidden', type !== 'tcpcat');
+  if (k4networkConfig) k4networkConfig.classList.toggle('hidden', type !== 'k4network');
   serialcatConfig.classList.toggle('hidden', type !== 'serialcat');
   icomConfig.classList.toggle('hidden', type !== 'icom');
   const civTcpConfig = document.getElementById('civ-tcp-config');
@@ -1523,6 +1528,11 @@ async function populateRadioSection(currentTarget) {
       setTcpcatHost.value = currentTarget.host || '127.0.0.1';
       setTcpcatPort.value = currentTarget.port || 5002;
     }
+  } else if (currentTarget.type === 'k4-network') {
+    setRadioType('k4network');
+    setK4networkHost.value = currentTarget.host || '';
+    setK4networkPort.value = currentTarget.port || 9205;
+    setK4networkPassword.value = currentTarget.password || '';
   } else if (currentTarget.type === 'serial') {
     setRadioType('serialcat');
     serialcatPortsLoaded = true;
@@ -1886,6 +1896,13 @@ function buildCatTargetFromForm() {
     return { type: 'tcp', host: '127.0.0.1', port: parseInt(setFlexSlice.value, 10) };
   } else if (radioType === 'tcpcat') {
     return { type: 'tcp', host: setTcpcatHost.value.trim() || '127.0.0.1', port: parseInt(setTcpcatPort.value, 10) || 5002 };
+  } else if (radioType === 'k4network') {
+    return {
+      type: 'k4-network',
+      host: setK4networkHost.value.trim() || '127.0.0.1',
+      port: parseInt(setK4networkPort.value, 10) || 9205,
+      password: setK4networkPassword.value || '',
+    };
   } else if (radioType === 'serialcat') {
     return {
       type: 'serial',

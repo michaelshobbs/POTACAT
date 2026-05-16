@@ -1015,12 +1015,36 @@ async function connectCat() {
   // The model drives ALL protocol differences — no if(_isYaesu) branches.
   const rigModel = getActiveRigModel();
 
-  // FlexRadio uses SmartSDR, not the rig controller
-  if (target.type === 'tcp') {
-    // Flex: use old CatClient for basic CAT (SmartSDR handles the real work)
+  // FlexRadio / TS-2000 emulation TCP, and Elecraft K4 over the network,
+  // both use the (legacy) CatClient — Flex on raw ASCII over TCP, K4 over
+  // its framed-with-auth protocol. Branch in CatClient picks the right
+  // transport from target.type. SmartSDR handles the heavy lifting for Flex.
+  if (target.type === 'tcp' || target.type === 'k4-network') {
     cat = new CatClient();
     cat._debug = true;
-    cat._skipMeters = true; // Flex CAT emulation doesn't support SM; or RM1;
+    // Flex's TS-2000 emulation doesn't support SM;/RM1; — skip meter polls
+    // there. The K4 does answer SM/RM, so leave them enabled.
+    cat._skipMeters = (target.type === 'tcp');
+    // Pull rig-model-driven CAT overrides that CatClient's TCP path used to
+    // ignore (the old code assumed every TCP target was Flex). The K4 in
+    // particular uses DT instead of DA for the DATA sub-mode toggle, and
+    // MD6 for DIGU/FT8. Without these, FT8 tunes wrong on K4-over-TCP.
+    // N7QT 2026-05-15.
+    if (rigModel) {
+      if (rigModel.digiMd != null) {
+        cat._digiMd = rigModel.digiMd;
+        sendCatLog(`[CAT] rig-model override: _digiMd=${cat._digiMd} (${rigModel.brand || ''})`);
+      }
+      // commands.setDa is templated ("DT{val};") — derive the bare prefix
+      // (everything before "{val}") so CatClient can build "DT0;" etc.
+      if (rigModel.commands && rigModel.commands.setDa) {
+        const m = String(rigModel.commands.setDa).match(/^([A-Za-z]+)\{val\}/);
+        if (m) {
+          cat._dataCmd = m[1].toUpperCase();
+          sendCatLog(`[CAT] rig-model override: _dataCmd=${cat._dataCmd}`);
+        }
+      }
+    }
     cat.on('log', sendCatLog);
     cat.on('status', sendCatStatus);
     cat.on('frequency', sendCatFrequency);
