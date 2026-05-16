@@ -50,7 +50,9 @@
   --cond-warn-border: #ffe933;
   --cond-bad-border:  var(--accent-red);
   --cond-warn-shadow: 0 0 1px rgba(0,0,0,0.4);
-}
+  /* Filled shapes (Kp bars, etc.) can use a punchier hue than text-warn,
+     since large fills aren't constrained by character-edge legibility. */
+  --cond-warn-fill: #ffe933;
 
 [data-theme="light"] {
   --bg-primary: #f0f2f5;
@@ -94,7 +96,9 @@
   --cond-warn-border: #c98a00;
   --cond-bad-border:  #d32f2f;
   --cond-warn-shadow: none;
-}
+  /* Bars/fills get a punchier yellow than text-warn — amber is readable
+     for characters but reads "boring brown" as a big rectangle. */
+  --cond-warn-fill: #f5c518;
 
 /* WCAG AA — dark theme overrides */
 [data-wcag] {
@@ -6356,7 +6360,7 @@ main.banner-logger-active #event-progress-overlay {
   background:var(--cond-good);
   transition:height 0.3s ease-out;cursor:default;
 }
-.kp-spark .bar.warn { background:var(--cond-warn); }
+.kp-spark .bar.warn { background:var(--cond-warn-fill); }
 .kp-spark .bar.bad  { background:var(--cond-bad); }
 .kp-spark .bar:hover { filter:brightness(1.25); }
 .kp-spark .bar .lbl {
