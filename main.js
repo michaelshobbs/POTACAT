@@ -4008,10 +4008,16 @@ function startSmartSdrAudio() {
         upsampled[i * 2]     = s0;
         upsampled[i * 2 + 1] = (s0 + s1) * 0.5;
       }
-      sstvEngine.feedAudio(upsampled);
+      // Send to the popout BEFORE handing the buffer to sstvEngine —
+      // sstvEngine.feedAudio uses postMessage(..., [buf.buffer]) which
+      // transfers ownership and detaches the ArrayBuffer on the main
+      // thread. Touching `upsampled` after the transfer (Array.from in
+      // the old order) crashed with "%TypedArray%.prototype.values on
+      // a detached ArrayBuffer". K3SBP 2026-05-16.
       if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
         sstvPopoutWin.webContents.send('sstv-vita49-audio', { pcm: Array.from(upsampled), sampleRate: 48000 });
       }
+      sstvEngine.feedAudio(upsampled);
     }
     if (settings.audioSource === 'smartsdr' && jtcatManager && jtcatManager.running) {
       const src = (pcm instanceof Float32Array) ? pcm : new Float32Array(pcm);
@@ -4201,10 +4207,15 @@ function handleK4AudioFrame(frame) {
       out[i * 4 + 2] = c;
       out[i * 4 + 3] = d;
     }
-    sstvEngine.feedAudio(out);
+    // Send to popout BEFORE feedAudio — see the matching comment in
+    // the SmartSDR Direct path above. sstvEngine.feedAudio transfers
+    // the ArrayBuffer to its worker thread, which detaches `out` on
+    // the main thread. Array.from on a detached buffer crashes the
+    // main process.
     if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
       sstvPopoutWin.webContents.send('sstv-vita49-audio', { pcm: Array.from(out), sampleRate: 48000 });
     }
+    sstvEngine.feedAudio(out);
   }
   // Diagnostic: log first frame + periodic heartbeat (~every 5 s at 720
   // samples/frame, 12 kHz → ~16.7 fps).
