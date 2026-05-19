@@ -1462,6 +1462,33 @@
         if (activeTab === 'map') renderMapSpots();
         break;
 
+      case 'worked-today': {
+        // Fallback / supplement for the full worked-qsos push when it
+        // gets size-capped for active loggers (>256 KB). Today-only
+        // payload is bounded so it's always delivered. Merge into the
+        // workedQsos Map so isWorkedSpot() finds these entries.
+        if (Array.isArray(msg.entries)) {
+          for (const e of msg.entries) {
+            if (!e || !e.call) continue;
+            const call = String(e.call).toUpperCase();
+            const log = { date: e.date || '', ref: e.ref || '', band: e.band || '', mode: e.mode || '' };
+            const list = workedQsos.get(call) || [];
+            // Skip exact duplicates from the full push.
+            const dup = list.some(l => l.date === log.date && l.ref === log.ref && l.band === log.band && l.mode === log.mode);
+            if (!dup) {
+              list.push(log);
+              workedQsos.set(call, list);
+            }
+          }
+          if (workedQsos.size > 0) {
+            spotsDropdown.querySelector('.rc-hide-worked-row').style.display = '';
+          }
+          renderSpots();
+          if (activeTab === 'map') renderMapSpots();
+        }
+        break;
+      }
+
       case 'cluster-state':
         clusterConnected = !!msg.connected;
         break;
