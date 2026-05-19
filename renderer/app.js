@@ -6079,6 +6079,11 @@ document.getElementById('respot-send').addEventListener('click', async () => {
 document.getElementById('respot-cancel').addEventListener('click', () => {
   document.getElementById('respot-dialog').close();
 });
+// Close-X button — CSP blocks inline onclick handlers, so this needs
+// to be wired in JS instead of in the HTML.
+document.getElementById('respot-dialog-close').addEventListener('click', () => {
+  document.getElementById('respot-dialog').close();
+});
 
 // --- DX Command Bar ---
 const dxCommandNode = document.getElementById('dx-command-node');

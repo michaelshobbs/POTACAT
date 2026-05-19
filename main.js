@@ -9597,7 +9597,20 @@ function sendWavelogHttp(qsoData) {
           if (json.status === 'created') {
             resolve();
           } else {
-            reject(new Error(`Wavelog: ${json.reason || json.status || 'unknown error'}`));
+            // Wavelog's API gives extremely terse responses ("abort" /
+            // "wrong key" / etc.). Annotate with the most common cause
+            // for each so users don't have to guess. The full JSON +
+            // ADIF preview goes in the CAT log to help when the hint
+            // isn't enough.
+            const reason = String(json.reason || json.status || 'unknown').toLowerCase();
+            let hint = '';
+            if (reason.includes('wrong key') || reason.includes('key'))    hint = ' — check Settings → Logbook → Wavelog API key.';
+            else if (reason.includes('station'))                            hint = ` — station_profile_id "${stationId}" not found or no permission. Check Wavelog account → Station Profiles for the correct numeric ID.`;
+            else if (reason.includes('duplicate'))                          hint = ' — Wavelog flagged this QSO as a duplicate of an existing log entry.';
+            else if (reason === 'abort')                                    hint = ` — usually one of: wrong station_profile_id (currently "${stationId}"), API key lacks permission for that profile, or the ADIF FREQ is out of any known amateur band (check the ADIF preview below).`;
+            sendCatLog(`[Wavelog] Reject response: ${data.slice(0, 400)}`);
+            sendCatLog(`[Wavelog] ADIF sent: ${record.slice(0, 400)}`);
+            reject(new Error(`Wavelog: ${json.reason || json.status || 'unknown error'}${hint}`));
           }
         } catch {
           if (res.statusCode >= 200 && res.statusCode < 300) resolve();
