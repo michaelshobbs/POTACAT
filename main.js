@@ -4044,6 +4044,12 @@ function startSmartSdrAudio() {
       // 2026-05-20 reports, both crashed at identical heap ceiling).
       remoteAudioWin.webContents.send('smartsdr-audio-frame', { pcm, sampleRate });
     }
+    // VFO popout: local "Radio audio monitor" playback for SmartSDR Direct —
+    // the Windows DAX RX device the monitor would otherwise capture is silent
+    // (no DAX program is running), so the popout plays these frames instead.
+    if (vfoPopoutWin && !vfoPopoutWin.isDestroyed()) {
+      vfoPopoutWin.webContents.send('smartsdr-audio-frame', { pcm, sampleRate });
+    }
     // When the user picked "SmartSDR Direct" as the audio source, FT8/JTCAT
     // should decode from THIS VITA-49 stream too — not the separate Windows
     // "DAX Audio RX 1" device the renderer captures. On a SmartSDR-Direct

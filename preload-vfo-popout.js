@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   kiwiDisconnect: () => ipcRenderer.send('kiwi-disconnect'),
   onKiwiStatus: (cb) => ipcRenderer.on('kiwi-status', (_e, s) => cb(s)),
   onKiwiAudio: (cb) => ipcRenderer.on('kiwi-audio', (_e, d) => cb(d)),
+  onSmartSdrAudio: (cb) => ipcRenderer.on('smartsdr-audio-frame', (_e, d) => cb(d)),
   onTheme: (cb) => ipcRenderer.on('vfo-popout-theme', (_e, theme) => cb(theme)),
   // Live profile-list updates pushed by main when ECHOCAT phone (or another
   // window) edits settings.vfoProfiles. Fires after a save() or delete on

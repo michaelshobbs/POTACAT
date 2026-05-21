@@ -2195,11 +2195,28 @@ let audioMonitorStream = null;
 let audioMonitorGain = null;
 let audioMonitorActive = false;
 let audioMonitorMuted = false;
+let audioMonitorDirect = false;   // true = playing the SmartSDR Direct VITA-49 stream
+let audioMonitorNextPlay = 0;     // AudioContext play cursor for direct-mode packets
 
 async function startAudioMonitor() {
   if (audioMonitorCtx) return;
   try {
     const s = await window.api.getSettings();
+    if (s.audioSource === 'smartsdr') {
+      // SmartSDR Direct: the Windows DAX RX device is silent (no DAX program
+      // is running), so capturing it would give nothing. Play the VITA-49
+      // audio frames POTACAT receives directly instead — see onSmartSdrAudio.
+      audioMonitorDirect = true;
+      audioMonitorCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioMonitorCtx.state === 'suspended') await audioMonitorCtx.resume();
+      audioMonitorGain = audioMonitorCtx.createGain();
+      audioMonitorGain.gain.value = (audioMonitorMuted || kiwiConnected) ? 0 : 1;
+      audioMonitorGain.connect(audioMonitorCtx.destination);
+      audioMonitorNextPlay = 0;
+      audioMonitorActive = true;
+      updateAudioBtn();
+      return;
+    }
     const constraints = {
       channelCount: 1,
       echoCancellation: false,
@@ -2229,6 +2246,7 @@ function stopAudioMonitor() {
   if (audioMonitorCtx) { audioMonitorCtx.close().catch(() => {}); audioMonitorCtx = null; }
   audioMonitorGain = null;
   audioMonitorActive = false;
+  audioMonitorDirect = false;
   updateAudioBtn();
 }
 
@@ -2270,6 +2288,28 @@ audioBtn.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   stopAudioMonitor();
   audioMonitorMuted = false;
+});
+
+// SmartSDR Direct RX audio — play the VITA-49 frames POTACAT receives, but
+// only while the monitor is on AND we're in direct mode. Mirrors the KiwiSDR
+// player: schedule packets back-to-back with a play cursor, snapping the
+// cursor back if a burst pushes it more than 500 ms ahead of now.
+window.api.onSmartSdrAudio((d) => {
+  if (!audioMonitorActive || !audioMonitorDirect || !audioMonitorCtx) return;
+  try {
+    const sr = d.sampleRate || 24000;
+    const pcm = (d.pcm instanceof Float32Array) ? d.pcm : new Float32Array(d.pcm);
+    if (!pcm.length) return;
+    const buf = audioMonitorCtx.createBuffer(1, pcm.length, sr);
+    buf.getChannelData(0).set(pcm);
+    const src = audioMonitorCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioMonitorGain);
+    const now = audioMonitorCtx.currentTime;
+    if (audioMonitorNextPlay < now || audioMonitorNextPlay > now + 0.5) audioMonitorNextPlay = now;
+    src.start(audioMonitorNextPlay);
+    audioMonitorNextPlay += pcm.length / sr;
+  } catch {}
 });
 
 // --- Theme ---
