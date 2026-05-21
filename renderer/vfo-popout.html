@@ -418,6 +418,11 @@
         <div class="meter-bar-wrap"><div class="meter-bar" id="tx-peak-bar"></div></div>
         <span class="meter-text" id="tx-peak-text">&mdash;</span>
       </div>
+      <div class="meter-row" title="Radio audio monitor volume — how loud the click-to-listen (speaker button) audio plays. Independent of your PC's master volume.">
+        <span class="meter-label">VOL</span>
+        <input type="range" id="vol-slider" min="0" max="150" value="100" style="flex:1;margin:0 2px;accent-color:#4fc3f7;">
+        <span class="meter-text" id="vol-text">100%</span>
+      </div>
     </div>
     <div class="widget-section" id="widget-ptt-row">
       <div class="ptt-log-row">
@@ -2197,6 +2202,10 @@ let audioMonitorActive = false;
 let audioMonitorMuted = false;
 let audioMonitorDirect = false;   // true = playing the SmartSDR Direct VITA-49 stream
 let audioMonitorNextPlay = 0;     // AudioContext play cursor for direct-mode packets
+// Radio audio monitor volume (0–1.5). Drives the monitor's GainNode so the
+// user can throttle click-to-listen audio without touching the PC's master
+// volume. Persisted as a 0–150 percentage.
+let monitorVolume = (parseInt(localStorage.getItem('vfoMonitorVolume') || '100', 10) || 100) / 100;
 
 async function startAudioMonitor() {
   if (audioMonitorCtx) return;
@@ -2210,7 +2219,7 @@ async function startAudioMonitor() {
       audioMonitorCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioMonitorCtx.state === 'suspended') await audioMonitorCtx.resume();
       audioMonitorGain = audioMonitorCtx.createGain();
-      audioMonitorGain.gain.value = (audioMonitorMuted || kiwiConnected) ? 0 : 1;
+      audioMonitorGain.gain.value = (audioMonitorMuted || kiwiConnected) ? 0 : monitorVolume;
       audioMonitorGain.connect(audioMonitorCtx.destination);
       audioMonitorNextPlay = 0;
       audioMonitorActive = true;
@@ -2229,7 +2238,7 @@ async function startAudioMonitor() {
     if (audioMonitorCtx.state === 'suspended') await audioMonitorCtx.resume();
     const source = audioMonitorCtx.createMediaStreamSource(audioMonitorStream);
     audioMonitorGain = audioMonitorCtx.createGain();
-    audioMonitorGain.gain.value = audioMonitorMuted ? 0 : 1;
+    audioMonitorGain.gain.value = audioMonitorMuted ? 0 : monitorVolume;
     source.connect(audioMonitorGain);
     audioMonitorGain.connect(audioMonitorCtx.destination);
     audioMonitorActive = true;
@@ -2278,7 +2287,7 @@ audioBtn.addEventListener('click', async () => {
   } else {
     // Third click: unmute (but keep muted if SDR is active)
     audioMonitorMuted = false;
-    if (audioMonitorGain) audioMonitorGain.gain.value = kiwiConnected ? 0 : 1;
+    if (audioMonitorGain) audioMonitorGain.gain.value = kiwiConnected ? 0 : monitorVolume;
     updateAudioBtn();
   }
 });
@@ -2311,6 +2320,27 @@ window.api.onSmartSdrAudio((d) => {
     audioMonitorNextPlay += pcm.length / sr;
   } catch {}
 });
+
+// VOL slider — drives the monitor GainNode that every audio packet passes
+// through, so the user throttles click-to-listen audio without touching the
+// PC master volume. Persisted; applied live while the monitor is running.
+(function () {
+  const slider = document.getElementById('vol-slider');
+  const label = document.getElementById('vol-text');
+  if (!slider || !label) return;
+  const pct = Math.round(monitorVolume * 100);
+  slider.value = pct;
+  label.textContent = pct + '%';
+  slider.addEventListener('input', () => {
+    const p = parseInt(slider.value, 10) || 0;
+    label.textContent = p + '%';
+    monitorVolume = p / 100;
+    localStorage.setItem('vfoMonitorVolume', String(p));
+    if (audioMonitorGain && audioMonitorActive && !audioMonitorMuted && !kiwiConnected) {
+      audioMonitorGain.gain.value = monitorVolume;
+    }
+  });
+})();
 
 // --- Theme ---
 window.api.onTheme((theme) => {
@@ -2497,7 +2527,7 @@ window.api.onKiwiStatus((s) => {
   if (s.connected) {
     if (audioMonitorGain) audioMonitorGain.gain.value = 0;
   } else {
-    if (audioMonitorGain && !audioMonitorMuted) audioMonitorGain.gain.value = 1;
+    if (audioMonitorGain && !audioMonitorMuted) audioMonitorGain.gain.value = monitorVolume;
   }
 });
 
