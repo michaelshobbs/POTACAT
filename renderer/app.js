@@ -882,7 +882,6 @@ if (setPanadapterSyncTable) {
 
 const setSmartSdrSpots = document.getElementById('set-smartsdr-spots');
 const smartSdrConfig = document.getElementById('smartsdr-config');
-const setSmartSdrHost = document.getElementById('set-smartsdr-host');
 const setSmartSdrMaxAge = document.getElementById('set-smartsdr-max-age');
 const setSmartSdrMaxSpots = document.getElementById('set-smartsdr-max-spots');
 const setKiwiHost1 = document.getElementById('set-kiwi-host-1');
@@ -1517,6 +1516,24 @@ function updateRadioSubPanels() {
   }
 }
 
+// Flex Direct: reflect live radio connection state in the Flex rig panel.
+function updateFlexStatus() {
+  const el = document.getElementById('flex-status');
+  if (!el) return;
+  if (typeof catConnected !== 'undefined' && catConnected) {
+    let txt = '● Connected';
+    if (typeof radioFreqKhz === 'number' && radioFreqKhz > 0) {
+      txt += ' — ' + (radioFreqKhz / 1000).toFixed(3) + ' MHz';
+      if (typeof radioMode === 'string' && radioMode) txt += ' ' + radioMode;
+    }
+    el.textContent = txt;
+    el.className = 'flex-status connected';
+  } else {
+    el.textContent = '○ Not connected';
+    el.className = 'flex-status';
+  }
+}
+
 async function populateRadioSection(currentTarget) {
   hamlibFieldsLoaded = false;
   if (!currentTarget) {
@@ -2009,6 +2026,8 @@ async function openRigEditor(mode, rigId) {
     setRigName.value = '';
     if (rigModelSelect) rigModelSelect.value = '';
     if (setRadioNr) setRadioNr.value = '1';
+    const fh = document.getElementById('set-flex-api-host');
+    if (fh) fh.value = '';
     setRadioType('flex');
     updateRadioSubPanels();
     await populateRigAudioDevices('', '');
@@ -2016,6 +2035,7 @@ async function openRigEditor(mode, rigId) {
 
   rigEditor.classList.remove('hidden');
   rigAddBtn.classList.add('hidden');
+  updateFlexStatus();
   setRigName.focus();
 }
 
@@ -2042,6 +2062,35 @@ async function deleteRig(rigId) {
 rigAddBtn.addEventListener('click', () => openRigEditor('add'));
 
 rigCancelBtn.addEventListener('click', () => closeRigEditor());
+
+// FlexRadio discovery — listen for the radio's UDP broadcast, fill in the IP.
+const flexDiscoverBtn = document.getElementById('flex-discover-btn');
+if (flexDiscoverBtn) {
+  flexDiscoverBtn.addEventListener('click', async () => {
+    const resultEl = document.getElementById('flex-discover-result');
+    const ipEl = document.getElementById('set-flex-api-host');
+    flexDiscoverBtn.disabled = true;
+    flexDiscoverBtn.textContent = 'Scanning…';
+    if (resultEl) resultEl.textContent = '';
+    try {
+      const radios = await window.api.discoverFlex();
+      if (!radios || radios.length === 0) {
+        if (resultEl) resultEl.textContent = 'No FlexRadio found — check the radio is powered on and on this network.';
+      } else {
+        const r = radios[0];
+        if (ipEl) ipEl.value = r.ip;
+        let msg = `Found ${r.model}${r.nickname ? ' "' + r.nickname + '"' : ''} at ${r.ip}`;
+        if (radios.length > 1) msg += ` — ${radios.length} radios seen, IP set to the first.`;
+        if (resultEl) resultEl.textContent = msg;
+      }
+    } catch (e) {
+      if (resultEl) resultEl.textContent = 'Discovery failed: ' + (e && e.message ? e.message : e);
+    } finally {
+      flexDiscoverBtn.disabled = false;
+      flexDiscoverBtn.textContent = 'Discover radio';
+    }
+  });
+}
 
 rigSaveBtn.addEventListener('click', async () => {
   const name = setRigName.value.trim() || 'Unnamed Rig';
@@ -3516,10 +3565,24 @@ setEnableSplitView.addEventListener('change', () => {
   splitOrientationConfig.classList.toggle('hidden', !setEnableSplitView.checked);
 });
 
-// SmartSDR checkbox toggles config visibility
+// SmartSDR panadapter spots — toggle config visibility + live-save. These
+// controls now live in the Flex rig editor, so they persist on change rather
+// than waiting for the main settings-save.
 setSmartSdrSpots.addEventListener('change', () => {
   smartSdrConfig.classList.toggle('hidden', !setSmartSdrSpots.checked);
+  window.api.saveSettings({ smartSdrSpots: setSmartSdrSpots.checked });
 });
+setSmartSdrMaxAge.addEventListener('change', () => {
+  window.api.saveSettings({ smartSdrMaxAge: parseInt(setSmartSdrMaxAge.value, 10) || 0 });
+});
+setSmartSdrMaxSpots.addEventListener('change', () => {
+  window.api.saveSettings({ smartSdrMaxSpots: parseInt(setSmartSdrMaxSpots.value, 10) || 0 });
+});
+if (setAudioSource) {
+  setAudioSource.addEventListener('change', () => {
+    window.api.saveSettings({ audioSource: setAudioSource.value });
+  });
+}
 
 // TCI checkbox toggles config visibility
 setTciSpots.addEventListener('change', () => {
@@ -9033,7 +9096,6 @@ async function openSettingsDialog(tab) {
   setPanadapterWsjtx.checked     = s.panadapterWsjtx === true;
   updatePanadapterSourcesVisibility();
   setSmartSdrSpots.checked = s.smartSdrSpots === true;
-  setSmartSdrHost.value = s.smartSdrHost || '127.0.0.1';
   setSmartSdrMaxAge.value = s.smartSdrMaxAge != null ? s.smartSdrMaxAge : 15;
   setSmartSdrMaxSpots.value = s.smartSdrMaxSpots != null ? s.smartSdrMaxSpots : 0;
   smartSdrConfig.classList.toggle('hidden', !s.smartSdrSpots);
@@ -9333,7 +9395,6 @@ settingsSave.addEventListener('click', async () => {
   const telemetryEnabled = setEnableTelemetry.checked;
   const lightModeEnabled = setLightMode.checked;
   const smartSdrSpotsEnabled = setSmartSdrSpots.checked;
-  const smartSdrHostVal = setSmartSdrHost.value.trim() || '127.0.0.1';
   const smartSdrMaxAgeVal = parseInt(setSmartSdrMaxAge.value, 10) || 0;
   const smartSdrMaxSpotsVal = parseInt(setSmartSdrMaxSpots.value, 10) || 0;
   const tciSpotsEnabled = setTciSpots.checked;
@@ -9526,7 +9587,6 @@ settingsSave.addEventListener('click', async () => {
     panadapterPskr:      setPanadapterPskr.checked,
     panadapterWsjtx:     setPanadapterWsjtx.checked,
     smartSdrSpots: smartSdrSpotsEnabled,
-    smartSdrHost: smartSdrHostVal,
     smartSdrMaxAge: smartSdrMaxAgeVal,
     smartSdrMaxSpots: smartSdrMaxSpotsVal,
     kiwiSdrHost1: setKiwiHost1 ? setKiwiHost1.value.trim() : '',
@@ -9724,6 +9784,7 @@ function syncActivatorCatPill(className, title) {
 
 window.api.onCatStatus(({ connected, error, wsjtxMode }) => {
   catConnected = connected;
+  updateFlexStatus();
   // Update JTCAT PTT mode indicator
   const pttModeEl = document.getElementById('jtcat-ptt-mode');
   if (pttModeEl) {

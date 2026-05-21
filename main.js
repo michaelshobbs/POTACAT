@@ -782,6 +782,12 @@ function spawnRigctld(target, portOverride) {
 }
 
 function sendCatStatus(s) {
+  // Flex Direct: POTACAT is itself the GUI client, so the radio IS controllable
+  // even though the port-5002 CAT shim (`cat`) never connected. Don't let a
+  // stale `cat` disconnected-status blank the UI when Flex Direct is live.
+  if (s && !s.connected && smartSdr && smartSdr.guiReady) {
+    s = { ...s, connected: true };
+  }
   if (win && !win.isDestroyed()) win.webContents.send('cat-status', s);
   if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('cat-status', s);
   // If CAT disconnected while ECHOCAT PTT was active, force-release PTT
@@ -1057,6 +1063,7 @@ async function connectCat() {
     }
     cat.on('log', sendCatLog);
     cat.on('status', sendCatStatus);
+    cat.on('status', (s) => checkFlexHandoff(!!s.connected));
     cat.on('frequency', sendCatFrequency);
     cat.on('mode', sendCatMode);
     cat.on('power', sendCatPower);
@@ -3902,6 +3909,8 @@ function connectSmartSdr() {
   smartSdr.on('log', (msg) => sendCatLog('[SmartSDR] ' + msg));
   smartSdr.on('disconnected', () => {
     sendCatLog('SmartSDR API disconnected — rig controls (ATU/filter/gain) unavailable');
+    // Flex Direct: with no port-5002 CAT either, the radio is now uncontrollable.
+    if (!cat || !cat.connected) sendCatStatus({ connected: false });
   });
   smartSdr.on('give-up', ({ host, attempts }) => {
     const isLocal = host === '127.0.0.1' || host === 'localhost';
@@ -3942,6 +3951,32 @@ function connectSmartSdr() {
       });
     }
   });
+
+  // Flex Direct: POTACAT self-registered as a GUI client (no SmartSDR / AetherSDR
+  // running). The radio's band persistence restored a slice we tune natively.
+  smartSdr.on('gui-ready', ({ clientId }) => {
+    sendCatLog(`Flex Direct active — POTACAT is the GUI client; radio control works with no SmartSDR open (client_id=${clientId})`);
+    sendCatStatus({ connected: true });
+    // Now that POTACAT is a registered GUI client, the dedicated audio
+    // connection can bind to it. The connect-time 1s timer fires too early
+    // (before `client gui` completes), so kick the audio client here.
+    if (settings.audioSource === 'smartsdr') startSmartSdrAudio();
+  });
+  smartSdr.on('slice-ready', ({ index }) => {
+    sendCatLog(`Flex Direct: tuning radio slice ${index}`);
+    // POTACAT owns this slice — bind it to a DAX channel so RX/TX audio
+    // routes to the dedicated audio connection (no SmartSDR to do it).
+    const ch = parseInt(settings.audioDaxChannel, 10) || 1;
+    smartSdr.setSliceDax(index, ch);
+  });
+  // Mirror the self-hosted slice's frequency/mode to the UI when there is no
+  // SmartSDR-Win CAT shim (port 5002) feeding `cat`.
+  smartSdr.on('frequency', (hz) => {
+    if (!cat || !cat.connected) sendCatFrequency(hz);
+  });
+  smartSdr.on('mode', (md) => {
+    if (!cat || !cat.connected) sendCatMode(md);
+  });
   // Use per-rig flexApiHost if set, else smartSdrHost global, else catTarget host, else localhost
   const activeRig = (settings.rigs || []).find(r => r.id === settings.activeRigId);
   const sdrHost = (activeRig && activeRig.flexApiHost) || settings.smartSdrHost || (settings.catTarget && settings.catTarget.host) || '127.0.0.1';
@@ -3960,6 +3995,28 @@ function disconnectSmartSdr() {
     smartSdr = null;
   }
   stopSmartSdrAudio();
+}
+
+// Flex Direct mid-session handoff. SmartSDR-Win's port-5002 CAT shim
+// connecting/disconnecting is a reliable "SmartSDR is/isn't running" signal.
+// When that contradicts smartSdr's current role, reconnect it so the
+// grace-window discovery (_promoteOrBind) re-decides self-host vs. bound.
+let _lastCatUpForHandoff = false;
+function checkFlexHandoff(catUp) {
+  if (catUp === _lastCatUpForHandoff) return; // edge-triggered only
+  _lastCatUpForHandoff = catUp;
+  if (!smartSdr || !smartSdr.connected) return;
+  if (!settings.catTarget || settings.catTarget.type !== 'tcp') return; // Flex only
+  if (catUp && smartSdr.guiReady) {
+    // SmartSDR-Win came up while POTACAT was self-hosting — hand off so
+    // POTACAT follows SmartSDR's slice instead of running its own.
+    sendCatLog('Flex Direct: SmartSDR detected — handing off (POTACAT will follow SmartSDR).');
+    connectSmartSdr();
+  } else if (!catUp && smartSdr.mode === 'bound') {
+    // SmartSDR-Win closed — reclaim the radio by self-hosting again.
+    sendCatLog('Flex Direct: SmartSDR closed — POTACAT resuming as the GUI client.');
+    connectSmartSdr();
+  }
 }
 
 // --- DAX-free audio path -----------------------------------------------
@@ -4092,9 +4149,14 @@ function startSmartSdrAudio() {
   // SAME existing GUI client (not register a new one) — that's what
   // licenses it to receive audio. Without this bind, `stream create
   // type=dax_rx` succeeds but no audio packets ever route to us.
-  const guiClientId = (smartSdr && smartSdr._discoveredGuiClients && smartSdr._discoveredGuiClients[0]) || null;
+  let guiClientId = (smartSdr && smartSdr._discoveredGuiClients && smartSdr._discoveredGuiClients[0]) || null;
+  // Flex Direct: no external SmartSDR/AetherSDR GUI client to bind to — bind
+  // the audio connection to POTACAT's OWN self-hosted GUI client instead.
+  if (!guiClientId && smartSdr && smartSdr.clientId) {
+    guiClientId = smartSdr.clientId;
+  }
   if (!guiClientId) {
-    sendCatLog('[SmartSDR-Audio] No GUI client discovered yet on primary connection — cannot bind audio client.');
+    sendCatLog('[SmartSDR-Audio] No GUI client yet (primary not registered) — audio will start once Flex Direct is ready.');
     if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
       remoteAudioWin.webContents.send('smartsdr-audio-fallback');
     }
@@ -10761,6 +10823,65 @@ function migrateRigSettings(s) {
       saveSettings(s);
     }
   }
+  // Flex Direct: the radio's IP used to be entered in two places — the rig's
+  // flexApiHost and the global smartSdrHost (the panadapter "Radio IP" field).
+  // The settings UI now has a single per-rig "Radio IP" — backfill any Flex
+  // rig that's missing flexApiHost from the old global smartSdrHost so an
+  // existing config keeps working after the field is removed.
+  if (s.smartSdrHost && Array.isArray(s.rigs) && s.rigs.length) {
+    let changed = false;
+    for (const r of s.rigs) {
+      const t = r.catTarget;
+      const isFlex = t && t.type === 'tcp' && (t.host === '127.0.0.1' || !t.host) &&
+        [5002, 5003, 5004, 5005].includes(t.port);
+      if (isFlex && !r.flexApiHost) { r.flexApiHost = s.smartSdrHost; changed = true; }
+    }
+    if (changed) saveSettings(s);
+  }
+}
+
+// --- FlexRadio UDP discovery ----------------------------------------------
+// FlexRadios broadcast a VITA-49 discovery packet to UDP 4992 every ~1 s.
+// The payload (after the 28-byte VITA header) is a space-separated key=value
+// ASCII string with model / serial / nickname / ip. Listen briefly, dedupe
+// by IP, and return whatever radios announce themselves.
+function discoverFlexRadios(timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const dgram = require('dgram');
+    const radios = new Map(); // ip -> { ip, model, nickname, serial }
+    let finished = false;
+    let sock;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      try { sock.close(); } catch {}
+      resolve([...radios.values()]);
+    };
+    try {
+      sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    } catch (e) { resolve([]); return; }
+    sock.on('error', () => finish());
+    sock.on('message', (buf) => {
+      if (!buf || buf.length < 28) return;
+      const txt = buf.slice(28).toString('latin1');
+      const get = (k) => {
+        const m = txt.match(new RegExp('(?:^| )' + k + '=([^ \\x00]+)'));
+        return m ? m[1] : null;
+      };
+      const ip = get('ip');
+      if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return;
+      radios.set(ip, {
+        ip,
+        model: get('model') || 'FlexRadio',
+        nickname: get('nickname') || '',
+        serial: get('serial') || '',
+      });
+    });
+    try {
+      sock.bind(4992, () => { try { sock.setBroadcast(true); } catch {} });
+    } catch (e) { finish(); return; }
+    setTimeout(finish, timeoutMs);
+  });
 }
 
 // --- Tune radio (shared by IPC and protocol handler) ---
@@ -10958,6 +11079,43 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
         } else if (!_lastTuneBand && tuneBandSdr) {
           _lastTuneBand = tuneBandSdr;
         }
+      }
+    }
+    return;
+  }
+
+  // Flex Direct: no SmartSDR-Win CAT shim on port 5002, but the SmartSDR API
+  // connection has self-registered as a GUI client. Tune the radio's restored
+  // slice directly over the native API — this is what lets POTACAT run with
+  // no SmartSDR / AetherSDR open at all.
+  if ((!cat || !cat.connected) && smartSdr && smartSdr.connected && smartSdr.guiReady) {
+    const sliceIndex = smartSdr.ourSliceIndex != null ? smartSdr.ourSliceIndex : 0;
+    const tuneHz = useVfoShift ? (freqHz + settings.cwXit) : freqHz;
+    const freqMhz = tuneHz / 1e6;
+    const ssbSide = freqHz < 10000000 && !(freqHz >= 5300000 && freqHz <= 5410000) ? 'LSB' : 'USB';
+    const flexMode = (mode === 'FT8' || mode === 'FT4' || mode === 'FT2' || mode === 'JT65' || mode === 'JT9' || mode === 'WSPR' || mode === 'DIGU' || mode === 'PKTUSB')
+      ? 'DIGU' : (mode === 'DIGL' || mode === 'PKTLSB') ? 'DIGL'
+      : (mode === 'CW' ? 'CW' : (mode === 'AM' ? 'AM' : (mode === 'FM' ? 'FM' : (mode === 'SSB' ? ssbSide : (mode === 'USB' ? 'USB' : (mode === 'LSB' ? 'LSB' : null))))));
+    if (mode) _modeSuppressUntil = Date.now() + 2000;
+    sendCatLog(`tune via Flex Direct: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}${flexMode && mode !== flexMode ? '->' + flexMode : ''} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
+    smartSdr.tuneSlice(sliceIndex, freqMhz, flexMode, filterWidth);
+    // XIT: native slice XIT, mirroring the WSJT-X + SmartSDR path above.
+    if (useNativeXit) {
+      smartSdr.setSliceXit(sliceIndex, true, settings.cwXit);
+    } else if (shouldDisableNativeXit) {
+      smartSdr.setSliceXit(sliceIndex, false);
+    }
+    // ATU: auto-tune on band change.
+    if (settings.enableAtu) {
+      const tuneBand = freqToBand(freqHz / 1e6);
+      if (tuneBand && tuneBand !== _lastTuneBand) {
+        _lastTuneBand = tuneBand;
+        setTimeout(() => {
+          sendCatLog(`[ATU] Band changed to ${tuneBand} -> starting SmartSDR ATU tune`);
+          smartSdr.setAtu(true);
+        }, 1500);
+      } else if (!_lastTuneBand && tuneBand) {
+        _lastTuneBand = tuneBand;
       }
     }
     return;
@@ -13674,6 +13832,7 @@ app.whenReady().then(() => {
 
   ipcMain.on('app-relaunch', () => { app.relaunch(); app.exit(0); });
   ipcMain.handle('get-settings', () => ({ ...settings, appVersion: require('./package.json').version }));
+  ipcMain.handle('discover-flex', () => discoverFlexRadios());
   // Conditions view: returns whatever is in cache (renderer wants something
   // to draw immediately on open) and kicks an out-of-cycle refresh in the
   // background so a stale value gets replaced soon after.

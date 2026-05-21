@@ -2333,6 +2333,23 @@ dialog input, dialog select {
   width: 100%;
 }
 
+/* Flex Direct: connection status line + Advanced disclosure in the rig editor */
+.flex-status {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: #8a8a9a;
+}
+.flex-status.connected { color: #4ecca3; }
+
+#flex-config summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #8a8a9a;
+  user-select: none;
+  margin-top: 4px;
+}
+#flex-config summary:hover { color: #e0e0e0; }
+
 
 /* My Rigs list */
 #my-rigs-list {

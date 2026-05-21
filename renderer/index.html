@@ -1090,18 +1090,46 @@
           </select>
         </label>
         <span class="help-text" style="margin-bottom:8px;display:block;">Used in N1MM+ RadioInfo UDP broadcast. Set to 2 for a second radio in SO2R setups (FreqEZ, band decoders).</span>
-        <label class="radio-label"><input type="radio" name="radio-type" value="flex" checked> FlexRadio (SmartSDR)</label>
+        <label class="radio-label"><input type="radio" name="radio-type" value="flex" checked> FlexRadio</label>
         <div id="flex-config" class="radio-sub hidden">
-          <label>Slice: <select id="set-flex-slice">
-            <option value="5002">Slice A (TCP :5002)</option>
-            <option value="5003">Slice B (TCP :5003)</option>
-            <option value="5004">Slice C (TCP :5004)</option>
-            <option value="5005">Slice D (TCP :5005)</option>
-          </select></label>
-          <label>SmartSDR API Host:
-            <input type="text" id="set-flex-api-host" placeholder="127.0.0.1" value="" style="width:140px;">
+          <label>Radio IP:
+            <input type="text" id="set-flex-api-host" placeholder="192.168.1.50" value="" style="width:140px;">
           </label>
-          <span class="help-text" style="display:block;">Enter your FlexRadio's IP address — not localhost. SmartSDR exposes only CAT on 127.0.0.1 (ports 5002&ndash;5005); the SmartSDR API (ATU, NB, SWR, S-meter, CW keyer, SSB/DIGU TX) lives on port 4992 of the radio itself. Find the IP in SmartSDR's status bar or under Settings &rarr; Network.</span>
+          <button type="button" id="flex-discover-btn" class="rig-action-btn" style="margin:4px 0;">Discover radio</button>
+          <span id="flex-discover-result" class="help-text" style="display:block;"></span>
+          <span class="help-text" style="display:block;">Your FlexRadio's IP address. POTACAT connects straight to the radio (port 4992) and works whether or not SmartSDR / AetherSDR is running. Find it in SmartSDR's status bar or under Settings &rarr; Network.</span>
+          <div id="flex-status" class="flex-status">&#9675; Not connected</div>
+          <label class="checkbox-label" style="margin-top:10px;">
+            <input type="checkbox" id="set-smartsdr-spots"> Show spots on the panadapter
+          </label>
+          <div id="smartsdr-config" class="radio-sub hidden">
+            <label>Max spot age (min):
+              <input type="number" id="set-smartsdr-max-age" min="0" max="120" value="15" style="width:60px;">
+            </label>
+            <label style="margin-left:8px;">Max spots:
+              <input type="number" id="set-smartsdr-max-spots" min="0" max="500" value="0" style="width:60px;">
+            </label>
+            <span class="help-text" style="display:block;">0 = no limit. Capping reduces audio dropouts on a Flex 6500.</span>
+          </div>
+          <label style="display:block;margin-top:10px;">Audio source:
+            <select id="set-audio-source" style="min-width:200px;">
+              <option value="dax">DAX (SmartSDR virtual driver)</option>
+              <option value="smartsdr">SmartSDR Direct (no DAX program)</option>
+            </select>
+          </label>
+          <span class="help-text" style="display:block;">SmartSDR Direct subscribes to Flex audio over UDP and bypasses the DAX program &mdash; useful when DAX gets stuck silent under RDP.</span>
+          <details id="flex-advanced" style="margin-top:10px;">
+            <summary>Advanced</summary>
+            <label style="margin-top:8px;">Legacy SmartSDR CAT slice:
+              <select id="set-flex-slice">
+                <option value="5002">Slice A (TCP :5002)</option>
+                <option value="5003">Slice B (TCP :5003)</option>
+                <option value="5004">Slice C (TCP :5004)</option>
+                <option value="5005">Slice D (TCP :5005)</option>
+              </select>
+            </label>
+            <span class="help-text" style="display:block;">POTACAT tunes the radio directly over the API. This routes tuning through SmartSDR-Win's Kenwood CAT shim (TCP 5002&ndash;5005) instead &mdash; a fallback only, and SmartSDR must be running.</span>
+          </details>
         </div>
         <label class="radio-label"><input type="radio" name="radio-type" value="tcpcat"> IP Radio (TCP CAT)</label>
         <div id="tcpcat-config" class="radio-sub hidden">
@@ -1961,23 +1989,7 @@
         <label class="checkbox-label"><input type="checkbox" id="set-panadapter-pskr"> PSK Reporter</label>
         <label class="checkbox-label"><input type="checkbox" id="set-panadapter-wsjtx"> WSJT-X overlays</label>
       </div>
-      <label class="checkbox-label">
-        <input type="checkbox" id="set-smartsdr-spots"> Push spots to SmartSDR panadapter
-      </label>
-      <div id="smartsdr-config" class="radio-sub hidden">
-        <label>Radio IP:
-          <input type="text" id="set-smartsdr-host" placeholder="127.0.0.1" style="width:140px;">
-        </label>
-        <span class="help-text">Connect to FlexRadio on port 4992. Spots shown on the panadapter match your current table/map filters.</span>
-        <label style="margin-top:8px;">Max spot age (minutes):
-          <input type="number" id="set-smartsdr-max-age" min="0" max="120" value="15" style="width:60px;">
-        </label>
-        <span class="help-text" style="display:block;">0 = no limit (show all spots)</span>
-        <label style="margin-top:8px;">Max spots on panadapter:
-          <input type="number" id="set-smartsdr-max-spots" min="0" max="500" value="0" style="width:60px;">
-        </label>
-        <span class="help-text" style="display:block;">Limit total spots pushed. Reduces audio dropouts on Flex 6500. 0 = no limit.</span>
-      </div>
+      <span class="help-text" style="display:block;margin-bottom:6px;">FlexRadio panadapter spots are configured per-rig under Settings &rarr; Radio &rarr; your Flex rig.</span>
       <label class="checkbox-label">
         <input type="checkbox" id="set-tci-spots"> Push spots to Thetis/TCI panadapter
       </label>
@@ -2197,16 +2209,7 @@
             </div>
             <button type="button" id="echocat-restart-audio-btn" style="padding:4px 12px;">Restart audio</button>
           </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;">
-            <div style="flex:1;min-width:280px;">
-              <strong>Audio source <span style="color:#888;font-weight:normal;font-size:11px;">(Flex only)</span></strong>
-              <span class="help-text" style="display:block;">DAX uses the SmartSDR DAX virtual driver (default). SmartSDR direct subscribes to Flex audio over UDP and bypasses DAX entirely &mdash; useful when DAX gets stuck silent under RDP. Falls back to DAX if no audio packets arrive in 5 s.</span>
-            </div>
-            <select id="set-audio-source" style="padding:4px;min-width:150px;">
-              <option value="dax">DAX (default)</option>
-              <option value="smartsdr">SmartSDR direct</option>
-            </select>
-          </div>
+          <span class="help-text" style="display:block;margin-top:10px;">Audio source (DAX vs. SmartSDR Direct) is set per-rig under Settings &rarr; Radio &rarr; your Flex rig.</span>
           <!-- TX EQ + Compressor (Phase 1). Only applies to the
                direct audio paths (SmartSDR Direct + K4 network) where
                we have Web Audio in the chain — the legacy DAX-device

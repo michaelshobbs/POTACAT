@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getRigModels: () => ipcRenderer.invoke('get-rig-models'),
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
+  discoverFlex: () => ipcRenderer.invoke('discover-flex'),
   listPorts: () => ipcRenderer.invoke('list-ports'),
   listRigs: () => ipcRenderer.invoke('list-rigs'),
   testHamlib: (config) => ipcRenderer.invoke('test-hamlib', config),
