@@ -4900,7 +4900,15 @@ function connectWinKeyer() {
   winKeyer = new WinKeyer();
   winKeyer.on('connected', ({ version }) => {
     console.log(`[WinKeyer] Connected, version ${version}`);
+    // Echo paddle-decoded characters to the host so POTACAT can relay paddle
+    // CW to the radio — the WinKeyer is on USB, not wired to a network Flex.
+    winKeyer.enablePaddleEcho();
     if (settings.cwWpm) winKeyer.setSpeed(settings.cwWpm);
+    // Match the Flex's cwx keyer speed to the WinKeyer so paddle CW relayed to
+    // the radio (see the 'echo' handler below) goes out at the speed you paddle.
+    if (settings.cwWpm && detectRigType() === 'flex' && smartSdr && smartSdr.connected) {
+      smartSdr.setCwSpeed(settings.cwWpm);
+    }
     if (settings.wkPttLeadIn) winKeyer.setPttLeadIn(settings.wkPttLeadIn);
     if (settings.wkPttTail) winKeyer.setPttTail(settings.wkPttTail);
     if (win && !win.isDestroyed()) {
@@ -4915,6 +4923,14 @@ function connectWinKeyer() {
   winKeyer.on('echo', ({ char }) => {
     if (win && !win.isDestroyed()) {
       win.webContents.send('cw-echo', { char });
+    }
+    // The WinKeyer decodes your paddle but is on a USB port, not wired to a
+    // network Flex — so paddle CW would never reach the air. Relay each
+    // decoded character to the Flex's cwx keyer. (Macros already route
+    // straight to cwx; this is the paddle path. WK3 host mode echoes ASCII
+    // for paddle sending as well as buffer sending, so `char` covers both.)
+    if (detectRigType() === 'flex' && smartSdr && smartSdr.connected) {
+      smartSdr.sendCwText(char);
     }
   });
   winKeyer.on('busy', () => {
@@ -11105,6 +11121,11 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
     if (mode) _modeSuppressUntil = Date.now() + 2000;
     sendCatLog(`tune via Flex Direct: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}${flexMode && mode !== flexMode ? '->' + flexMode : ''} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
     smartSdr.tuneSlice(sliceIndex, freqMhz, flexMode, filterWidth);
+    // Reflect the tune in the UI right away. Flex Direct has no CAT frequency
+    // poll to echo the new VFO back, so the VFO popout / main window / ECHOCAT
+    // would otherwise stay stuck on the previous reading after a QSY.
+    sendCatFrequency(tuneHz);
+    if (flexMode) sendCatMode(flexMode);
     // XIT: native slice XIT, mirroring the WSJT-X + SmartSDR path above.
     if (useNativeXit) {
       smartSdr.setSliceXit(sliceIndex, true, settings.cwXit);

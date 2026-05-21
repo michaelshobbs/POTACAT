@@ -12737,8 +12737,13 @@ window.api.onCwKeyerStatus(({ enabled, cwAuth, winkeyer, version }) => {
     cwKeyerStatusEl.style.background = '#b8860b';
     if (winkeyerVersionEl) winkeyerVersionEl.textContent = `WinKeyer v${version || '?'} connected`;
   } else if (cwAuth) {
-    cwKeyerStatusEl.textContent = cwAuth === 'bind' ? 'CW' : 'CW (?)';
-    cwKeyerStatusEl.title = `CW keyer active — ${cwAuth === 'bind' ? 'bound to SmartSDR' : 'unbound (CW may still work)'}`;
+    // 'gui' = Flex Direct (POTACAT is the GUI client) — a fully authorized CW
+    // state, same as 'bind'. Only a genuinely unbound keyer shows "(?)".
+    const cwAuthOk = cwAuth === 'bind' || cwAuth === 'gui';
+    cwKeyerStatusEl.textContent = cwAuthOk ? 'CW' : 'CW (?)';
+    cwKeyerStatusEl.title = cwAuth === 'gui'
+      ? 'CW keyer active — Flex Direct (POTACAT is the GUI client)'
+      : `CW keyer active — ${cwAuth === 'bind' ? 'bound to SmartSDR' : 'unbound (CW may still work)'}`;
     cwKeyerStatusEl.style.background = '#b8860b';
   }
 });
