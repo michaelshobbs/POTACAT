@@ -12900,6 +12900,14 @@ app.whenReady().then(() => {
 
   // SSTV IPC handlers
   ipcMain.on('sstv-set-sample-rate', (_e, rate) => {
+    // SmartSDR Direct + K4 feed SSTV from main's own audio path at a fixed
+    // 48 kHz (the audio-frame / handleK4AudioFrame handlers — same paths the
+    // sstv-audio guard below drops the renderer capture for). The renderer's
+    // AudioContext rate is irrelevant there and must NOT override the
+    // decoder's rate — a mismatch skews every measured frequency and turns
+    // every decode into noise. Mirror the sstv-audio guards exactly.
+    if (settings.audioSource === 'smartsdr' && smartSdrAudio) return;
+    if (settings.catTarget && settings.catTarget.type === 'k4-network' && cat && cat.connected) return;
     if (sstvEngine) sstvEngine.setSampleRate(rate);
     console.log('[SSTV] Audio sample rate set to ' + rate + ' Hz');
   });
