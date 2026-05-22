@@ -9,7 +9,8 @@ const txCanvas = document.getElementById('tx-canvas');
 const wfCanvas = document.getElementById('wf-canvas');
 const rxCtx = rxCanvas.getContext('2d');
 const txCtx = txCanvas.getContext('2d');
-const wfCtx = wfCanvas.getContext('2d');
+// wf-canvas is driven by the WebGL Waterfall component (see drawWaterfallLine)
+// — no 2D context here: WebGL2 can't be obtained on a canvas that has one.
 const rxInfo = document.getElementById('rx-info');
 const modeSelect = document.getElementById('mode-select');
 const loadBtn = document.getElementById('load-btn');
@@ -2053,40 +2054,24 @@ function feedWaterfall(samples) {
 }
 let wfRemoteCounter = 0;
 
-function drawWaterfallLine(mags, maxMag) {
-  const w = wfCanvas.width;
-  const h = wfCanvas.height;
-
-  // Adapt noise floor and peak level slowly for good contrast
-  // Median magnitude as noise floor estimate
-  const sorted = Array.from(mags).sort((a, b) => a - b);
-  const medianMag = sorted[Math.floor(sorted.length * 0.5)];
-  wfNoiseFloor = wfNoiseFloor * 0.95 + medianMag * 0.05;  // slow tracking
-  wfPeakLevel = Math.max(wfPeakLevel * 0.98, maxMag);       // fast attack, slow decay
-  const range = Math.max(wfPeakLevel - wfNoiseFloor, wfNoiseFloor * 0.5 || 1);
-
-  // Scroll existing waterfall down by 1 pixel
-  wfCtx.drawImage(wfCanvas, 0, 0, w, h, 0, 1, w, h - 1);
-
-  // Draw new line at top
-  const lineData = wfCtx.createImageData(w, 1);
-  const d = lineData.data;
-  for (let x = 0; x < w; x++) {
-    // Interpolate between bins for smoother display
-    const binF = x * WF_BIN_COUNT / w;
-    const bin0 = Math.floor(binF);
-    const bin1 = Math.min(bin0 + 1, WF_BIN_COUNT - 1);
-    const frac = binF - bin0;
-    const mag = mags[bin0] * (1 - frac) + mags[bin1] * frac;
-    // Normalize against adaptive range
-    const normalized = Math.max(0, (mag - wfNoiseFloor) / range);
-    // Apply log scale with more contrast
-    const val = Math.pow(normalized, 0.4); // gamma curve for better contrast
-    const [r, g, b] = wfColor(val);
-    const idx = x * 4;
-    d[idx] = r; d[idx + 1] = g; d[idx + 2] = b; d[idx + 3] = 255;
+// The wf-canvas is rendered by the shared WebGL Waterfall component
+// (renderer/waterfall.js) — GPU ring-buffer scroll, in-shader colormap,
+// adaptive ranging. feedWaterfall() still owns the FFT and just hands the
+// per-bin magnitudes here; the component auto-ranges, so maxMag is unused.
+let sstvWaterfall = null;
+function drawWaterfallLine(mags) {
+  if (!sstvWaterfall) {
+    sstvWaterfall = new Waterfall(wfCanvas, {
+      bins: WF_BIN_COUNT,
+      historyRows: 256,
+      colormap: 'classic',
+      gamma: 0.4,
+    });
+    if (!sstvWaterfall.supported) {
+      console.warn('[SSTV] WebGL2 unavailable — waterfall disabled');
+    }
   }
-  wfCtx.putImageData(lineData, 0, 0);
+  if (sstvWaterfall.supported) sstvWaterfall.pushFrame(mags);
 }
 
 // ===== DECODE LOG ==========================================================
