@@ -4487,11 +4487,15 @@ document.addEventListener('click', () => {
 const DIGI_MODES = new Set(['FT8', 'FT4', 'FT2', 'RTTY', 'FREEDV', 'JT65', 'JT9', 'PSK31', 'OLIVIA', 'MFSK', 'DATA', 'DIGU', 'DIGL']);
 function modeMatches(spotMode, selectedModes) {
   if (!selectedModes) return true;
-  // Empty-mode spots always pass — POTA activators sometimes only spot a
-  // frequency, not a mode, and hiding them on any specific mode filter
-  // surprised users. The dropdown no longer exposes an "unknown" checkbox
-  // (K3SBP 2026-05-14) so this is the new universal behavior.
-  if (!spotMode) return true;
+  // Empty-mode spots: hide them under any specific mode filter. M7XFY 2026-05-24
+  // selected "CW only" and saw mode-less POTA spots leak through — for a strict
+  // CW hunter those are noise, since "unknown mode" is by definition not CW.
+  // Earlier (K3SBP 2026-05-14) we let them through because users were surprised
+  // when they disappeared from an SSB-only filter — the inverse complaint. The
+  // strict reading wins: "All" is how you see everything; a specific filter
+  // means specific. Re-add an Unknown pill in the dropdown if a user wants
+  // both behaviors at once.
+  if (!spotMode) return false;
   if (selectedModes.has(spotMode)) return true;
   if (selectedModes.has('SSB') && (spotMode === 'USB' || spotMode === 'LSB')) return true;
   // FT8/4/2 meta-mode — single dropdown entry maps to all three FT family
