@@ -671,6 +671,22 @@
 let currentFreqHz = 0;
 let currentMode = '';
 let _modeSuppressUntil = 0; // suppress stale mode from CAT poll after user click
+// Same pattern for freq — a CAT poll completed mid-spin returns the rig's
+// freq from ~one wheel-tick ago and overwrites currentFreqHz, making the
+// dial visibly "snap backwards" while the user is still scrolling. W8IJW
+// 2026-05-24 (IC-7300): wheel spin to 14.281 → display reverts to 14.280
+// repeatedly. After a user-initiated tune, ignore incoming s.freq for
+// ~1.2 s — long enough for the rig to settle and the next poll to reflect
+// what we actually asked for, short enough that external knob spins still
+// flow in promptly.
+let _freqSuppressUntil = 0;
+// Every user-initiated tune from the popout (wheel / drag / keypad / band /
+// profile) goes through this so the suppress window can't drift out of sync
+// with the IPC call.
+function tuneFromPopout(freqKhz, mode, bearing, slicePort) {
+  _freqSuppressUntil = Date.now() + 1200;
+  window.api.tune(freqKhz, mode, bearing, slicePort);
+}
 let currentFilterWidth = 0;
 let profiles = [];
 let vfoHiddenBands = []; // band labels to hide, e.g. ['160m', '2m', '70cm']
@@ -753,7 +769,7 @@ function updateDisplay() {
 
 // --- Radio state from main process ---
 window.api.onRadioState((s) => {
-  if (s.freq) currentFreqHz = s.freq;
+  if (s.freq && Date.now() > _freqSuppressUntil) currentFreqHz = s.freq;
   if (s.mode && Date.now() > _modeSuppressUntil) currentMode = s.mode;
   if (s.filterWidth != null) {
     currentFilterWidth = s.filterWidth;
@@ -825,7 +841,7 @@ function buildBandGrid(container) {
     btn.dataset.freq = b.freq;
     btn.addEventListener('click', () => {
       if (vfoLocked) return;
-      window.api.tune(b.freq);
+      tuneFromPopout(b.freq);
     });
     container.appendChild(btn);
   }
@@ -1093,7 +1109,7 @@ function processDelta(delta) {
     vfoAccum -= dir * STEP_ANGLE;
     const stepHz = STEPS[stepIdx].hz * dir;
     currentFreqHz = Math.max(0, currentFreqHz + stepHz);
-    window.api.tune(currentFreqHz / 1000);
+    tuneFromPopout(currentFreqHz / 1000);
   }
   updateDisplay();
   drawVfoDial();
@@ -1134,7 +1150,7 @@ function handleFreqWheel(e) {
   const stepHz = STEPS[stepIdx].hz * dir;
   currentFreqHz = Math.max(0, currentFreqHz + stepHz);
   vfoAngle += dir * STEP_ANGLE;
-  window.api.tune(currentFreqHz / 1000);
+  tuneFromPopout(currentFreqHz / 1000);
   updateDisplay();
   drawVfoDial();
 }
@@ -1179,7 +1195,7 @@ document.getElementById('kp-go').addEventListener('click', () => {
     mhz = val;
   }
   const khz = mhz * 1000;
-  window.api.tune(khz);
+  tuneFromPopout(khz);
   currentFreqHz = khz * 1000;
   kpBuffer = '';
   kpInput.value = '';
@@ -1303,7 +1319,7 @@ function renderInlineProfiles() {
 function applyProfile(p) {
   if (vfoLocked) return;
   if (p.freqKhz) {
-    window.api.tune(p.freqKhz, p.mode);
+    tuneFromPopout(p.freqKhz, p.mode);
     currentFreqHz = p.freqKhz * 1000;
   }
   if (p.mode) {
