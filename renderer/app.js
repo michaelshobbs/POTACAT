@@ -1191,8 +1191,30 @@ catStatusEl.addEventListener('click', (e) => {
   }
 });
 
+// Confirmation gate shared by the CAT popover checkbox AND Settings → WSJT-X
+// Integration. WSJT-X Mode disables POTACAT's direct CAT — confusing several
+// users who flipped it on by accident and ended up with a dead red pill
+// (N3VD 2026-05-24 spent an hour on this). Returns true to proceed with
+// enable, false to revert.
+function confirmEnableWsjtx() {
+  return confirm(
+    'Turn on WSJT-X Mode?\n\n' +
+    "By turning on WSJT-X Mode, you give up POTACAT's direct CAT control of " +
+    'your rig. The intent is that WSJT-X controls the rig directly, and ' +
+    'POTACAT talks to WSJT-X over UDP packets.\n\n' +
+    'Only enable this if WSJT-X is (or is going to be) running and ' +
+    'configured to accept UDP from POTACAT.\n\n' +
+    'Click OK to enable WSJT-X Mode, or Cancel to keep direct CAT control.'
+  );
+}
+
 catPopoverWsjtx.addEventListener('change', async () => {
   const enabled = catPopoverWsjtx.checked;
+  if (enabled && !confirmEnableWsjtx()) {
+    catPopoverWsjtx.checked = false;
+    catPopoverWsjtxPort.classList.add('hidden');
+    return;
+  }
   catPopoverWsjtxPort.classList.toggle('hidden', !enabled);
   const port = parseInt(catPopoverWsjtxPortInput.value, 10) || 2237;
   await window.api.saveSettings({ enableWsjtx: enabled, wsjtxPort: port });
@@ -3489,8 +3511,14 @@ setEnableRbn.addEventListener('change', () => {
   rbnConfig.classList.toggle('hidden', !setEnableRbn.checked);
 });
 
-// WSJT-X checkbox toggles config visibility
+// WSJT-X checkbox toggles config visibility + warns about the CAT handover
+// before letting the user check the box (same confirm the CAT popover uses).
 setEnableWsjtx.addEventListener('change', () => {
+  if (setEnableWsjtx.checked && !confirmEnableWsjtx()) {
+    setEnableWsjtx.checked = false;
+    wsjtxConfig.classList.add('hidden');
+    return;
+  }
   wsjtxConfig.classList.toggle('hidden', !setEnableWsjtx.checked);
 });
 
