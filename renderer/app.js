@@ -13034,6 +13034,11 @@ let voicePlaybackSource = null;
 let voicePlaybackCtx = null;
 let voiceRecorder = null;
 let voiceRecordingIdx = -1;
+// Preview state — separate from playback so they can't collide. Preview
+// routes to the system default output and never PTTs the rig (K0OTC 2026-05-21).
+let voicePreviewIdx = -1;
+let voicePreviewSource = null;
+let voicePreviewCtx = null;
 
 // Load labels from settings
 (async () => {
@@ -13107,6 +13112,117 @@ function stopVoicePlayback() {
   if (voiceMacroBtns) voiceMacroBtns.querySelectorAll('button.active').forEach(b => b.classList.remove('active'));
 }
 
+// Local-only preview — plays the macro through the system default output so
+// the operator can hear it before transmitting. Does NOT PTT the rig. Click
+// the preview button again to stop. K0OTC 2026-05-21.
+async function previewVoiceMacro(idx, btn) {
+  // Toggle: clicking the same slot's button twice stops.
+  if (voicePreviewIdx === idx) { stopVoicePreview(); return; }
+  if (voicePreviewIdx >= 0) stopVoicePreview();
+  const base64 = await window.api.voiceMacroLoad(idx);
+  if (!base64) return;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+  voicePreviewCtx = new AudioContext();
+  if (voicePreviewCtx.state === 'suspended') await voicePreviewCtx.resume();
+  // No setSinkId — preview deliberately uses the operator's default output
+  // (speakers / headphones), not the rig audio device.
+  try {
+    const audioBuffer = await voicePreviewCtx.decodeAudioData(bytes.buffer);
+    voicePreviewIdx = idx;
+    if (btn) { btn.dataset.originalText = btn.textContent; btn.textContent = 'Stop'; btn.style.color = '#e94560'; }
+    voicePreviewSource = voicePreviewCtx.createBufferSource();
+    voicePreviewSource.buffer = audioBuffer;
+    voicePreviewSource.connect(voicePreviewCtx.destination);
+    voicePreviewSource.start(0);
+    voicePreviewSource.onended = () => {
+      if (btn) { btn.textContent = btn.dataset.originalText || 'Preview'; btn.style.color = ''; }
+      stopVoicePreview();
+    };
+  } catch (err) {
+    console.warn('[Voice] Preview decode failed:', err.message);
+    stopVoicePreview();
+  }
+}
+
+function stopVoicePreview() {
+  if (voicePreviewSource) { try { voicePreviewSource.stop(); } catch (e) {} voicePreviewSource = null; }
+  if (voicePreviewCtx) { voicePreviewCtx.close().catch(function(){}); voicePreviewCtx = null; }
+  voicePreviewIdx = -1;
+}
+
+// Import a user-supplied audio file (e.g. polished Audacity export) into a
+// macro slot. The file is stored verbatim — the per-slot filename ends .webm
+// but decodeAudioData sniffs the actual format on playback, so WAV / MP3 /
+// OGG / Opus / FLAC / M4A / WebM all work. K0OTC 2026-05-21.
+async function importVoiceMacro(idx) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'audio/*,.wav,.mp3,.ogg,.opus,.m4a,.aac,.webm,.flac';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  try {
+    const file = await new Promise((resolve) => {
+      input.onchange = () => resolve(input.files && input.files[0]);
+      // The picker may close without a file; we can't observe cancel reliably,
+      // but the rest of the flow no-ops cleanly when file is undefined.
+      input.click();
+    });
+    if (!file) return;
+    const MAX = 5 * 1024 * 1024;
+    if (file.size > MAX) {
+      alert(`"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB — voice macros are limited to ${MAX / 1024 / 1024} MB. Trim or re-encode at a lower bitrate.`);
+      return;
+    }
+    // Read as base64 via FileReader.readAsDataURL — avoids the
+    // String.fromCharCode.apply stack-overflow on large buffers.
+    const base64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const result = String(r.result || '');
+        const comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : '');
+      };
+      r.onerror = () => reject(r.error || new Error('FileReader failed'));
+      r.readAsDataURL(file);
+    });
+    if (!base64) {
+      alert(`Could not read "${file.name}".`);
+      return;
+    }
+    // Validate the file is actually decodable audio BEFORE saving — protects
+    // against the user picking a video, a corrupt file, or an unsupported
+    // codec.
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+    const testCtx = new AudioContext();
+    let ok = true;
+    try {
+      // decodeAudioData detaches the buffer on success — pass a slice so we
+      // keep the original bytes to save.
+      await testCtx.decodeAudioData(bytes.buffer.slice(0));
+    } catch (err) {
+      ok = false;
+      console.warn('[Voice] Import decode failed:', err.message);
+    } finally {
+      try { await testCtx.close(); } catch (e) {}
+    }
+    if (!ok) {
+      alert(`POTACAT couldn't decode "${file.name}". Try a different format (WAV, MP3, OGG, or Opus all work).`);
+      return;
+    }
+    // Stop any preview of this slot — its audio is about to be replaced.
+    if (voicePreviewIdx === idx) stopVoicePreview();
+    await window.api.voiceMacroSave(idx, base64);
+    renderVoiceMacroEditor();
+    updateVoiceMacroBar();
+  } finally {
+    document.body.removeChild(input);
+  }
+}
+
 // Phone-tapped a macro slot — same path as a local button press. The button
 // reference is best-effort (we look up the rendered button so the active
 // styling matches local clicks); falls back to null if the macro bar is
@@ -13152,12 +13268,33 @@ async function renderVoiceMacroEditor() {
       recBtn.addEventListener('click', function() { startVoiceRecording(idx, recBtn, status); });
       row.appendChild(recBtn);
 
+      // Import — load a pre-recorded audio file (Audacity export, etc.) into
+      // this slot. K0OTC 2026-05-21.
+      var importBtn = document.createElement('button');
+      importBtn.type = 'button';
+      importBtn.textContent = 'Import';
+      importBtn.title = 'Load a recorded audio file (WAV, MP3, OGG, Opus, FLAC) into this slot';
+      importBtn.style.cssText = 'font-size:10px;padding:2px 6px;cursor:pointer;';
+      importBtn.addEventListener('click', function() { importVoiceMacro(idx); });
+      row.appendChild(importBtn);
+
       if (hasFilled) {
+        // Preview — play through default output, no PTT. K0OTC 2026-05-21.
+        var previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.textContent = 'Preview';
+        previewBtn.title = 'Play this macro through your computer speakers (no PTT)';
+        previewBtn.style.cssText = 'font-size:10px;padding:2px 6px;cursor:pointer;';
+        previewBtn.addEventListener('click', function() { previewVoiceMacro(idx, previewBtn); });
+        row.appendChild(previewBtn);
+
         var delBtn = document.createElement('button');
         delBtn.type = 'button';
         delBtn.textContent = 'Del';
         delBtn.style.cssText = 'font-size:10px;padding:2px 6px;cursor:pointer;color:#e94560;';
         delBtn.addEventListener('click', async function() {
+          // Stop any preview of this slot before deleting.
+          if (voicePreviewIdx === idx) stopVoicePreview();
           await window.api.voiceMacroDelete(idx);
           renderVoiceMacroEditor();
           updateVoiceMacroBar();
