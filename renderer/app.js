@@ -1071,6 +1071,22 @@ const catPopoverRigs = document.getElementById('cat-popover-rigs');
 const catPopoverWsjtx = document.getElementById('cat-popover-wsjtx');
 const catPopoverWsjtxPort = document.getElementById('cat-popover-wsjtx-port');
 const catPopoverWsjtxPortInput = document.getElementById('cat-popover-wsjtx-port-input');
+const catPopoverWsjtxWarning = document.getElementById('cat-popover-wsjtx-warning');
+const catPopoverWsjtxWarnPort = document.getElementById('cat-popover-wsjtx-warn-port');
+// True when WSJT-X is currently heartbeating us. N3VD 2026-05-24 hit a dead
+// CAT for ~an hour because WSJT-X Mode was checked but WSJT-X wasn't running —
+// connectCat() bails on enableWsjtx so direct CAT never starts, and the only
+// way out is unchecking the box. We surface that exact state in the popover
+// instead of letting users guess.
+let wsjtxConnected = false;
+function updateCatPopoverWsjtxWarning() {
+  if (!catPopoverWsjtxWarning) return;
+  const show = enableWsjtx && !wsjtxConnected;
+  catPopoverWsjtxWarning.classList.toggle('hidden', !show);
+  if (show && catPopoverWsjtxWarnPort) {
+    catPopoverWsjtxWarnPort.textContent = catPopoverWsjtxPortInput.value || '2237';
+  }
+}
 let catPopoverOpen = false;
 
 let _catPopoverAnchor = catStatusEl; // which element the popover is anchored to
@@ -1153,6 +1169,7 @@ async function openCatPopover(anchor) {
   catPopoverWsjtx.checked = settings.enableWsjtx === true;
   catPopoverWsjtxPortInput.value = settings.wsjtxPort || 2237;
   catPopoverWsjtxPort.classList.toggle('hidden', !settings.enableWsjtx);
+  updateCatPopoverWsjtxWarning();
 
   positionCatPopover();
   catPopover.classList.remove('hidden');
@@ -11572,6 +11589,9 @@ window.api.onWsjtxStatus(({ connected }) => {
     wsjtxDecodes = [];
     wsjtxState = null;
   }
+  // Tracked for the CAT popover's "WSJT-X enabled but not heartbeating" hint.
+  wsjtxConnected = !!connected;
+  if (catPopoverOpen) updateCatPopoverWsjtxWarning();
 });
 
 window.api.onWsjtxState((state) => {

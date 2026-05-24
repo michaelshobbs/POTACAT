@@ -3867,6 +3867,22 @@ dialog input, dialog select {
   width: auto;
 }
 
+/* Warning shown in the CAT popover when WSJT-X Mode is on but POTACAT
+   isn't receiving WSJT-X heartbeats — the silent-CAT trap N3VD 2026-05-24
+   spent an hour on. The amber matches the visual weight of other "warning,
+   not error" banners. */
+.cat-popover-wsjtx-warning {
+  margin: 4px 8px 8px 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #f0a500;
+  background: rgba(240, 165, 0, 0.10);
+  color: #ffd47a;
+  font-size: 11px;
+  line-height: 1.35;
+  border-radius: 3px;
+}
+.cat-popover-wsjtx-warning.hidden { display: none; }
+
 /* CW Popover — volume/WPM dropdown from status bar */
 .cw-popover {
   position: absolute;
