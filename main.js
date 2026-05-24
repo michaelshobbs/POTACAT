@@ -782,10 +782,12 @@ function spawnRigctld(target, portOverride) {
 }
 
 function sendCatStatus(s) {
-  // Flex Direct: POTACAT is itself the GUI client, so the radio IS controllable
-  // even though the port-5002 CAT shim (`cat`) never connected. Don't let a
-  // stale `cat` disconnected-status blank the UI when Flex Direct is live.
-  if (s && !s.connected && smartSdr && smartSdr.guiReady) {
+  // The radio IS controllable via the FlexLib API even if the port-5002 CAT
+  // shim (`cat`) never connected — true for self-host (Flex Direct, POTACAT
+  // is the GUI client) AND for bound mode (AetherSDR / SmartSDR-Win is the
+  // GUI client and POTACAT issues slice commands through its bind). Don't
+  // let a stale `cat` disconnected-status blank the pill in either case.
+  if (s && !s.connected && smartSdr && smartSdr.canTune) {
     s = { ...s, connected: true };
   }
   if (win && !win.isDestroyed()) win.webContents.send('cat-status', s);
@@ -3963,11 +3965,20 @@ function connectSmartSdr() {
     if (settings.audioSource === 'smartsdr') startSmartSdrAudio();
   });
   smartSdr.on('slice-ready', ({ index }) => {
-    sendCatLog(`Flex Direct: tuning radio slice ${index}`);
-    // POTACAT owns this slice — bind it to a DAX channel so RX/TX audio
-    // routes to the dedicated audio connection (no SmartSDR to do it).
-    const ch = parseInt(settings.audioDaxChannel, 10) || 1;
-    smartSdr.setSliceDax(index, ch);
+    if (smartSdr.mode === 'self') {
+      sendCatLog(`Flex Direct: tuning radio slice ${index}`);
+      // POTACAT owns this slice — bind it to a DAX channel so RX/TX audio
+      // routes to the dedicated audio connection (no SmartSDR to do it).
+      const ch = parseInt(settings.audioDaxChannel, 10) || 1;
+      smartSdr.setSliceDax(index, ch);
+    } else {
+      // Bound mode: the host GUI client (SmartSDR-Win / AetherSDR) already
+      // configured DAX; we're just following its active slice. The UI's CAT
+      // pill expects an explicit cat-status nudge in this branch (gui-ready,
+      // which lights the pill for self-host, doesn't fire here).
+      sendCatLog(`SmartSDR API ready — bound to existing GUI client, following slice ${index}`);
+      sendCatStatus({ connected: true });
+    }
   });
   // Mirror the self-hosted slice's frequency/mode to the UI when there is no
   // SmartSDR-Win CAT shim (port 5002) feeding `cat`.
@@ -11161,11 +11172,12 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
     return;
   }
 
-  // Flex Direct: no SmartSDR-Win CAT shim on port 5002, but the SmartSDR API
-  // connection has self-registered as a GUI client. Tune the radio's restored
-  // slice directly over the native API — this is what lets POTACAT run with
-  // no SmartSDR / AetherSDR open at all.
-  if ((!cat || !cat.connected) && smartSdr && smartSdr.connected && smartSdr.guiReady) {
+  // No SmartSDR-Win CAT shim on port 5002, but the SmartSDR API connection is
+  // alive — either as the GUI client itself (Flex Direct: no SmartSDR /
+  // AetherSDR running) OR bound to an external GUI client (AetherSDR is
+  // running and owns the GUI session). In both cases `slice tune` reaches
+  // the radio; canTune covers both modes.
+  if ((!cat || !cat.connected) && smartSdr && smartSdr.canTune) {
     const sliceIndex = smartSdr.ourSliceIndex != null ? smartSdr.ourSliceIndex : 0;
     const tuneHz = useVfoShift ? (freqHz + settings.cwXit) : freqHz;
     const freqMhz = tuneHz / 1e6;
@@ -11174,7 +11186,8 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
       ? 'DIGU' : (mode === 'DIGL' || mode === 'PKTLSB') ? 'DIGL'
       : (mode === 'CW' ? 'CW' : (mode === 'AM' ? 'AM' : (mode === 'FM' ? 'FM' : (mode === 'SSB' ? ssbSide : (mode === 'USB' ? 'USB' : (mode === 'LSB' ? 'LSB' : null))))));
     if (mode) _modeSuppressUntil = Date.now() + 2000;
-    sendCatLog(`tune via Flex Direct: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}${flexMode && mode !== flexMode ? '->' + flexMode : ''} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
+    const _flexLabel = smartSdr.mode === 'self' ? 'Flex Direct' : 'Flex API (bound)';
+    sendCatLog(`tune via ${_flexLabel}: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}${flexMode && mode !== flexMode ? '->' + flexMode : ''} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
     smartSdr.tuneSlice(sliceIndex, freqMhz, flexMode, filterWidth);
     // Reflect the tune in the UI right away. Flex Direct has no CAT frequency
     // poll to echo the new VFO back, so the VFO popout / main window / ECHOCAT
@@ -14794,8 +14807,13 @@ app.whenReady().then(() => {
       }
     }
 
-    // Reconnect SmartSDR if settings changed (also needed for WSJT-X+Flex and CW keyer)
-    if (smartSdrChanged || wsjtxChanged || cwKeyerChanged || remoteChanged) {
+    // Reconnect SmartSDR if settings changed (also needed for WSJT-X+Flex and CW keyer).
+    // activeRigChanged: a desktop rig switch must reconnect the FlexLib API
+    // client. The connect-cat IPC handles this directly when the renderer
+    // routes that way, but settings-only save paths (e.g. UI flows that don't
+    // call connect-cat) still need it. Casey w/ 8600 + AetherSDR 2026-05-23
+    // — desktop rig editor left smartSdr disconnected, tunes ignored.
+    if (smartSdrChanged || wsjtxChanged || cwKeyerChanged || remoteChanged || activeRigChanged) {
       connectSmartSdr(); // needsSmartSdr() decides whether to actually connect
     }
 
@@ -15594,6 +15612,16 @@ app.whenReady().then(() => {
     settings.catTarget = target;
     saveSettings(settings);
     if (!settings.enableWsjtx) connectCat();
+    // Flex rigs ALSO need the FlexLib API client (smartSdr) — it's what
+    // tuneRadio's Flex Direct branch (no SmartSDR-Win running) drives, plus
+    // it's required for panadapter spots, slice XIT, ATU, and the rig
+    // control panel. Without this the desktop rig switch left CAT dead for
+    // AetherSDR / Flex Direct users (Casey w/ 8600 + AetherSDR 2026-05-23:
+    // SmartSDR-Audio came up cleanly but tunes returned "no radio connected"
+    // because smartSdr was never started). The phone's switch-rig handler
+    // has always done this; the desktop path was missing it.
+    // connectSmartSdr() is a no-op on non-Flex rigs via needsSmartSdr().
+    connectSmartSdr();
   });
 
   // --- WSJT-X IPC ---
