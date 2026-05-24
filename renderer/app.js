@@ -2604,7 +2604,10 @@ function updateBlDupeChip() {
   if (!blDupeChip) return;
   const cs = blCallsign.value.trim();
   if (cs.length < 3) { blDupeChip.classList.add('hidden'); return; }
-  const freqKhz = parseFloat(blFreq.value) * 1000;
+  // Match the dual MHz/kHz acceptance from saveBannerQso. Fall back to the
+  // raw * 1000 (legacy MHz interpretation) for partial input mid-typing so
+  // the dupe chip is responsive while the value isn't yet a real ham freq.
+  const freqKhz = parseBannerFreq(blFreq.value) || (parseFloat(blFreq.value) * 1000);
   const dupe = isActivatorDupe(cs, freqKhz, blMode.value);
   if (dupe) {
     const ts = dupe.timestamp ? new Date(dupe.timestamp) : null;
@@ -2643,6 +2646,20 @@ blFreq.addEventListener('input', updateBlDupeChip);
 blMode.addEventListener('change', updateBlDupeChip);
 
 // Save QSO from banner logger
+// Parse the banner-logger's freq field accepting MHz ("14.275") OR kHz ("14275").
+// Returns kHz (number) or null when the value matches no amateur band. Decimal
+// inputs naturally pin to MHz; integers ≥ 1000 pin to kHz; the only ambiguous
+// integers (50, 144, 432, 1296 — VHF/UHF in MHz) only validate one way.
+function parseBannerFreq(s) {
+  const n = parseFloat((s || '').trim());
+  if (!isFinite(n) || n <= 0) return null;
+  const asMhzKhz = n * 1000;
+  const asKhz    = n;
+  if (freqToBandActivator(asMhzKhz)) return asMhzKhz;
+  if (freqToBandActivator(asKhz))    return asKhz;
+  return null;
+}
+
 async function saveBannerQso() {
   const rawCallsign = blCallsign.value.trim().toUpperCase();
   if (!rawCallsign) { blCallsign.focus(); return; }
@@ -2660,8 +2677,21 @@ async function saveBannerQso() {
   const qsoDate = now.toISOString().slice(0, 10).replace(/-/g, '');
   const timeParts = timeVal.replace(':', '');
   const timeOn = timeParts.length === 4 ? timeParts + '00' : String(now.getUTCHours()).padStart(2, '0') + String(now.getUTCMinutes()).padStart(2, '0') + '00';
-  const freqMhz = parseFloat(frequency);
-  const freqKhz = freqMhz * 1000;
+  // Accept either MHz ("14.275") or kHz ("14275") — the rest of POTACAT works
+  // in kHz (POTA spots, CAT, status bar) so operators routinely type kHz here
+  // by reflex even though the field used to be labelled MHz. KB2UXB
+  // 2026-05-23: typed "7200" expecting 40m, ended up sending 7200 MHz to
+  // Wavelog (out of every ham band) → no <BAND:> tag → Wavelog reject. Try
+  // each interpretation; pick the one that yields a real amateur band.
+  const freqKhz = parseBannerFreq(frequency);
+  if (!freqKhz) {
+    blFreq.focus();
+    blFreq.select();
+    blFreq.title = `"${frequency}" doesn't map to any amateur band — type MHz (14.275) or kHz (14275).`;
+    blFreq.style.outline = '2px solid #e94560';
+    setTimeout(() => { blFreq.style.outline = ''; blFreq.title = ''; }, 4000);
+    return;
+  }
   const band = freqToBandActivator(freqKhz) || '';
 
   // Support comma-separated callsigns (multiple activators)

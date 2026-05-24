@@ -8038,38 +8038,99 @@ function fetchSolarData() {
       const sfi = parseInt(_matchTag(body, 'solarflux') || '', 10);
       const aIndex = parseInt(_matchTag(body, 'aindex') || '', 10);
       const kIndex = parseInt(_matchTag(body, 'kindex') || '', 10);
-      // Without these three we don't bother — the pills depend on them
-      // and a partial parse usually means hamqsl returned an error page.
-      if (Number.isNaN(sfi) || Number.isNaN(aIndex) || Number.isNaN(kIndex)) return;
+      const haveSfi = !Number.isNaN(sfi);
+      const haveA   = !Number.isNaN(aIndex);
+      const haveK   = !Number.isNaN(kIndex);
+      // hamqsl occasionally serves an HTML error page (overload, scheduled
+      // maintenance, DNS hiccup). The old code bailed entirely when any of
+      // the three didn't parse — the user saw "—" indefinitely with no clue
+      // why (N5WBL 2026-05-23). Now: take what we got, fall back to NOAA
+      // SWPC for the rest, log the upstream failure once per fetch.
+      if (!haveSfi && !haveA && !haveK) {
+        sendCatLog('[Conditions] hamqsl returned no SFI/A/K — falling back to SWPC');
+      }
+      const prev = _cachedSolarData || {};
+      const bands = _parseHamqslBandConditions(body);
+      const vhf   = _parseHamqslVhfConditions(body);
       _cachedSolarData = {
-        sfi,
-        aIndex,
-        kIndex,
-        // Optional / softer fields — null when absent so the renderer can
-        // gracefully fall back to em-dash without try/catch.
-        sunspots: parseInt(_matchTag(body, 'sunspots') || '', 10) || null,
-        xray: _matchTag(body, 'xray'),                          // e.g. "B1.2"
-        heliumLine: _matchTag(body, 'heliumline'),              // 304Å index
-        protonFlux: _matchTag(body, 'protonflux'),
-        electronFlux: _matchTag(body, 'electonflux'),           // hamqsl typo
-        aurora: _matchTag(body, 'aurora'),                      // 0-10 activity
-        normalization: _matchTag(body, 'normalization'),
-        latDegree: _matchTag(body, 'latdegree'),                // aurora southern limit
-        solarWind: _matchTag(body, 'solarwind'),                // km/s
-        magneticField: _matchTag(body, 'magneticfield'),        // Bz nT
-        geomagField: _matchTag(body, 'geomagfield'),            // text label
-        signalNoise: _matchTag(body, 'signalnoise'),            // e.g. "S2"
-        muf: _matchTag(body, 'muf'),                            // MHz
-        fof2: _matchTag(body, 'fof2'),                          // F2 critical freq, MHz
-        kIndexNt: _matchTag(body, 'kindexnt'),                  // Kp from hamqsl
-        updated: _matchTag(body, 'updated'),
-        bands: _parseHamqslBandConditions(body),
-        vhf: _parseHamqslVhfConditions(body),
+        sfi:    haveSfi ? sfi    : (prev.sfi != null    ? prev.sfi    : null),
+        aIndex: haveA   ? aIndex : (prev.aIndex != null ? prev.aIndex : null),
+        kIndex: haveK   ? kIndex : (prev.kIndex != null ? prev.kIndex : null),
+        // Optional / softer fields — keep prior cached value if hamqsl
+        // didn't carry it this round, so they don't blink to em-dash.
+        sunspots: parseInt(_matchTag(body, 'sunspots') || '', 10) || prev.sunspots || null,
+        xray: _matchTag(body, 'xray') || prev.xray,
+        heliumLine: _matchTag(body, 'heliumline') || prev.heliumLine,
+        protonFlux: _matchTag(body, 'protonflux') || prev.protonFlux,
+        electronFlux: _matchTag(body, 'electonflux') || prev.electronFlux,
+        aurora: _matchTag(body, 'aurora') || prev.aurora,
+        normalization: _matchTag(body, 'normalization') || prev.normalization,
+        latDegree: _matchTag(body, 'latdegree') || prev.latDegree,
+        solarWind: _matchTag(body, 'solarwind') || prev.solarWind,
+        magneticField: _matchTag(body, 'magneticfield') || prev.magneticField,
+        geomagField: _matchTag(body, 'geomagfield') || prev.geomagField,
+        signalNoise: _matchTag(body, 'signalnoise') || prev.signalNoise,
+        muf: _matchTag(body, 'muf') || prev.muf,
+        fof2: _matchTag(body, 'fof2') || prev.fof2,
+        kIndexNt: _matchTag(body, 'kindexnt') || prev.kIndexNt,
+        updated: _matchTag(body, 'updated') || prev.updated,
+        bands: bands.length ? bands : prev.bands,
+        vhf:   vhf.length   ? vhf   : prev.vhf,
       };
+      _applySwpcFallbacks();
       _broadcastSolar();
     });
   });
-  req.on('error', () => { /* silently ignore — pills keep last known values */ });
+  req.on('error', (err) => {
+    sendCatLog(`[Conditions] hamqsl fetch failed: ${err.message} — using SWPC fallback`);
+    _applySwpcFallbacks();
+    _broadcastSolar();
+  });
+}
+
+// --- SWPC fallback for SFI / Ap / Kp ---
+// Used when hamqsl is unreachable or returns a malformed page. SWPC publishes
+// the 10.7 cm flux on its own short JSON; Kp is already cached by
+// fetchKpHistory. The A-index (24-hour averaged ap) is derived from the same
+// 8-sample Kp history via the standard Kp→ap table.
+let _cachedSwpcSfi = null;
+const _KP_TO_AP_INT = [0, 4, 7, 15, 27, 48, 80, 132, 207, 400]; // Kp 0..9 → ap
+function _kpToAp(kp) {
+  if (!Number.isFinite(kp) || kp <= 0) return 0;
+  if (kp >= 9) return 400;
+  const lo = Math.floor(kp), hi = Math.min(lo + 1, 9), f = kp - lo;
+  return Math.round(_KP_TO_AP_INT[lo] * (1 - f) + _KP_TO_AP_INT[hi] * f);
+}
+function _applySwpcFallbacks() {
+  if (!_cachedSolarData) _cachedSolarData = {};
+  const d = _cachedSolarData;
+  if (d.sfi == null && _cachedSwpcSfi != null) d.sfi = _cachedSwpcSfi;
+  if (_cachedKpHistory && _cachedKpHistory.length) {
+    if (d.kIndex == null) {
+      const latest = _cachedKpHistory[_cachedKpHistory.length - 1];
+      if (Number.isFinite(latest.kp)) d.kIndex = Math.round(latest.kp);
+    }
+    if (d.aIndex == null) {
+      const aps = _cachedKpHistory.map((s) => _kpToAp(s.kp));
+      d.aIndex = Math.round(aps.reduce((a, b) => a + b, 0) / aps.length);
+    }
+  }
+}
+function fetchSwpcSfi() {
+  const https = require('https');
+  const req = https.get('https://services.swpc.noaa.gov/products/summary/10cm-flux.json',
+    { timeout: 10000 }, (res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const flux = parseInt(data.Flux, 10);
+        if (Number.isFinite(flux)) _cachedSwpcSfi = flux;
+      } catch { /* malformed feed; keep prior */ }
+    });
+  });
+  req.on('error', () => { /* network blip; keep prior */ });
 }
 
 // 24-hour planetary Kp from NOAA SWPC. Their feed returns a CSV-ish array
@@ -8127,6 +8188,7 @@ function fetchSwpcAlerts() {
 function fetchAllSolar() {
   fetchSolarData();
   fetchKpHistory();
+  fetchSwpcSfi();    // populates _cachedSwpcSfi so the hamqsl-failure path has SFI
   fetchSwpcAlerts();
 }
 
