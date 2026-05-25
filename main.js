@@ -12914,9 +12914,33 @@ app.whenReady().then(() => {
       }
     });
 
+    // Per-frame error rate is high enough to flood the CAT log with the same
+    // string, so collapse repeats: log the first occurrence (with stack), then
+    // a heartbeat every 5 s with a count, plus the next NEW message verbatim.
+    let _sstvLastErr = null, _sstvErrCount = 0, _sstvErrLastLog = 0;
     sstvEngine.on('error', (data) => {
-      console.error('[SSTV] Engine error:', data.message);
-      sendCatLog(`[SSTV] Engine error: ${data.message}`);
+      const msg = data.message || 'unknown';
+      const stack = data.stack || '';
+      const now = Date.now();
+      if (msg !== _sstvLastErr) {
+        _sstvLastErr = msg;
+        _sstvErrCount = 1;
+        _sstvErrLastLog = now;
+        console.error('[SSTV] Engine error:', msg, stack ? '\n' + stack : '');
+        sendCatLog(`[SSTV] Engine error: ${msg}`);
+        if (stack) {
+          // First line is the message; lines 2+ are the trace. Send the top
+          // few frames — enough to identify the throwing call without flooding.
+          stack.split('\n').slice(1, 6).forEach((line) => sendCatLog('[SSTV]   ' + line.trim()));
+        }
+      } else {
+        _sstvErrCount++;
+        if (now - _sstvErrLastLog >= 5000) {
+          sendCatLog(`[SSTV] (same error repeated ${_sstvErrCount}× in the last ${Math.round((now - _sstvErrLastLog) / 1000)}s)`);
+          _sstvErrLastLog = now;
+          _sstvErrCount = 0;
+        }
+      }
     });
 
     sstvEngine.start();
