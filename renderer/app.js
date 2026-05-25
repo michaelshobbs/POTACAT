@@ -14843,12 +14843,25 @@ async function checkFirstRun(force = false) {
     welcomeDialog.showModal();
   } else if (isNewVersion) {
     // Version changed — show "What's New" release notes, not the welcome screen.
-    // Mark "seen" in localStorage FIRST (synchronous, can't race) so even if
-    // the settings.json write below loses (slow disk, force-quit, overlapping
-    // partial save), we still won't re-show on next launch.
+    // Triple guard against re-showing on subsequent launches:
+    //   1. localStorage (sync, survives slow-disk settings.json write loss)
+    //   2. sessionStorage flag (this-session guard against any double-fire
+    //      from re-mount / reinit during the same launch)
+    //   3. settings.json lastVersion (canonical, used by checkFirstRun)
+    // Mark all three BEFORE the dialog opens so even a force-quit while
+    // the user is reading release notes can't replay the dialog next time.
     try { localStorage.setItem('whatsNewSeenVersion', s.appVersion); } catch {}
+    try { sessionStorage.setItem('whatsNewShownThisSession', s.appVersion); } catch {}
     await window.api.saveSettings({ lastVersion: s.appVersion });
     showWhatsNew(s.appVersion);
+  } else {
+    // No dialog to show — quick friendly greeting toast. Skipped when
+    // welcome / What's New is opening so we don't stack visuals on the
+    // very first launch after install or upgrade. The greeting itself
+    // is one-shot-per-session — see renderer/greetings.js.
+    if (typeof window.showStartupGreeting === 'function') {
+      window.showStartupGreeting(s.myCallsign);
+    }
   }
 }
 

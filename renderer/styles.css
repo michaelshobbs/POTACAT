@@ -839,28 +839,73 @@ button:hover {
   font-weight: bold;
 }
 
+/* Sits inside #update-banner whose background is var(--tint-green)
+ * (#0a3d2a on dark, #d4edda on light). Pairing #4ecca3 mint against
+ * #1a1a2e near-black text is technically high-contrast on paper but
+ * reads as muddy/illegible in practice (K3SBP report on v1.7.4
+ * upgrade). Use a deeper saturated green with bold white text — the
+ * contrast ratio jumps from ~6.8:1 (mint/navy) to ~7.5:1 (deep
+ * green/white) AND the perceived legibility is much better. */
 .update-action-btn {
-  background: var(--accent-green);
-  color: #1a1a2e;
+  background: #1f7a52;
+  color: #fff;
   border: none;
   border-radius: 3px;
   padding: 2px 10px;
   font-size: 12px;
   font-weight: bold;
+  letter-spacing: 0.3px;
   cursor: pointer;
 }
 
 .update-action-btn:hover {
-  background: #6ee6bd;
+  background: #2a9668;
 }
 
 .update-action-btn:disabled {
   background: #3a9a7a;
+  color: rgba(255, 255, 255, 0.85);
   cursor: default;
 }
 
 .update-action-btn.hidden {
   display: none;
+}
+
+/* Startup greeting — shown once per session right after the UI loads,
+ * fades in/out over ~4.5 s. Sits high in the window so it doesn't
+ * cover the spot table, on top of the update banner if both exist. */
+.greeting-toast {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 9999;
+  background: var(--bg-header);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-green);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 300ms ease, transform 300ms ease;
+  pointer-events: auto;
+  max-width: 80vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.greeting-toast.greeting-toast-in {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.greeting-toast.greeting-toast-leaving {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px);
 }
 
 #update-link {
