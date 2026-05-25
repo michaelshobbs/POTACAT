@@ -1784,6 +1784,13 @@ function getCallAreaCoords(callsign, entityName) {
 // --- Reverse Beacon Network ---
 function sendRbnStatus(s) {
   if (win && !win.isDestroyed()) win.webContents.send('rbn-status', s);
+  // Surface in the CAT log so users (and bug reports) can see whether
+  // RBN actually connected. K3SBP 2026-05-25: sent CQ on CW, got picked
+  // up by RBN's web view, but no spots in the iOS Prop tab — we couldn't
+  // tell whether RBN was connected at all without this line.
+  if (s && typeof s.connected === 'boolean') {
+    sendCatLog(`[RBN] ${s.connected ? 'connected to' : 'disconnected from'} ${s.host || 'telnet.reversebeacon.net'}:${s.port || 7000}`);
+  }
   sendPropStatus();
 }
 
@@ -1846,6 +1853,13 @@ function connectRbn() {
   rbn.on('spot', (raw) => {
     // Strip skimmer suffix (e.g. KM3T-# -> KM3T)
     const spotter = raw.spotter.replace(/-[#\d]+$/, '');
+    // Visibility for "I sent CQ but the Prop tab is empty" — when the spot
+    // arrives for the operator's own call we know the desktop received it
+    // and forwarded; if there are no [RBN] heard lines after a CW session
+    // the issue is upstream (no skimmer heard you), not POTACAT routing.
+    if (settings.myCallsign && raw.callsign.toUpperCase() === settings.myCallsign.toUpperCase()) {
+      sendCatLog(`[RBN] You were heard: ${spotter} ${raw.freqMHz.toFixed(3)} ${raw.mode || ''} ${raw.snr != null ? raw.snr + ' dB' : ''}`.replace(/\s+$/, ''));
+    }
 
     const spot = {
       spotter,
