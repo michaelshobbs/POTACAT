@@ -5297,6 +5297,180 @@ function cancelAllCwSends() {
 // subsequent ipcMain.handle registration in the .then() block, producing
 // the "No handler registered" errors for save-settings / save-qso /
 // QRZ lookup / rig switching reported in v1.5.17.
+// --- Remote Launcher install / uninstall / status ---
+// The launcher (scripts/launcher.js) is a standalone Node script that runs
+// on port 7301 outside POTACAT so the mobile app can restart POTACAT after
+// a crash. These helpers expose install/uninstall as buttons in the
+// renderer instead of requiring the user to run `node scripts/launcher-
+// install.js` from a terminal. Logic ported from scripts/launcher-install.js
+// (which still works as the CLI install path).
+const _launcherOs = require('os');
+function _launcherPaths() {
+  const os = _launcherOs;
+  const userData = app.getPath('userData');
+  const launcherDest = path.join(userData, 'launcher.js');
+  const platform = process.platform;
+  let autostartPath;
+  if (platform === 'win32') {
+    autostartPath = path.join(
+      process.env.APPDATA || '',
+      'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup',
+      'POTACAT-Launcher.vbs',
+    );
+  } else if (platform === 'darwin') {
+    autostartPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.potacat.launcher.plist');
+  } else {
+    autostartPath = path.join(os.homedir(), '.config', 'autostart', 'potacat-launcher.desktop');
+  }
+  // The launcher hardcodes %APPDATA%/potacat (lowercase) as its config dir
+  // regardless of how the Electron app is named. Match that here so the
+  // pre-seeded config lands where the launcher will look for it.
+  let launcherCfgDir;
+  if (platform === 'win32') launcherCfgDir = path.join(process.env.APPDATA || '', 'potacat');
+  else if (platform === 'darwin') launcherCfgDir = path.join(os.homedir(), 'Library', 'Application Support', 'potacat');
+  else launcherCfgDir = path.join(os.homedir(), '.config', 'potacat');
+  return { userData, launcherDest, autostartPath, launcherCfgDir, platform };
+}
+
+function _resolveNodeExe() {
+  // Prefer system Node when present — smaller process, no Electron
+  // baggage. Fall back to this Electron binary with ELECTRON_RUN_AS_NODE=1
+  // so users without Node still get a working launcher.
+  try {
+    const { execSync } = require('child_process');
+    execSync('node --version', { stdio: 'pipe', timeout: 3000 });
+    return { exe: 'node', useElectron: false };
+  } catch {
+    return { exe: process.execPath, useElectron: true };
+  }
+}
+
+function _writeAutostartWindows(vbsPath, exe, useElectron, launcherScript) {
+  const envLine = useElectron
+    ? 'WshShell.Environment("Process").Item("ELECTRON_RUN_AS_NODE") = "1"\r\n'
+    : '';
+  const vbs =
+    'Set WshShell = CreateObject("WScript.Shell")\r\n' +
+    envLine +
+    `WshShell.Run """${exe}"" ""${launcherScript}""", 0, False\r\n`;
+  fs.mkdirSync(path.dirname(vbsPath), { recursive: true });
+  fs.writeFileSync(vbsPath, vbs);
+}
+
+function _writeAutostartMac(plistPath, exe, useElectron, launcherScript, logDir) {
+  const envBlock = useElectron
+    ? '  <key>EnvironmentVariables</key>\n  <dict><key>ELECTRON_RUN_AS_NODE</key><string>1</string></dict>\n'
+    : '';
+  const plist =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+    '<plist version="1.0"><dict>\n' +
+    '  <key>Label</key><string>com.potacat.launcher</string>\n' +
+    '  <key>ProgramArguments</key>\n' +
+    `  <array><string>${exe}</string><string>${launcherScript}</string></array>\n` +
+    '  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n' +
+    envBlock +
+    `  <key>StandardOutPath</key><string>${path.join(logDir, 'launcher.log')}</string>\n` +
+    `  <key>StandardErrorPath</key><string>${path.join(logDir, 'launcher.log')}</string>\n` +
+    '</dict></plist>\n';
+  fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+  fs.writeFileSync(plistPath, plist);
+  try { require('child_process').execSync(`launchctl load "${plistPath}"`, { stdio: 'pipe' }); } catch {}
+}
+
+function _writeAutostartLinux(desktopPath, exe, useElectron, launcherScript) {
+  const envPrefix = useElectron ? 'env ELECTRON_RUN_AS_NODE=1 ' : '';
+  const entry =
+    '[Desktop Entry]\nType=Application\nName=POTACAT Launcher\n' +
+    `Exec=${envPrefix}${exe} ${launcherScript}\n` +
+    'Hidden=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n';
+  fs.mkdirSync(path.dirname(desktopPath), { recursive: true });
+  fs.writeFileSync(desktopPath, entry);
+}
+
+async function _installLauncher() {
+  try {
+    const { launcherDest, autostartPath, launcherCfgDir, platform } = _launcherPaths();
+    // Extract launcher.js to a stable on-disk path (works for packaged
+    // installs where the source is inside app.asar). fs.readFileSync via
+    // Electron's Node honors asar transparently.
+    const srcLauncher = path.join(__dirname, 'scripts', 'launcher.js');
+    const srcContent = fs.readFileSync(srcLauncher, 'utf8');
+    fs.writeFileSync(launcherDest, srcContent);
+
+    // Pre-seed launcher-config.json (port 7301 + HTTP; matches what the
+    // mobile LauncherService expects by default).
+    fs.mkdirSync(launcherCfgDir, { recursive: true });
+    const cfgPath = path.join(launcherCfgDir, 'launcher-config.json');
+    if (!fs.existsSync(cfgPath)) {
+      fs.writeFileSync(cfgPath, JSON.stringify({ port: 7301, potacatPath: 'auto', https: false }, null, 2));
+    }
+
+    const { exe, useElectron } = _resolveNodeExe();
+    if (platform === 'win32') {
+      _writeAutostartWindows(autostartPath, exe, useElectron, launcherDest);
+    } else if (platform === 'darwin') {
+      _writeAutostartMac(autostartPath, exe, useElectron, launcherDest, launcherCfgDir);
+    } else {
+      _writeAutostartLinux(autostartPath, exe, useElectron, launcherDest);
+    }
+
+    // Spawn the launcher now so the user doesn't have to log out and back
+    // in. Idempotent — if a launcher is already on port 7301, the new
+    // process fails to bind and exits, leaving the existing one in place.
+    const { spawn } = require('child_process');
+    const env = { ...process.env };
+    if (useElectron) env.ELECTRON_RUN_AS_NODE = '1';
+    const child = spawn(exe, [launcherDest], {
+      detached: true, stdio: 'ignore', env, windowsHide: true,
+    });
+    child.unref();
+    sendCatLog(`[Launcher] Installed at ${autostartPath} (using ${useElectron ? 'Electron' : 'node'} → spawned PID ${child.pid})`);
+    return { ok: true, autostartPath, launcherDest, pid: child.pid, useElectron };
+  } catch (err) {
+    sendCatLog(`[Launcher] Install failed: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function _uninstallLauncher() {
+  try {
+    const { autostartPath, platform } = _launcherPaths();
+    let removed = false;
+    if (fs.existsSync(autostartPath)) {
+      if (platform === 'darwin') {
+        try { require('child_process').execSync(`launchctl unload "${autostartPath}"`, { stdio: 'pipe' }); } catch {}
+      }
+      fs.unlinkSync(autostartPath);
+      removed = true;
+    }
+    sendCatLog(`[Launcher] Uninstalled — autostart entry ${removed ? 'removed' : 'was already absent'}`);
+    return {
+      ok: true,
+      removed,
+      note: 'Any launcher already running keeps running until reboot — restart your computer or kill the process to fully stop it.',
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function _launcherStatus() {
+  const { autostartPath, launcherDest } = _launcherPaths();
+  const installed = fs.existsSync(autostartPath);
+  // Probe 127.0.0.1:7301 — any HTTP response (incl. 401 unauthorized)
+  // means the server is alive. ECONNREFUSED / timeout = down.
+  const running = await new Promise((resolve) => {
+    const req = require('http').request({
+      host: '127.0.0.1', port: 7301, path: '/status', method: 'GET', timeout: 1000,
+    }, (res) => { res.resume(); resolve(true); });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+  return { installed, running, autostartPath, launcherDest };
+}
+
 let _restartInFlight = null;
 const _restartHistory = [];
 const RESTART_CIRCUIT_LIMIT = 3;
@@ -14249,6 +14423,16 @@ app.whenReady().then(() => {
   // (reading 'on')" whenever ECHOCAT was disabled, aborting every
   // subsequent ipcMain.handle in this block (the v1.5.17 regression).
   ipcMain.handle('echocat-restart-audio', () => restartEchoAudio('desktop'));
+
+  // --- Remote Launcher install / uninstall / status ---
+  // Lets the phone start/restart POTACAT when it crashes or the user
+  // closes it. The launcher itself (scripts/launcher.js) is a standalone
+  // Node script on port 7301 — separate process so it outlives POTACAT.
+  // Install logic ported inline from scripts/launcher-install.js so we
+  // don't need a shell-out (and `node` doesn't need to be on PATH).
+  ipcMain.handle('launcher-install', async () => _installLauncher());
+  ipcMain.handle('launcher-uninstall', async () => _uninstallLauncher());
+  ipcMain.handle('launcher-status', async () => _launcherStatus());
 
   // TX EQ live update — push from app.js settings UI to the audio bridge
   // without tearing down WebRTC. The bridge maintains an active filter

@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('api', {
   echocatIssueTailscaleCert: () => ipcRenderer.invoke('echocat-issue-tailscale-cert'),
   echocatPickFile: (opts) => ipcRenderer.invoke('echocat-pick-file', opts || {}),
   echocatRestartAudio: () => ipcRenderer.invoke('echocat-restart-audio'),
+  // Remote Launcher install / uninstall / status — exposes the install
+  // dance previously buried in scripts/launcher-install.js as a UI button.
+  launcherInstall: () => ipcRenderer.invoke('launcher-install'),
+  launcherUninstall: () => ipcRenderer.invoke('launcher-uninstall'),
+  launcherStatus: () => ipcRenderer.invoke('launcher-status'),
   // --- ALSA bridge (Linux-only; resolves false / [] on Win+Mac) ----------
   // Exposed for Linux SDR users who need to pick raw hw:/plughw: subdevices
   // that Chromium's enumerateDevices hides. The capture flow is opt-in: the

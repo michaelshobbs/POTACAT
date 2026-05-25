@@ -2216,6 +2216,21 @@
             <button type="button" id="echocat-restart-audio-btn" style="padding:4px 12px;">Restart audio</button>
           </div>
           <span class="help-text" style="display:block;margin-top:10px;">Audio source (DAX vs. SmartSDR Direct) is set per-rig under Settings &rarr; Radio &rarr; your Flex rig.</span>
+
+          <!-- Remote Launcher — separate process that lets the phone restart
+               POTACAT after a crash / hang. Lives outside POTACAT itself so
+               it survives POTACAT dying. -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;border-top:1px solid #333;padding-top:10px;">
+            <div style="flex:1;min-width:280px;">
+              <strong>Remote Launcher <span id="launcher-status-pill" class="help-text" style="font-weight:normal;margin-left:6px;color:#888;">checking…</span></strong>
+              <span class="help-text" style="display:block;">Starts a tiny background server (port 7301) so the phone app can start/restart POTACAT when it crashes or you close it accidentally. Auto-launches at login.</span>
+              <span id="launcher-status-detail" class="help-text" style="display:block;color:#888;font-size:11px;"></span>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button type="button" id="launcher-install-btn" style="padding:4px 12px;">Install</button>
+              <button type="button" id="launcher-uninstall-btn" style="padding:4px 12px;" class="hidden">Uninstall</button>
+            </div>
+          </div>
           <!-- TX EQ + Compressor (Phase 1). Only applies to the
                direct audio paths (SmartSDR Direct + K4 network) where
                we have Web Audio in the chain — the legacy DAX-device

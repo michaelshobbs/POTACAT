@@ -3802,6 +3802,88 @@ if (window.api.onEchocatPairedDevices) {
 }
 echocatRefreshPairedList();
 
+// --- Remote Launcher install / uninstall / status ---
+// Surfaces scripts/launcher.js install state as a one-click button so
+// users don't have to run `node scripts/launcher-install.js` from a
+// terminal. The launcher lets the phone restart POTACAT after a crash.
+const launcherStatusPill = document.getElementById('launcher-status-pill');
+const launcherStatusDetail = document.getElementById('launcher-status-detail');
+const launcherInstallBtn = document.getElementById('launcher-install-btn');
+const launcherUninstallBtn = document.getElementById('launcher-uninstall-btn');
+async function refreshLauncherStatus() {
+  if (!launcherStatusPill || !window.api.launcherStatus) return;
+  try {
+    const s = await window.api.launcherStatus();
+    const installed = !!s.installed;
+    const running = !!s.running;
+    let label, color, detail;
+    if (running && installed) {
+      label = '● running'; color = '#4ecca3';
+      detail = 'Auto-starts at login. The phone app can restart POTACAT via port 7301.';
+    } else if (installed && !running) {
+      label = '○ installed, not running'; color = '#f0a500';
+      detail = 'Will auto-start on your next login — or click Uninstall + Install again to start now.';
+    } else if (!installed && running) {
+      label = '● running (no autostart)'; color = '#f0a500';
+      detail = 'Launcher is up but won\'t auto-start at login. Click Install to make it persistent.';
+    } else {
+      label = '○ not installed'; color = '#888';
+      detail = '';
+    }
+    launcherStatusPill.textContent = label;
+    launcherStatusPill.style.color = color;
+    if (launcherStatusDetail) launcherStatusDetail.textContent = detail;
+    if (launcherInstallBtn)   launcherInstallBtn.classList.toggle('hidden', installed);
+    if (launcherUninstallBtn) launcherUninstallBtn.classList.toggle('hidden', !installed);
+  } catch (err) {
+    launcherStatusPill.textContent = 'status unavailable';
+    launcherStatusPill.style.color = '#888';
+  }
+}
+if (launcherInstallBtn) {
+  launcherInstallBtn.addEventListener('click', async () => {
+    launcherInstallBtn.disabled = true;
+    const prev = launcherInstallBtn.textContent;
+    launcherInstallBtn.textContent = 'Installing…';
+    try {
+      const r = await window.api.launcherInstall();
+      if (r && r.ok) {
+        showLogToast('Remote Launcher installed (PID ' + (r.pid || '?') + ')', { duration: 4000 });
+      } else {
+        showLogToast('Install failed: ' + (r && r.error ? r.error : 'unknown error'), { warn: true, duration: 6000 });
+      }
+    } catch (err) {
+      showLogToast('Install failed: ' + (err.message || err), { warn: true, duration: 6000 });
+    }
+    launcherInstallBtn.disabled = false;
+    launcherInstallBtn.textContent = prev;
+    // Give the spawned launcher ~800 ms to bind port 7301 before we re-probe.
+    setTimeout(refreshLauncherStatus, 800);
+  });
+}
+if (launcherUninstallBtn) {
+  launcherUninstallBtn.addEventListener('click', async () => {
+    if (!confirm('Remove the auto-start entry for the Remote Launcher?\n\nAny currently-running launcher keeps running until you reboot.')) return;
+    launcherUninstallBtn.disabled = true;
+    const prev = launcherUninstallBtn.textContent;
+    launcherUninstallBtn.textContent = 'Removing…';
+    try {
+      const r = await window.api.launcherUninstall();
+      if (r && r.ok) {
+        showLogToast(r.note || 'Auto-start removed.', { duration: 5000 });
+      } else {
+        showLogToast('Uninstall failed: ' + (r && r.error ? r.error : 'unknown error'), { warn: true });
+      }
+    } catch (err) {
+      showLogToast('Uninstall failed: ' + (err.message || err), { warn: true });
+    }
+    launcherUninstallBtn.disabled = false;
+    launcherUninstallBtn.textContent = prev;
+    refreshLauncherStatus();
+  });
+}
+refreshLauncherStatus();
+
 // Tailscale cert status. Setup is automatic (part of the pair-QR
 // flow), so this is informational only. Without a publicly-trusted
 // cert, iOS would reject self-signed at the TLS layer
