@@ -315,6 +315,15 @@ let lastMergedSpots = [];        // most recent dedupe'd spot list, cached so th
                                  // panadapter's allowlist when "Sync with Table
                                  // View" is off (K0OTC 2026-04-30).
 let sstvEngine = null;       // SSTV encode/decode engine (single-slice)
+// Circuit breaker for the SSTV worker. When the worker storms errors
+// (~190/sec under K3SBP 2026-05-25's repro), the audio-frame fan-out keeps
+// pushing buffers into a worker that's making zero forward progress —
+// each postMessage(transfer) plus the resulting captured stack trace is a
+// fresh native allocation and the main-process RSS climbs into the
+// gigabytes. Tripping this flag pauses sstvEngine.feedAudio so the worker
+// stops accumulating doomed frames. Recovery: stop+start the SSTV view,
+// or restart POTACAT.
+let _sstvFeedPaused = false;
 let _sstvLastActivityMs = 0; // last VIS/image timestamp — for heartbeat log
 let _sstvHeartbeatTimer = null;
 let sstvManager = null;      // SSTV multi-slice manager
@@ -4090,7 +4099,7 @@ function startSmartSdrAudio() {
     // sitting at max=0.0000 / 0 decodes — it never honored the audio-source
     // setting. The FT8 engine wants 12 kHz mono; dax_rx is 24 kHz, so
     // average sample pairs (cheap 2-tap LP + 2:1 decimate). K3SBP 2026-05-14.
-    if (settings.audioSource === 'smartsdr' && sstvEngine) {
+    if (settings.audioSource === 'smartsdr' && sstvEngine && !_sstvFeedPaused) {
       // SSTV decoder + waterfall need audio too. sstvEngine expects 48 kHz
       // and the pop-out's waterfall hard-codes WF_SAMPLE_RATE=48000 for
       // its FFT bin mapping; VITA-49 dax_rx is 24 kHz, so 2x upsample
@@ -4291,8 +4300,8 @@ function handleK4AudioFrame(frame) {
   }
   // 3) SSTV — engine + waterfall both expect 48 kHz, so 4x linear-interp
   //    upsample. Same pattern as the SmartSDR Direct path; minor since
-  //    SSTV is an occasional workflow.
-  if (settings.audioSource === 'k4-network' && sstvEngine) {
+  //    SSTV is an occasional workflow. Same circuit-breaker guard.
+  if (settings.audioSource === 'k4-network' && sstvEngine && !_sstvFeedPaused) {
     const out = new Float32Array(monoF32.length * 4);
     for (let i = 0; i < monoF32.length; i++) {
       const s0 = monoF32[i];
@@ -13111,11 +13120,17 @@ app.whenReady().then(() => {
     // Per-frame error rate is high enough to flood the CAT log with the same
     // string, so collapse repeats: log the first occurrence (with stack), then
     // a heartbeat every 5 s with a count, plus the next NEW message verbatim.
+    // Also trip the feed circuit-breaker once we've seen a sustained storm —
+    // keeps the worker from accumulating doomed buffers and ballooning main's
+    // RSS while the underlying SSTV bug is still being root-caused.
     let _sstvLastErr = null, _sstvErrCount = 0, _sstvErrLastLog = 0;
+    let _sstvErrTotal = 0;
+    const SSTV_FEED_BREAKER = 50; // total errors before pausing the audio feed
     sstvEngine.on('error', (data) => {
       const msg = data.message || 'unknown';
       const stack = data.stack || '';
       const now = Date.now();
+      _sstvErrTotal++;
       if (msg !== _sstvLastErr) {
         _sstvLastErr = msg;
         _sstvErrCount = 1;
@@ -13134,6 +13149,12 @@ app.whenReady().then(() => {
           _sstvErrLastLog = now;
           _sstvErrCount = 0;
         }
+      }
+      // Trip the breaker after a clear storm — single log line so we don't
+      // pile new messages onto an already-runaway log.
+      if (!_sstvFeedPaused && _sstvErrTotal >= SSTV_FEED_BREAKER) {
+        _sstvFeedPaused = true;
+        sendCatLog(`[SSTV] PAUSED — the worker has thrown ${_sstvErrTotal} errors. Audio feed disabled to protect memory. Close + reopen the SSTV view (or restart POTACAT) to retry.`);
       }
     });
 
@@ -13161,6 +13182,14 @@ app.whenReady().then(() => {
       sstvEngine = null;
       console.log('[SSTV] Engine stopped');
       sendCatLog('[SSTV] Decoder stopped');
+    }
+    // Re-arm the audio-feed circuit breaker so the next start() gets a
+    // fresh chance. The error condition that tripped it might be transient
+    // (state corruption from a previous session) and stop+start usually
+    // clears it.
+    if (_sstvFeedPaused) {
+      _sstvFeedPaused = false;
+      sendCatLog('[SSTV] Feed circuit-breaker reset.');
     }
     if (_sstvHeartbeatTimer) {
       clearInterval(_sstvHeartbeatTimer);
@@ -13213,6 +13242,7 @@ app.whenReady().then(() => {
     if (settings.audioSource === 'smartsdr' && smartSdrAudio) return;
     // K4 network: SSTV is fed by handleK4AudioFrame's 4x upsample.
     if (settings.catTarget && settings.catTarget.type === 'k4-network' && cat && cat.connected) return;
+    if (_sstvFeedPaused) return; // circuit breaker — see flag definition
     let samples;
     if (buf instanceof Float32Array) samples = buf;
     else if (Array.isArray(buf)) samples = new Float32Array(buf);
