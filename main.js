@@ -545,6 +545,7 @@ let _currentVoxLevel = 0;
 let _currentMonState = false;
 let _currentMonLevel = 0;
 let _currentRitState = false;
+let _currentCwSidetoneState = true; // Flex default is sidetone ON; we mirror that.
 
 // Filter preset tables for rig controls (Hz values)
 const FILTER_PRESETS = {
@@ -1034,6 +1035,7 @@ function broadcastRigState() {
     mon: _currentMonState,
     monLevel: _currentMonLevel,
     rit: _currentRitState,
+    cwSidetone: _currentCwSidetoneState,
     capabilities: caps,
   };
   if (win && !win.isDestroyed()) win.webContents.send('rig-state', state);
@@ -4108,6 +4110,18 @@ function connectSmartSdr() {
       // which lights the pill for self-host, doesn't fire here).
       sendCatLog(`SmartSDR API ready — bound to existing GUI client, following slice ${index}`);
       sendCatStatus({ connected: true });
+    }
+    // Apply the "mute Flex CW sidetone on connect" setting if the user
+    // has it enabled — solves the two-sidetones problem (external
+    // keyer + radio both playing tone) without requiring a manual
+    // toggle each session.
+    if (settings.muteFlexCwSidetoneOnConnect) {
+      try {
+        smartSdr.setCwSidetone(false);
+        _currentCwSidetoneState = false;
+        broadcastRigState();
+        sendCatLog('[CW] Flex sidetone muted (per Settings → CW).');
+      } catch { /* radio may be mid-handshake; harmless */ }
     }
   });
   // Mirror the self-hosted slice's frequency/mode to the UI when there is no
@@ -14529,6 +14543,18 @@ app.whenReady().then(() => {
         if (flexSdr()) smartSdr.setRit(0, on);
         else if (cat && cat.connected && typeof cat.setRit === 'function') cat.setRit(on);
         _currentRitState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-cw-sidetone': {
+        // Flex's `cw sidetone=0|1` toggle. Mutes the radio's own
+        // monitor playback during keying (TX continues normally) — fixes
+        // the "two sidetones" complaint when keying through an external
+        // device (WinKeyer / WK Keyboard) that already has its own tone.
+        if (flexNeedsApi) { _flexWarnOnce('CW Sidetone requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (flexSdr()) smartSdr.setCwSidetone(on);
+        _currentCwSidetoneState = on;
         broadcastRigState();
         break;
       }

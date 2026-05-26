@@ -551,6 +551,7 @@ const setEnableLlota = document.getElementById('set-enable-llota');
 const setEnableTiles = document.getElementById('set-enable-tiles');
 const setCwXit = document.getElementById('set-cw-xit');
 const setCwXitShiftVfo = document.getElementById('set-cw-xit-shift-vfo');
+const setMuteFlexCwSidetone = document.getElementById('set-mute-flex-cw-sidetone');
 const setCwFilter = document.getElementById('set-cw-filter');
 const setSsbFilter = document.getElementById('set-ssb-filter');
 const setDigitalFilter = document.getElementById('set-digital-filter');
@@ -9102,6 +9103,7 @@ async function openSettingsDialog(tab) {
   setScanDwell.value = s.scanDwell || 7;
   setCwXit.value = s.cwXit || 0;
   setCwXitShiftVfo.checked = !!s.cwXitShiftVfo;
+  if (setMuteFlexCwSidetone) setMuteFlexCwSidetone.checked = !!s.muteFlexCwSidetoneOnConnect;
   setCwFilter.value = s.cwFilterWidth || 0;
   setSsbFilter.value = s.ssbFilterWidth || 0;
   setDigitalFilter.value = s.digitalFilterWidth || 0;
@@ -9769,6 +9771,7 @@ settingsSave.addEventListener('click', async () => {
   const dwellVal = parseInt(setScanDwell.value, 10) || 7;
   const cwXitVal = parseInt(setCwXit.value, 10) || 0;
   const cwXitShiftVfoVal = setCwXitShiftVfo.checked;
+  const muteFlexCwSidetoneVal = setMuteFlexCwSidetone ? setMuteFlexCwSidetone.checked : false;
   const cwFilterVal = parseInt(setCwFilter.value, 10) || 0;
   const ssbFilterVal = parseInt(setSsbFilter.value, 10) || 0;
   const digitalFilterVal = parseInt(setDigitalFilter.value, 10) || 0;
@@ -9952,6 +9955,7 @@ settingsSave.addEventListener('click', async () => {
     scanDwell: dwellVal,
     cwXit: cwXitVal,
     cwXitShiftVfo: cwXitShiftVfoVal,
+    muteFlexCwSidetoneOnConnect: muteFlexCwSidetoneVal,
     cwFilterWidth: cwFilterVal,
     ssbFilterWidth: ssbFilterVal,
     digitalFilterWidth: digitalFilterVal,
@@ -14184,6 +14188,7 @@ const rigMonBtn        = document.getElementById('rig-mon-btn');
 const rigMonLevel      = document.getElementById('rig-monlevel');
 const rigMonLevelLabel = document.getElementById('rig-monlevel-label');
 const rigRitBtn        = document.getElementById('rig-rit-btn');
+const rigCwStBtn       = document.getElementById('rig-cwst-btn');
 let rigPopoverOpen = false;
 let rigCurrentCaps = {};
 let rigCurrentMode = '';
@@ -14255,11 +14260,12 @@ function rigApplyCapabilities(caps) {
   setRowDisplay('rig-nblevel-row',  !!caps.nbLevel);
   setRowDisplay('rig-voxlevel-row', !!caps.voxLevel);
   setRowDisplay('rig-monlevel-row', !!caps.monLevel);
-  // Mon and RIT share a row — show it if either is supported, and hide
-  // individual buttons by their own caps.
-  if (rigMonBtn) rigMonBtn.style.display = caps.mon ? '' : 'none';
-  if (rigRitBtn) rigRitBtn.style.display = caps.rit ? '' : 'none';
-  setRowDisplay('rig-mon-row', !!(caps.mon || caps.rit));
+  // Mon / RIT / CW ST share a row — show it if any is supported, and
+  // hide individual buttons by their own caps.
+  if (rigMonBtn)   rigMonBtn.style.display   = caps.mon         ? '' : 'none';
+  if (rigRitBtn)   rigRitBtn.style.display   = caps.rit         ? '' : 'none';
+  if (rigCwStBtn)  rigCwStBtn.style.display  = caps.cwSidetone  ? '' : 'none';
+  setRowDisplay('rig-mon-row', !!(caps.mon || caps.rit || caps.cwSidetone));
   // Clamp TX power slider to radio's min/max
   if (caps.minPower != null) rigTxPower.min = caps.minPower;
   if (caps.maxPower != null) rigTxPower.max = caps.maxPower;
@@ -14365,6 +14371,7 @@ _bindLevelSlider(rigVoxLevel, rigVoxLevelLabel, 'set-vox-level', '');
 _bindLevelSlider(rigMonLevel, rigMonLevelLabel, 'set-mon-level', '');
 _bindModifierBtn(rigMonBtn, 'set-mon');
 _bindModifierBtn(rigRitBtn, 'set-rit');
+_bindModifierBtn(rigCwStBtn, 'set-cw-sidetone');
 
 // Slider handlers
 // Throttle rig control sliders to prevent flooding serial port
@@ -14413,6 +14420,7 @@ window.api.onRigState((state) => {
   _syncModBtn(rigVoxBtn,    state.vox);
   _syncModBtn(rigMonBtn,    state.mon);
   _syncModBtn(rigRitBtn,    state.rit);
+  _syncModBtn(rigCwStBtn,   state.cwSidetone);
   if (rigAgcSelect && state.agc != null && rigAgcSelect.value !== state.agc) {
     rigAgcSelect.value = state.agc || '';
   }

@@ -268,8 +268,9 @@
             <span id="rig-voxlevel-label">0</span>
           </div>
           <div class="rig-popover-row rig-popover-buttons" id="rig-mon-row">
-            <button id="rig-mon-btn" class="rig-btn" title="TX Monitor (hear your own audio)">Mon</button>
+            <button id="rig-mon-btn" class="rig-btn" title="TX Monitor (hear your own voice audio)">Mon</button>
             <button id="rig-rit-btn" class="rig-btn" title="RIT (Receiver Incremental Tuning) — offset RX freq without changing TX">RIT</button>
+            <button id="rig-cwst-btn" class="rig-btn" title="Flex CW Sidetone — toggle the radio's local sidetone playback during keying. Off = no radio-side tone (useful when external keyer has its own sidetone). TX is unaffected.">CW ST</button>
           </div>
           <div class="rig-popover-row" id="rig-monlevel-row">
             <label>Mon Lvl</label>
@@ -1676,6 +1677,9 @@
       </label>
       <label class="checkbox-label" style="margin-top:4px;" title="When on, CW XIT adds the offset to the VFO itself (legacy behavior — VFO display shifts). When off, POTACAT uses the radio's native TX-only XIT (Flex slice XIT, Yaesu TX CLAR) so the VFO stays on the spot's true frequency.">
         <input type="checkbox" id="set-cw-xit-shift-vfo"> Shift VFO for CW XIT (legacy)
+      </label>
+      <label class="checkbox-label" style="margin-top:4px;" title="Flex only: sends `cw sidetone=0` after each SmartSDR connect so the radio doesn't play its own CW tone during keying. Use this when you key through an external device (WinKeyer / WK Keyboard) that already has its own sidetone — stops the doubled-tone effect when the radio sits in the same room. TX is unaffected. You can also toggle this per-session via the CW ST button in the rig popover.">
+        <input type="checkbox" id="set-mute-flex-cw-sidetone"> Mute Flex CW sidetone on connect
       </label>
       <label>CW Filter Width (Hz):
         <input type="number" id="set-cw-filter" min="0" max="3000" step="50" value="0">
