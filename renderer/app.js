@@ -18,6 +18,52 @@ let enableSplitView = true; // allow Table+Map simultaneously
 // User preferences (loaded from settings)
 let distUnit = 'mi';    // 'mi' or 'km'
 let watchlist = []; // parsed watchlist rules: [{ callsign, band, mode }]
+// Watchlist groups — three user-defined color-coded buckets that decorate
+// the callsign cell. Lookup is a Map<UPPERCASE_CALL, groupIndex 0|1|2> so
+// the table render is O(1) per cell. Built from settings.watchlistGroups
+// on each prefs load and on save.
+let watchlistGroupLookup = new Map();
+let watchlistGroups = [
+  { name: '', color: '#ff7066', callsigns: '' },
+  { name: '', color: '#82b1ff', callsigns: '' },
+  { name: '', color: '#b388ff', callsigns: '' },
+];
+
+function _parseCallsignList(str) {
+  // Accepts comma OR whitespace OR newline separators. Strips qualifiers
+  // (anything after first ':' — the legacy watchlist syntax uses ':band' /
+  // ':mode' qualifiers; groups are simple match-or-not so we drop those).
+  if (!str) return [];
+  return str
+    .split(/[\s,;]+/)
+    .map(s => s.split(':')[0].trim().toUpperCase())
+    .filter(s => s.length > 0);
+}
+
+function rebuildWatchlistGroupLookup() {
+  watchlistGroupLookup = new Map();
+  for (let i = 0; i < watchlistGroups.length; i++) {
+    const g = watchlistGroups[i];
+    if (!g) continue;
+    for (const call of _parseCallsignList(g.callsigns)) {
+      // First-match wins so a call in multiple groups picks the
+      // lowest-numbered group consistently.
+      if (!watchlistGroupLookup.has(call)) watchlistGroupLookup.set(call, i);
+    }
+  }
+  // Push the colors onto :root so the CSS classes pick them up. Done here
+  // so any color-picker change shows up immediately without a reload.
+  const root = document.documentElement;
+  for (let i = 0; i < 3; i++) {
+    root.style.setProperty(`--wl-color-${i}`, (watchlistGroups[i] && watchlistGroups[i].color) || '');
+  }
+}
+
+function lookupWatchlistGroup(callsign) {
+  if (!callsign) return -1;
+  const idx = watchlistGroupLookup.get(callsign.toUpperCase());
+  return (idx == null) ? -1 : idx;
+}
 let maxAgeMin = 5;       // max spot age in minutes (POTA, LLOTA, WWFF)
 let sotaMaxAgeMin = 30;  // SOTA max spot age in minutes
 let dxcMaxAgeMin = 15;   // DX cluster max spot age in minutes — DX spots aren't re-posted like POTA
@@ -7366,6 +7412,13 @@ function render() {
       const callTd = document.createElement('td');
       callTd.className = 'callsign-cell';
       callTd.setAttribute('data-col', 'callsign');
+      // Watchlist group decoration — outline + tint via .wl-group-N CSS.
+      const wlGroupIdx = lookupWatchlistGroup(s.callsign);
+      if (wlGroupIdx >= 0) {
+        callTd.classList.add(`wl-group-${wlGroupIdx}`);
+        const name = (watchlistGroups[wlGroupIdx] && watchlistGroups[wlGroupIdx].name) || '';
+        if (name) callTd.title = `Watchlist: ${name}`;
+      }
       if (myCallsign && s.callsign.toUpperCase() === myCallsign.toUpperCase()) {
         const cat = document.createElement('span');
         cat.textContent = '\uD83D\uDC08\u200D\u2B1B ';
@@ -9018,6 +9071,26 @@ async function openSettingsDialog(tab) {
   setSsbFilter.value = s.ssbFilterWidth || 0;
   setDigitalFilter.value = s.digitalFilterWidth || 0;
   setWatchlist.value = s.watchlist || '';
+  // Hydrate watchlist groups from settings — default colors + empty fields
+  // when not yet configured. Updates the in-memory state, the form
+  // controls, and the CSS color variables in one pass.
+  const defaultGroupColors = ['#ff7066', '#82b1ff', '#b388ff'];
+  const savedGroups = Array.isArray(s.watchlistGroups) ? s.watchlistGroups : [];
+  for (let i = 0; i < 3; i++) {
+    const g = savedGroups[i] || {};
+    watchlistGroups[i] = {
+      name: typeof g.name === 'string' ? g.name : '',
+      color: (typeof g.color === 'string' && /^#[0-9a-f]{6}$/i.test(g.color)) ? g.color : defaultGroupColors[i],
+      callsigns: typeof g.callsigns === 'string' ? g.callsigns : '',
+    };
+    const nameEl  = document.getElementById(`wl-name-${i}`);
+    const colorEl = document.getElementById(`wl-color-${i}`);
+    const callsEl = document.getElementById(`wl-calls-${i}`);
+    if (nameEl)  nameEl.value  = watchlistGroups[i].name;
+    if (colorEl) colorEl.value = watchlistGroups[i].color;
+    if (callsEl) callsEl.value = watchlistGroups[i].callsigns;
+  }
+  rebuildWatchlistGroupLookup();
   if (setRespotTemplate) setRespotTemplate.value = s.respotTemplate || '';
   if (setWwffRespotTemplate) setWwffRespotTemplate.value = s.wwffRespotTemplate || '';
   if (setLlotaRespotTemplate) setLlotaRespotTemplate.value = s.llotaRespotTemplate || '';
@@ -9414,6 +9487,95 @@ settingsCancel.addEventListener('click', async () => {
   settingsDialog.close();
 });
 
+// =============================================================================
+// Watchlist groups — Settings-dialog wiring (CSV import, Clear, live color)
+// =============================================================================
+(function setupWatchlistGroupControls() {
+  // Live update the swatch + the CSS variable as the user picks a color,
+  // so the table re-tints without waiting for Save.
+  for (let i = 0; i < 3; i++) {
+    const picker = document.getElementById(`wl-color-${i}`);
+    if (picker) {
+      picker.addEventListener('input', () => {
+        const val = picker.value;
+        if (/^#[0-9a-f]{6}$/i.test(val)) {
+          document.documentElement.style.setProperty(`--wl-color-${i}`, val);
+        }
+      });
+    }
+  }
+
+  // Clear button — wipes the textarea (Save still required to persist).
+  document.querySelectorAll('.wl-clear-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = btn.getAttribute('data-wl-clear');
+      const ta = document.getElementById(`wl-calls-${idx}`);
+      if (ta) ta.value = '';
+    });
+  });
+
+  // CSV import — accepts a single column of callsigns, OR a multi-column
+  // sheet where the first column is the callsign. Quoted fields and CRLF
+  // line endings are tolerated. Merges into the existing textarea (dedup)
+  // rather than replacing, so a user can import multiple files into one
+  // group. Save still required to persist.
+  const fileInput = document.getElementById('wl-csv-file');
+  let _csvTargetGroup = -1;
+  document.querySelectorAll('.wl-csv-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      _csvTargetGroup = parseInt(btn.getAttribute('data-wl-csv'), 10);
+      if (fileInput) {
+        fileInput.value = '';
+        fileInput.click();
+      }
+    });
+  });
+  if (fileInput) {
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file || _csvTargetGroup < 0) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = String(reader.result || '');
+          const rows = text.split(/\r?\n/);
+          const calls = [];
+          for (const row of rows) {
+            if (!row.trim()) continue;
+            // Split on comma but respect simple double-quoted fields. A
+            // callsign field never legally contains a comma, so this is a
+            // light-touch CSV — no full RFC 4180 parser.
+            let first = row;
+            if (row.includes(',')) first = row.split(',')[0];
+            first = first.replace(/^["\s]+|["\s]+$/g, '');
+            if (first && /^[A-Z0-9\/]{3,15}$/i.test(first)) {
+              calls.push(first.toUpperCase());
+            }
+          }
+          if (calls.length === 0) {
+            showLogToast('No valid callsigns found in CSV', { warn: true, duration: 4000 });
+            return;
+          }
+          const ta = document.getElementById(`wl-calls-${_csvTargetGroup}`);
+          if (!ta) return;
+          const existing = _parseCallsignList(ta.value);
+          const seen = new Set(existing);
+          const added = [];
+          for (const c of calls) {
+            if (!seen.has(c)) { seen.add(c); added.push(c); }
+          }
+          const merged = existing.concat(added);
+          ta.value = merged.join(', ');
+          showLogToast(`Imported ${added.length} new callsigns (${calls.length - added.length} duplicates skipped)`, { duration: 4000 });
+        } catch (err) {
+          showLogToast('CSV import failed: ' + err.message, { warn: true, duration: 5000 });
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+})();
+
 // Export/Import settings
 document.getElementById('settings-export').addEventListener('click', async () => {
   const ok = await window.api.exportSettings();
@@ -9429,6 +9591,20 @@ document.getElementById('settings-import').addEventListener('click', async () =>
 
 settingsSave.addEventListener('click', async () => {
   const watchlistRaw = setWatchlist.value.trim();
+  // Read the three watchlist groups out of their form controls. Each
+  // gets persisted as { name, color, callsigns } — same shape used by
+  // the renderer state + ECHOCAT push to mobile.
+  const watchlistGroupsSave = [];
+  for (let i = 0; i < 3; i++) {
+    const nameEl  = document.getElementById(`wl-name-${i}`);
+    const colorEl = document.getElementById(`wl-color-${i}`);
+    const callsEl = document.getElementById(`wl-calls-${i}`);
+    watchlistGroupsSave.push({
+      name:      nameEl  ? nameEl.value.trim() : '',
+      color:     colorEl ? colorEl.value         : '',
+      callsigns: callsEl ? callsEl.value.trim()  : '',
+    });
+  }
   const respotTemplateVal = setRespotTemplate ? setRespotTemplate.value.trim() : '';
   const wwffRespotTemplateVal = setWwffRespotTemplate ? setWwffRespotTemplate.value.trim() : '';
   const llotaRespotTemplateVal = setLlotaRespotTemplate ? setLlotaRespotTemplate.value.trim() : '';
@@ -9628,6 +9804,7 @@ settingsSave.addEventListener('click', async () => {
     ssbFilterWidth: ssbFilterVal,
     digitalFilterWidth: digitalFilterVal,
     watchlist: watchlistRaw,
+    watchlistGroups: watchlistGroupsSave,
     respotTemplate: respotTemplateVal,
     wwffRespotTemplate: wwffRespotTemplateVal,
     llotaRespotTemplate: llotaRespotTemplateVal,
@@ -9804,6 +9981,14 @@ settingsSave.addEventListener('click', async () => {
   dxcMaxAgeMin = dxcMaxAgeVal;
   scanDwell = dwellVal;
   watchlist = parseWatchlist(watchlistRaw);
+  // Hot-update the in-memory groups + lookup so the table reflects the
+  // change immediately, without needing a reload.
+  watchlistGroups = watchlistGroupsSave.map((g, i) => ({
+    name: g.name,
+    color: /^#[0-9a-f]{6}$/i.test(g.color) ? g.color : ['#ff7066','#82b1ff','#b388ff'][i],
+    callsigns: g.callsigns,
+  }));
+  rebuildWatchlistGroupLookup();
   enablePota = potaEnabled;
   enableSota = sotaEnabled;
   enableWwff = wwffEnabled;

@@ -1870,6 +1870,114 @@ dialog input, dialog select {
   margin-top: 0;
 }
 
+/* =========================================================================
+ * Watchlist Groups — colored outline around the callsign cell.
+ *
+ * Three independent groups (e.g. local club / CW group / Discord group).
+ * Each has a user-pickable color stored in settings.watchlistGroups[i].color
+ * and pushed onto :root as --wl-color-0/-1/-2 at load + on every settings
+ * save. The outline lives INSIDE the cell (outline-offset: -2px) so the
+ * table grid stays clean, and the source's left-border row tint stays
+ * visible — group membership and spot source are independent signals.
+ * ========================================================================= */
+:root {
+  --wl-color-0: #ff7066;
+  --wl-color-1: #82b1ff;
+  --wl-color-2: #b388ff;
+}
+.callsign-cell.wl-group-0 {
+  outline: 2px solid var(--wl-color-0);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--wl-color-0) 14%, transparent);
+}
+.callsign-cell.wl-group-1 {
+  outline: 2px solid var(--wl-color-1);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--wl-color-1) 14%, transparent);
+}
+.callsign-cell.wl-group-2 {
+  outline: 2px solid var(--wl-color-2);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--wl-color-2) 14%, transparent);
+}
+
+/* Settings dialog — group editor block */
+.wl-groups-block {
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 6px 0 10px;
+  background: var(--bg-panel);
+}
+.wl-groups-header {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 8px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.wl-group {
+  margin-bottom: 8px;
+}
+.wl-group:last-child {
+  margin-bottom: 0;
+}
+.wl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.wl-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border-secondary);
+  flex-shrink: 0;
+}
+.wl-group[data-wl-group="0"] .wl-swatch { background: var(--wl-color-0); }
+.wl-group[data-wl-group="1"] .wl-swatch { background: var(--wl-color-1); }
+.wl-group[data-wl-group="2"] .wl-swatch { background: var(--wl-color-2); }
+.wl-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+.wl-color-picker {
+  width: 36px;
+  height: 24px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+  background: var(--bg-input);
+  padding: 0;
+}
+.wl-csv-btn, .wl-clear-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.wl-csv-btn:hover, .wl-clear-btn:hover {
+  background: var(--bg-hover);
+}
+.wl-callsigns {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 3px;
+  padding: 4px 6px;
+  resize: vertical;
+}
+
 /* Spot source color-coding — left border + subtle row tint */
 .spot-pota {
   border-left: 3px solid var(--source-pota);

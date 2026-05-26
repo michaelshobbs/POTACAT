@@ -1592,7 +1592,42 @@
       <label class="checkbox-label"><input type="checkbox" id="set-hide-worked"> Hide already-worked stations</label>
       <label>Watchlist (comma-separated, optional band:mode filter):
         <input type="text" id="set-watchlist" placeholder="K3SBP, K4SWL:CW, K0BUF:20m, W1AW:40m:SSB">
+        <span class="help-text" style="display:block;">Matching activators get a ⭐ + desktop notification (existing behavior). For visual group highlighting, use the three colored groups below.</span>
       </label>
+      <div class="wl-groups-block">
+        <div class="wl-groups-header">Watchlist Groups — colored outline around the callsign</div>
+        <div class="wl-group" data-wl-group="0">
+          <div class="wl-group-head">
+            <span class="wl-swatch" id="wl-swatch-0"></span>
+            <input type="text" id="wl-name-0" class="wl-name" placeholder="e.g. My Club" maxlength="40">
+            <input type="color" id="wl-color-0" class="wl-color-picker" value="#ff7066" title="Group color">
+            <button type="button" class="wl-csv-btn" data-wl-csv="0" title="Import callsigns from a CSV file (first column or single column)">Import CSV</button>
+            <button type="button" class="wl-clear-btn" data-wl-clear="0" title="Remove all callsigns from this group">Clear</button>
+          </div>
+          <textarea id="wl-calls-0" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns — K3SBP, KC9ZMA, NC3Z"></textarea>
+        </div>
+        <div class="wl-group" data-wl-group="1">
+          <div class="wl-group-head">
+            <span class="wl-swatch" id="wl-swatch-1"></span>
+            <input type="text" id="wl-name-1" class="wl-name" placeholder="e.g. CW Group" maxlength="40">
+            <input type="color" id="wl-color-1" class="wl-color-picker" value="#82b1ff" title="Group color">
+            <button type="button" class="wl-csv-btn" data-wl-csv="1" title="Import callsigns from a CSV file">Import CSV</button>
+            <button type="button" class="wl-clear-btn" data-wl-clear="1" title="Remove all callsigns from this group">Clear</button>
+          </div>
+          <textarea id="wl-calls-1" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns"></textarea>
+        </div>
+        <div class="wl-group" data-wl-group="2">
+          <div class="wl-group-head">
+            <span class="wl-swatch" id="wl-swatch-2"></span>
+            <input type="text" id="wl-name-2" class="wl-name" placeholder="e.g. Discord" maxlength="40">
+            <input type="color" id="wl-color-2" class="wl-color-picker" value="#b388ff" title="Group color">
+            <button type="button" class="wl-csv-btn" data-wl-csv="2" title="Import callsigns from a CSV file">Import CSV</button>
+            <button type="button" class="wl-clear-btn" data-wl-clear="2" title="Remove all callsigns from this group">Clear</button>
+          </div>
+          <textarea id="wl-calls-2" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns"></textarea>
+        </div>
+        <input type="file" id="wl-csv-file" accept=".csv,.txt" style="display:none;">
+      </div>
       <label>Re-spot template (POTA):
         <input type="text" id="set-respot-template" placeholder="{rst} in {QTH} 73s {mycallsign} via POTACAT">
         <span class="help-text" style="display:block;">Placeholders: <code>{rst}</code>, <code>{QTH}</code>, <code>{mycallsign}</code>, <code>{op_firstname}</code>. Used when re-spotting an activator after logging a contact. Per-QSO edits in the log dialog don't change this default.</span>
