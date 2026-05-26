@@ -10232,6 +10232,11 @@ function createWindow() {
     // Fetch donor list (async, non-blocking)
     fetchDonorList();
     setInterval(fetchDonorList, 24 * 3600000); // refresh supporter list daily
+    // Fetch each watchlist group's Ham2K PoLo URL (if configured). Per
+    // spec, refresh is app-driven — no HTTP cache semantics. We fetch
+    // on boot + on URL change; a manual Refresh button covers user-
+    // initiated re-pulls.
+    fetchAllWatchlistGroupsRemote();
     // Fetch active DX expeditions from Club Log
     fetchExpeditions();
     setInterval(fetchExpeditions, 3600000); // refresh every hour
@@ -10284,6 +10289,132 @@ function createWindow() {
 }
 
 // --- Donor list ---
+// =====================================================================
+// Watchlist Groups — Ham2K PoLo callsign-notes fetcher.
+//
+// Spec: https://polo.ham2k.com/docs/polo-features/callsign-notes/
+//   - Plain text, one record per line: `CALL <whitespace> NOTE`.
+//   - Lines starting with `#` are comments. Blank lines ignored.
+//   - If the NOTE starts with an emoji, that emoji is the display badge
+//     for that specific call. Per-call emoji wins over the group's
+//     fallback emoji set in Settings.
+//
+// We fetch each group's URL on app boot and again whenever the user
+// changes the URL in Settings, then cache the parsed result back into
+// settings.watchlistGroups[i].remoteEntries so a subsequent offline
+// boot still shows decoration until the next successful refresh.
+// =====================================================================
+function parsePoloCallsignNotes(text) {
+  const out = [];
+  if (!text) return out;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('#')) continue;
+    const m = line.match(/^(\S+)(?:\s+(.*))?$/);
+    if (!m) continue;
+    const callRaw = m[1];
+    // Same validity gate the CSV importer uses — keeps non-call tokens
+    // (e.g. row counters, malformed lines) from poisoning the list.
+    if (!/^[A-Z0-9\/]{3,15}$/i.test(callRaw)) continue;
+    const note = (m[2] || '').trim();
+    let emoji = '';
+    // Per the PoLo spec, "if the information starts with an emoji" we
+    // treat it as the display badge. \p{Extended_Pictographic} catches
+    // the standard emoji range across Unicode (anchor ⚓, dishes, etc.).
+    if (note && /^\p{Extended_Pictographic}/u.test(note)) {
+      // Take the full grapheme cluster (handles ZWJ-joined emoji like
+      // 👨‍🌾 correctly — Array.from would split them).
+      const match = note.match(/^(\p{Extended_Pictographic}(?:‍\p{Extended_Pictographic})*️?)/u);
+      emoji = match ? match[1] : '';
+    }
+    out.push({ call: callRaw.toUpperCase(), emoji });
+  }
+  return out;
+}
+
+function _broadcastWatchlistGroups() {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('watchlist-groups-updated', settings.watchlistGroups || []);
+  }
+}
+
+function fetchWatchlistGroupUrl(idx) {
+  return new Promise((resolve) => {
+    const groups = settings.watchlistGroups || [];
+    const g = groups[idx];
+    if (!g || !g.url || !/^https?:\/\//i.test(g.url)) {
+      resolve(false);
+      return;
+    }
+    const url = g.url;
+    const https = require('https');
+    const http = require('http');
+    const mod = url.startsWith('https://') ? https : http;
+    let settled = false;
+    const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+    const req = mod.get(url, { timeout: 15000, headers: { 'User-Agent': 'POTACAT' } }, (res) => {
+      // Follow one level of redirect — clubs sometimes move members.txt
+      // around or front it with HTTPS-redirect endpoints.
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        try {
+          const redir = new URL(res.headers.location, url).toString();
+          g.url = redir; // persist the resolved URL so we skip the redirect next time
+          saveSettings(settings);
+          fetchWatchlistGroupUrl(idx).then(done);
+          return;
+        } catch { /* fall through to error path */ }
+      }
+      if (res.statusCode !== 200) {
+        g.lastFetchError = `HTTP ${res.statusCode}`;
+        g.lastFetchedAt = Date.now();
+        saveSettings(settings);
+        _broadcastWatchlistGroups();
+        sendCatLog(`[Watchlist] Group ${idx + 1} (${g.name || 'unnamed'}): fetch failed — HTTP ${res.statusCode}`);
+        done(false);
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const entries = parsePoloCallsignNotes(body);
+          g.remoteEntries = entries;
+          g.lastFetchedAt = Date.now();
+          g.lastFetchError = '';
+          saveSettings(settings);
+          _broadcastWatchlistGroups();
+          sendCatLog(`[Watchlist] Group ${idx + 1} (${g.name || 'unnamed'}): fetched ${entries.length} callsigns from ${url}`);
+          done(true);
+        } catch (err) {
+          g.lastFetchError = err.message || 'parse error';
+          g.lastFetchedAt = Date.now();
+          saveSettings(settings);
+          _broadcastWatchlistGroups();
+          done(false);
+        }
+      });
+    });
+    req.on('error', (err) => {
+      g.lastFetchError = err.message || 'fetch error';
+      g.lastFetchedAt = Date.now();
+      saveSettings(settings);
+      _broadcastWatchlistGroups();
+      sendCatLog(`[Watchlist] Group ${idx + 1} (${g.name || 'unnamed'}): fetch failed — ${g.lastFetchError}`);
+      done(false);
+    });
+    req.on('timeout', () => { try { req.destroy(); } catch {} });
+  });
+}
+
+function fetchAllWatchlistGroupsRemote() {
+  const groups = settings.watchlistGroups || [];
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i] && groups[i].url) fetchWatchlistGroupUrl(i);
+  }
+}
+
 function fetchDonorList() {
   const https = require('https');
   const req = https.get('https://api.potacat.com/v1/supporters', (res) => {
@@ -14410,6 +14541,18 @@ app.whenReady().then(() => {
 
   ipcMain.on('app-relaunch', () => { app.relaunch(); app.exit(0); });
   ipcMain.handle('get-settings', () => ({ ...settings, appVersion: require('./package.json').version }));
+
+  // Manual refresh for one watchlist group's Ham2K PoLo URL. Renderer
+  // calls this from the Settings dialog's "Refresh" button so the user
+  // can pull a fresh list without restarting POTACAT. Returns the
+  // updated group entry (or null if no URL configured).
+  ipcMain.handle('watchlist-group-refresh', async (_e, idx) => {
+    const i = parseInt(idx, 10);
+    if (!Number.isInteger(i) || i < 0 || i > 2) return null;
+    await fetchWatchlistGroupUrl(i);
+    const g = (settings.watchlistGroups || [])[i];
+    return g || null;
+  });
   ipcMain.handle('discover-flex', () => discoverFlexRadios());
   // Conditions view: returns whatever is in cache (renderer wants something
   // to draw immediately on open) and kicks an out-of-cycle refresh in the
@@ -15196,10 +15339,46 @@ app.whenReady().then(() => {
     // where the user picks a different rig from the desktop rig list.
     const activeRigChanged = has('activeRigId') && newSettings.activeRigId !== settings.activeRigId;
 
+    // Watchlist group URL changes — snapshot the OLD URL for each group
+    // before the merge so we can detect "URL changed" per slot and
+    // refetch only the affected group(s). Empty old + new is a no-op;
+    // empty new clears any cached entries.
+    const _wlOldUrls = [];
+    if (has('watchlistGroups') && Array.isArray(newSettings.watchlistGroups)) {
+      const oldGroups = Array.isArray(settings.watchlistGroups) ? settings.watchlistGroups : [];
+      for (let i = 0; i < newSettings.watchlistGroups.length; i++) {
+        _wlOldUrls.push((oldGroups[i] && oldGroups[i].url) || '');
+      }
+    }
+
     const isPartialSave = !has('enablePota'); // hotkey saves only send 1-2 keys
 
     settings = { ...settings, ...newSettings };
     saveSettings(settings);
+
+    // Refetch any watchlist group whose URL changed. Clearing a URL
+    // also clears the cached entries so decoration stops immediately.
+    if (_wlOldUrls.length > 0) {
+      const groups = settings.watchlistGroups || [];
+      for (let i = 0; i < groups.length; i++) {
+        const newUrl = (groups[i] && groups[i].url) || '';
+        const oldUrl = _wlOldUrls[i] || '';
+        if (newUrl !== oldUrl) {
+          if (!newUrl) {
+            // URL cleared — drop cached entries and broadcast.
+            if (groups[i]) {
+              groups[i].remoteEntries = [];
+              groups[i].lastFetchedAt = 0;
+              groups[i].lastFetchError = '';
+            }
+            saveSettings(settings);
+            _broadcastWatchlistGroups();
+          } else {
+            fetchWatchlistGroupUrl(i);
+          }
+        }
+      }
+    }
     // Reconnect CW key port if it changed (works for both partial and full saves)
     if (has('cwKeyPort')) connectCwKeyPort();
 

@@ -1601,30 +1601,48 @@
             <span class="wl-swatch" id="wl-swatch-0"></span>
             <input type="text" id="wl-name-0" class="wl-name" placeholder="e.g. My Club" maxlength="40">
             <input type="color" id="wl-color-0" class="wl-color-picker" value="#ff7066" title="Group color">
+            <input type="text" id="wl-emoji-0" class="wl-emoji" maxlength="8" placeholder="🎯" title="Fallback emoji shown after each callsign in this group (per-call emoji from a Ham2K PoLo URL wins over this)">
             <button type="button" class="wl-csv-btn" data-wl-csv="0" title="Import callsigns from a CSV file (first column or single column)">Import CSV</button>
             <button type="button" class="wl-clear-btn" data-wl-clear="0" title="Remove all callsigns from this group">Clear</button>
           </div>
           <textarea id="wl-calls-0" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns — K3SBP, KC9ZMA, NC3Z"></textarea>
+          <div class="wl-url-row">
+            <input type="url" id="wl-url-0" class="wl-url" placeholder="Ham2K PoLo callsign-notes URL — https://example.club/members.txt">
+            <button type="button" class="wl-refresh-btn" data-wl-refresh="0" title="Fetch the latest list from this URL now">Refresh</button>
+          </div>
+          <div class="wl-status" id="wl-status-0"></div>
         </div>
         <div class="wl-group" data-wl-group="1">
           <div class="wl-group-head">
             <span class="wl-swatch" id="wl-swatch-1"></span>
             <input type="text" id="wl-name-1" class="wl-name" placeholder="e.g. CW Group" maxlength="40">
             <input type="color" id="wl-color-1" class="wl-color-picker" value="#82b1ff" title="Group color">
+            <input type="text" id="wl-emoji-1" class="wl-emoji" maxlength="8" placeholder="🎯" title="Fallback emoji shown after each callsign in this group (per-call emoji from a Ham2K PoLo URL wins over this)">
             <button type="button" class="wl-csv-btn" data-wl-csv="1" title="Import callsigns from a CSV file">Import CSV</button>
             <button type="button" class="wl-clear-btn" data-wl-clear="1" title="Remove all callsigns from this group">Clear</button>
           </div>
           <textarea id="wl-calls-1" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns"></textarea>
+          <div class="wl-url-row">
+            <input type="url" id="wl-url-1" class="wl-url" placeholder="Ham2K PoLo callsign-notes URL">
+            <button type="button" class="wl-refresh-btn" data-wl-refresh="1" title="Fetch the latest list from this URL now">Refresh</button>
+          </div>
+          <div class="wl-status" id="wl-status-1"></div>
         </div>
         <div class="wl-group" data-wl-group="2">
           <div class="wl-group-head">
             <span class="wl-swatch" id="wl-swatch-2"></span>
             <input type="text" id="wl-name-2" class="wl-name" placeholder="e.g. Discord" maxlength="40">
             <input type="color" id="wl-color-2" class="wl-color-picker" value="#b388ff" title="Group color">
+            <input type="text" id="wl-emoji-2" class="wl-emoji" maxlength="8" placeholder="🎯" title="Fallback emoji shown after each callsign in this group (per-call emoji from a Ham2K PoLo URL wins over this)">
             <button type="button" class="wl-csv-btn" data-wl-csv="2" title="Import callsigns from a CSV file">Import CSV</button>
             <button type="button" class="wl-clear-btn" data-wl-clear="2" title="Remove all callsigns from this group">Clear</button>
           </div>
           <textarea id="wl-calls-2" class="wl-callsigns" rows="2" placeholder="Comma-separated callsigns"></textarea>
+          <div class="wl-url-row">
+            <input type="url" id="wl-url-2" class="wl-url" placeholder="Ham2K PoLo callsign-notes URL">
+            <button type="button" class="wl-refresh-btn" data-wl-refresh="2" title="Fetch the latest list from this URL now">Refresh</button>
+          </div>
+          <div class="wl-status" id="wl-status-2"></div>
         </div>
         <input type="file" id="wl-csv-file" accept=".csv,.txt" style="display:none;">
       </div>

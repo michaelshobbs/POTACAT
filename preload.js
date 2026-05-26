@@ -134,6 +134,11 @@ contextBridge.exposeInMainWorld('api', {
   exportAdif: (qsos) => ipcRenderer.invoke('export-adif', qsos),
   onQrzData: (cb) => ipcRenderer.on('qrz-data', (_e, data) => cb(data)),
   onDonorCallsigns: (cb) => ipcRenderer.on('donor-callsigns', (_e, data) => cb(data)),
+  // Watchlist groups — main pushes fresh `remoteEntries` here after each
+  // Ham2K PoLo URL fetch (boot, save, or manual refresh). Renderer
+  // rebuilds the lookup map + re-renders the table.
+  onWatchlistGroupsUpdated: (cb) => ipcRenderer.on('watchlist-groups-updated', (_e, data) => cb(data)),
+  refreshWatchlistGroup: (idx) => ipcRenderer.invoke('watchlist-group-refresh', idx),
   onExpeditionCallsigns: (cb) => ipcRenderer.on('expedition-callsigns', (_e, data) => cb(data)),
   // Directory (HF Nets & SWL Broadcasts)
   onDirectoryData: (cb) => ipcRenderer.on('directory-data', (_e, data) => cb(data)),

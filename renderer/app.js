@@ -22,11 +22,16 @@ let watchlist = []; // parsed watchlist rules: [{ callsign, band, mode }]
 // the callsign cell. Lookup is a Map<UPPERCASE_CALL, groupIndex 0|1|2> so
 // the table render is O(1) per cell. Built from settings.watchlistGroups
 // on each prefs load and on save.
+// Lookup: Map<UPPERCASE_CALL, { idx, emoji }>. `emoji` resolves to (in
+// priority order): the per-call emoji from a fetched Ham2K PoLo file →
+// the group's fallback emoji set in Settings → '' (none). First-match-
+// wins across groups so a call in two groups picks the same color
+// everywhere.
 let watchlistGroupLookup = new Map();
 let watchlistGroups = [
-  { name: '', color: '#ff7066', callsigns: '' },
-  { name: '', color: '#82b1ff', callsigns: '' },
-  { name: '', color: '#b388ff', callsigns: '' },
+  { name: '', color: '#ff7066', emoji: '', url: '', callsigns: '', remoteEntries: [], lastFetchedAt: 0, lastFetchError: '' },
+  { name: '', color: '#82b1ff', emoji: '', url: '', callsigns: '', remoteEntries: [], lastFetchedAt: 0, lastFetchError: '' },
+  { name: '', color: '#b388ff', emoji: '', url: '', callsigns: '', remoteEntries: [], lastFetchedAt: 0, lastFetchError: '' },
 ];
 
 function _parseCallsignList(str) {
@@ -45,10 +50,27 @@ function rebuildWatchlistGroupLookup() {
   for (let i = 0; i < watchlistGroups.length; i++) {
     const g = watchlistGroups[i];
     if (!g) continue;
+    const groupEmoji = g.emoji || '';
+    // Manual callsigns first — they all get the group's fallback emoji.
     for (const call of _parseCallsignList(g.callsigns)) {
-      // First-match wins so a call in multiple groups picks the
-      // lowest-numbered group consistently.
-      if (!watchlistGroupLookup.has(call)) watchlistGroupLookup.set(call, i);
+      if (!watchlistGroupLookup.has(call)) {
+        watchlistGroupLookup.set(call, { idx: i, emoji: groupEmoji });
+      }
+    }
+    // Then the remote entries fetched from the Ham2K PoLo URL. Per-call
+    // emoji from the file wins over the group's fallback; if neither is
+    // set, no emoji is shown.
+    if (Array.isArray(g.remoteEntries)) {
+      for (const entry of g.remoteEntries) {
+        if (!entry || !entry.call) continue;
+        const call = String(entry.call).toUpperCase();
+        if (!watchlistGroupLookup.has(call)) {
+          watchlistGroupLookup.set(call, {
+            idx: i,
+            emoji: entry.emoji || groupEmoji,
+          });
+        }
+      }
     }
   }
   // Push the colors onto :root so the CSS classes pick them up. Done here
@@ -60,9 +82,8 @@ function rebuildWatchlistGroupLookup() {
 }
 
 function lookupWatchlistGroup(callsign) {
-  if (!callsign) return -1;
-  const idx = watchlistGroupLookup.get(callsign.toUpperCase());
-  return (idx == null) ? -1 : idx;
+  if (!callsign) return null;
+  return watchlistGroupLookup.get(callsign.toUpperCase()) || null;
 }
 let maxAgeMin = 5;       // max spot age in minutes (POTA, LLOTA, WWFF)
 let sotaMaxAgeMin = 30;  // SOTA max spot age in minutes
@@ -7316,10 +7337,10 @@ function render() {
       // Watchlist group — color the whole row when the activator's call
       // is in any of the three groups. Same per-row pattern as the source
       // tags above; CSS handles the box treatment.
-      const wlGroupIdx = lookupWatchlistGroup(s.callsign);
-      if (wlGroupIdx >= 0) {
-        tr.classList.add(`wl-group-${wlGroupIdx}`);
-        const wlName = (watchlistGroups[wlGroupIdx] && watchlistGroups[wlGroupIdx].name) || '';
+      const wlMatch = lookupWatchlistGroup(s.callsign);
+      if (wlMatch) {
+        tr.classList.add(`wl-group-${wlMatch.idx}`);
+        const wlName = (watchlistGroups[wlMatch.idx] && watchlistGroups[wlMatch.idx].name) || '';
         if (wlName) tr.title = `Watchlist: ${wlName}`;
       }
       if (enableDxe && expeditionCallsigns.has(s.callsign.toUpperCase())) tr.classList.add('spot-expedition');
@@ -7461,6 +7482,18 @@ function render() {
         paw.title = 'POTACAT Supporter';
         paw.textContent = '\uD83D\uDC3E';
         callTd.appendChild(paw);
+      }
+      // Watchlist group emoji \u2014 sits alongside the donor paw / DXP /
+      // creator badges. Per-call emoji from the Ham2K PoLo file wins
+      // over the group's fallback emoji set in Settings; see
+      // rebuildWatchlistGroupLookup.
+      if (wlMatch && wlMatch.emoji) {
+        const wlEmojiEl = document.createElement('span');
+        wlEmojiEl.className = 'watchlist-emoji';
+        const wlName = (watchlistGroups[wlMatch.idx] && watchlistGroups[wlMatch.idx].name) || '';
+        wlEmojiEl.title = wlName ? `Watchlist: ${wlName}` : 'Watchlist';
+        wlEmojiEl.textContent = wlMatch.emoji;
+        callTd.appendChild(wlEmojiEl);
       }
       if (s.callsign.toUpperCase() === 'K3SBP') {
         const cat = document.createElement('span');
@@ -9083,14 +9116,25 @@ async function openSettingsDialog(tab) {
     watchlistGroups[i] = {
       name: typeof g.name === 'string' ? g.name : '',
       color: (typeof g.color === 'string' && /^#[0-9a-f]{6}$/i.test(g.color)) ? g.color : defaultGroupColors[i],
+      emoji: typeof g.emoji === 'string' ? g.emoji : '',
+      url: typeof g.url === 'string' ? g.url : '',
       callsigns: typeof g.callsigns === 'string' ? g.callsigns : '',
+      // Runtime cache populated by main on each Ham2K PoLo fetch.
+      remoteEntries: Array.isArray(g.remoteEntries) ? g.remoteEntries : [],
+      lastFetchedAt: typeof g.lastFetchedAt === 'number' ? g.lastFetchedAt : 0,
+      lastFetchError: typeof g.lastFetchError === 'string' ? g.lastFetchError : '',
     };
     const nameEl  = document.getElementById(`wl-name-${i}`);
     const colorEl = document.getElementById(`wl-color-${i}`);
+    const emojiEl = document.getElementById(`wl-emoji-${i}`);
+    const urlEl   = document.getElementById(`wl-url-${i}`);
     const callsEl = document.getElementById(`wl-calls-${i}`);
     if (nameEl)  nameEl.value  = watchlistGroups[i].name;
     if (colorEl) colorEl.value = watchlistGroups[i].color;
+    if (emojiEl) emojiEl.value = watchlistGroups[i].emoji;
+    if (urlEl)   urlEl.value   = watchlistGroups[i].url;
     if (callsEl) callsEl.value = watchlistGroups[i].callsigns;
+    _renderWatchlistGroupStatus(i);
   }
   rebuildWatchlistGroupLookup();
   if (setRespotTemplate) setRespotTemplate.value = s.respotTemplate || '';
@@ -9489,8 +9533,66 @@ settingsCancel.addEventListener('click', async () => {
   settingsDialog.close();
 });
 
+// Renders the per-group "Last fetched: …" line under the URL input.
+// Pulled out so the same code runs after hydration AND after each push
+// from main when a new fetch completes.
+function _renderWatchlistGroupStatus(i) {
+  const el = document.getElementById(`wl-status-${i}`);
+  if (!el) return;
+  const g = watchlistGroups[i] || {};
+  if (!g.url) {
+    el.textContent = '';
+    return;
+  }
+  if (g.lastFetchError) {
+    el.textContent = `Fetch failed: ${g.lastFetchError}`;
+    el.style.color = 'var(--accent-red)';
+    return;
+  }
+  if (g.lastFetchedAt) {
+    const count = (g.remoteEntries || []).length;
+    const ago = _agoString(g.lastFetchedAt);
+    el.textContent = `${count} callsigns · fetched ${ago}`;
+    el.style.color = 'var(--text-secondary)';
+  } else {
+    el.textContent = 'Not fetched yet';
+    el.style.color = 'var(--text-secondary)';
+  }
+}
+function _agoString(ts) {
+  const diffSec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
+  return `${Math.round(diffSec / 86400)}d ago`;
+}
+
+// Main pushes this after each Ham2K PoLo URL fetch (boot, save-with-URL-
+// change, or manual Refresh). Replace the cached entries + re-render
+// the status line + rebuild the lookup so the visible table picks up
+// any new matches without a reload.
+if (window.api && window.api.onWatchlistGroupsUpdated) {
+  window.api.onWatchlistGroupsUpdated((groups) => {
+    if (!Array.isArray(groups)) return;
+    for (let i = 0; i < 3; i++) {
+      const g = groups[i] || {};
+      if (!watchlistGroups[i]) continue;
+      watchlistGroups[i].remoteEntries  = Array.isArray(g.remoteEntries) ? g.remoteEntries : [];
+      watchlistGroups[i].lastFetchedAt  = typeof g.lastFetchedAt === 'number' ? g.lastFetchedAt : 0;
+      watchlistGroups[i].lastFetchError = typeof g.lastFetchError === 'string' ? g.lastFetchError : '';
+      // url may have been canonicalized by main (redirect follow); reflect it.
+      if (typeof g.url === 'string') watchlistGroups[i].url = g.url;
+      _renderWatchlistGroupStatus(i);
+    }
+    rebuildWatchlistGroupLookup();
+    // Force a table re-render so newly-fetched calls light up.
+    if (typeof render === 'function') render();
+  });
+}
+
 // =============================================================================
-// Watchlist groups — Settings-dialog wiring (CSV import, Clear, live color)
+// Watchlist groups — Settings-dialog wiring (CSV import, Clear, live color,
+// Ham2K PoLo URL refresh)
 // =============================================================================
 (function setupWatchlistGroupControls() {
   // Live update the swatch + the CSS variable as the user picks a color,
@@ -9513,6 +9615,45 @@ settingsCancel.addEventListener('click', async () => {
       const idx = btn.getAttribute('data-wl-clear');
       const ta = document.getElementById(`wl-calls-${idx}`);
       if (ta) ta.value = '';
+    });
+  });
+
+  // Refresh button — re-fetch the Ham2K PoLo URL for this group on
+  // demand. Disabled while in flight; status line below the URL input
+  // reflects the result (success count or error message).
+  document.querySelectorAll('.wl-refresh-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.getAttribute('data-wl-refresh'), 10);
+      const urlEl = document.getElementById(`wl-url-${idx}`);
+      const urlNow = urlEl ? urlEl.value.trim() : '';
+      if (!urlNow) {
+        showLogToast('Set a URL first, then Refresh', { warn: true, duration: 3000 });
+        return;
+      }
+      // If the URL in the form differs from the persisted one, save
+      // first so main fetches the right URL. saveSettings is a partial
+      // merge — only ship the watchlist groups field.
+      const persistedUrl = (watchlistGroups[idx] && watchlistGroups[idx].url) || '';
+      if (urlNow !== persistedUrl) {
+        const partial = JSON.parse(JSON.stringify(watchlistGroups));
+        partial[idx].url = urlNow;
+        await window.api.saveSettings({ watchlistGroups: partial });
+        // saveSettings triggers a fetch on URL change — no need to call
+        // refreshWatchlistGroup explicitly here.
+        return;
+      }
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = 'Refreshing...';
+      try {
+        await window.api.refreshWatchlistGroup(idx);
+        // The 'watchlist-groups-updated' push reconciles state.
+      } catch (err) {
+        showLogToast('Refresh failed: ' + err.message, { warn: true, duration: 4000 });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
     });
   });
 
@@ -9593,18 +9734,27 @@ document.getElementById('settings-import').addEventListener('click', async () =>
 
 settingsSave.addEventListener('click', async () => {
   const watchlistRaw = setWatchlist.value.trim();
-  // Read the three watchlist groups out of their form controls. Each
-  // gets persisted as { name, color, callsigns } — same shape used by
-  // the renderer state + ECHOCAT push to mobile.
+  // Read the three watchlist groups out of their form controls. The
+  // runtime cache fields (remoteEntries / lastFetchedAt / lastFetchError)
+  // are owned by main and preserved across saves — re-attach the
+  // existing values so we don't blow away a fresh fetch.
   const watchlistGroupsSave = [];
   for (let i = 0; i < 3; i++) {
     const nameEl  = document.getElementById(`wl-name-${i}`);
     const colorEl = document.getElementById(`wl-color-${i}`);
+    const emojiEl = document.getElementById(`wl-emoji-${i}`);
+    const urlEl   = document.getElementById(`wl-url-${i}`);
     const callsEl = document.getElementById(`wl-calls-${i}`);
+    const existing = watchlistGroups[i] || {};
     watchlistGroupsSave.push({
-      name:      nameEl  ? nameEl.value.trim() : '',
+      name:      nameEl  ? nameEl.value.trim()  : '',
       color:     colorEl ? colorEl.value         : '',
+      emoji:     emojiEl ? emojiEl.value.trim() : '',
+      url:       urlEl   ? urlEl.value.trim()    : '',
       callsigns: callsEl ? callsEl.value.trim()  : '',
+      remoteEntries:  Array.isArray(existing.remoteEntries) ? existing.remoteEntries : [],
+      lastFetchedAt:  typeof existing.lastFetchedAt === 'number' ? existing.lastFetchedAt : 0,
+      lastFetchError: typeof existing.lastFetchError === 'string' ? existing.lastFetchError : '',
     });
   }
   const respotTemplateVal = setRespotTemplate ? setRespotTemplate.value.trim() : '';
@@ -9984,11 +10134,18 @@ settingsSave.addEventListener('click', async () => {
   scanDwell = dwellVal;
   watchlist = parseWatchlist(watchlistRaw);
   // Hot-update the in-memory groups + lookup so the table reflects the
-  // change immediately, without needing a reload.
+  // change immediately, without needing a reload. Main's response push
+  // (watchlist-groups-updated) will reconcile remoteEntries when the
+  // refetch completes if any URL changed.
   watchlistGroups = watchlistGroupsSave.map((g, i) => ({
     name: g.name,
     color: /^#[0-9a-f]{6}$/i.test(g.color) ? g.color : ['#ff7066','#82b1ff','#b388ff'][i],
+    emoji: g.emoji,
+    url: g.url,
     callsigns: g.callsigns,
+    remoteEntries: g.remoteEntries || [],
+    lastFetchedAt: g.lastFetchedAt || 0,
+    lastFetchError: g.lastFetchError || '',
   }));
   rebuildWatchlistGroupLookup();
   enablePota = potaEnabled;

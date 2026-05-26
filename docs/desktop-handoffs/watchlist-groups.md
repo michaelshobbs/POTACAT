@@ -39,14 +39,31 @@ The desktop persists the groups under a new top-level settings key. Mobile sees
 this on the next settings push exactly as written:
 
 ```ts
+type WatchlistGroupRemoteEntry = {
+  call: string;        // UPPERCASE, validated /^[A-Z0-9\/]{3,15}$/i
+  emoji: string;       // per-call emoji extracted from the Ham2K PoLo
+                       // file line, or '' if the line had none.
+};
+
 type WatchlistGroup = {
   name: string;        // user-visible, 0-40 chars, may be empty
   color: string;       // '#rrggbb', validated by the desktop on save
+  emoji: string;       // (NEW v1.7.5+) group-wide fallback emoji shown
+                       // after each callsign in this group. Per-call
+                       // emoji from `remoteEntries` wins over this.
+  url: string;         // (NEW v1.7.5+) Ham2K PoLo callsign-notes URL.
+                       // Empty = no remote source.
   callsigns: string;   // free-form text the user typed/imported.
                        // Separators: comma / whitespace / newline.
                        // Items may have legacy ':band:mode' qualifiers
                        // (from the original watchlist syntax) — ignore
                        // them in groups; group match is callsign-only.
+
+  // Runtime cache — written by the desktop's fetcher, read by all
+  // surfaces. Mobile should treat these as read-only and never edit:
+  remoteEntries: WatchlistGroupRemoteEntry[];  // fetched from `url`
+  lastFetchedAt: number;                       // unix ms, 0 = never
+  lastFetchError: string;                      // '' = ok or no URL
 };
 
 type Settings = {
@@ -59,6 +76,19 @@ type Settings = {
   ];
 };
 ```
+
+**Ham2K PoLo callsign-notes format** (spec:
+https://polo.ham2k.com/docs/polo-features/callsign-notes/):
+
+- Plain text, one record per line: `CALLSIGN <whitespace> NOTE-TEXT`.
+- Lines starting with `#` are comments. Blank lines ignored.
+- If the NOTE text starts with an emoji, that emoji is the display
+  badge for that specific call.
+- No groups / no manifest — one URL = one flat list.
+
+Desktop parser uses `\p{Extended_Pictographic}` to detect the leading
+emoji (with ZWJ-joined sequence support for compound emoji like 👨‍🌾).
+Mobile parsers should match.
 
 Always-three: when present the array is exactly length 3 (indices 0/1/2). When
 absent (older desktops, or a user who never opened Settings), mobile should
@@ -86,8 +116,8 @@ Verify on the next desktop release before mobile starts implementing.
 ## What mobile needs to build
 
 1. **Parse + lookup helper.** Mobile should build the same
-   `Map<UPPERCASE_CALL, groupIdx>` once when the settings push lands, and rebuild
-   when settings change. The desktop's parser logic (port verbatim):
+   `Map<UPPERCASE_CALL, { idx: number, emoji: string }>` once when the settings
+   push lands, and rebuild when settings change. The desktop's logic:
 
    ```ts
    function parseCallsignList(str: string): string[] {
@@ -98,24 +128,39 @@ Verify on the next desktop release before mobile starts implementing.
        .filter(s => s.length > 0);
    }
 
-   function buildLookup(groups: WatchlistGroup[]): Map<string, number> {
-     const out = new Map<string, number>();
+   type Hit = { idx: number; emoji: string };
+
+   function buildLookup(groups: WatchlistGroup[]): Map<string, Hit> {
+     const out = new Map<string, Hit>();
      for (let i = 0; i < groups.length; i++) {
-       for (const call of parseCallsignList(groups[i].callsigns)) {
-         if (!out.has(call)) out.set(call, i);   // first-match-wins
+       const g = groups[i];
+       const groupEmoji = g.emoji || '';
+       // Manual callsigns first — all get the group fallback emoji.
+       for (const call of parseCallsignList(g.callsigns)) {
+         if (!out.has(call)) out.set(call, { idx: i, emoji: groupEmoji });
+       }
+       // Then remote entries from the Ham2K PoLo URL. Per-call emoji
+       // from the file wins; group fallback used when the line had none.
+       for (const entry of (g.remoteEntries || [])) {
+         if (!entry || !entry.call) continue;
+         const call = entry.call.toUpperCase();
+         if (!out.has(call)) {
+           out.set(call, { idx: i, emoji: entry.emoji || groupEmoji });
+         }
        }
      }
      return out;
    }
    ```
 
-   First-match-wins matches desktop behavior — important so a call in multiple
-   groups picks the same color on both surfaces.
+   First-match-wins (lower-numbered group beats higher) AND manual-before-
+   remote (within a group) so the desktop and mobile resolve the same
+   call to the same `{ idx, emoji }` tuple.
 
 2. **Apply to the spot row container.** Mobile decorates the **whole row**
    (the spot-row card/list item), not the callsign cell. Reason: phone
    surface area is too small for a 2 px cell outline to read at a glance.
-   Wherever `SpotRow` renders, look up the group index. If `>= 0`:
+   Wherever `SpotRow` renders, look up the group `Hit`. If non-null:
 
    - Tint the row card background with the group's color at ~12% alpha
      so the source-tag column and the rest of the row stay readable.
@@ -123,6 +168,11 @@ Verify on the next desktop release before mobile starts implementing.
      row's leading edge as a clear group flag. (The existing source
      visual lives in the source-tag column, not as a row border — no
      conflict.)
+   - **Render the resolved `emoji` next to the callsign text**, after the
+     existing donor-paw / DXP badges. The emoji string from the lookup
+     is already the right one to render — per-call from a Ham2K PoLo
+     file takes precedence over the group's fallback emoji, both
+     resolved server-side / in `buildLookup`. Empty string → no badge.
    - Set the row's `accessibilityLabel` to include the group's `name`
      when non-empty (e.g. "K3SBP, watchlist group: My Club"). Empty
      name → still decorate, just don't add the label suffix.
@@ -130,6 +180,28 @@ Verify on the next desktop release before mobile starts implementing.
    No long-press tooltip — RN has no built-in tooltip primitive and the
    cost of building one isn't justified for a "what group is this?"
    secondary signal. The accessibility label covers screen-reader users.
+
+   ### Ham2K PoLo URL — read-only on mobile (for now)
+
+   `remoteEntries` is populated by the **desktop** fetcher on app boot,
+   on settings save (when URL changed), and on user-triggered Refresh.
+   The desktop pushes the updated array to mobile via the existing
+   settings-push pipe — mobile does **not** need to fetch the URL itself.
+
+   This keeps Phase-1 mobile scope small (no HTTP client, no CORS
+   gymnastics, no background refresh policy). A future phase can add a
+   mobile-side fetcher for the standalone-mobile case where the user
+   doesn't run desktop — for now, mobile honors whatever the desktop
+   most recently fetched.
+
+   Surface the freshness in the group editor so users understand the
+   data path:
+
+   ```
+   Group: QRQ Crew · ⚓
+   URL:  https://www.qrqcrew.club/members.txt   [Saved on desktop]
+   42 callsigns · fetched 12 min ago
+   ```
 
 3. **Settings screen — three group editors.** Mobile uses a fixed color
    palette instead of a free-form picker (RN has no built-in color picker
@@ -143,6 +215,16 @@ Verify on the next desktop release before mobile starts implementing.
      color via `<input type="color">`), render it as a sixth "Current"
      swatch outside the grid so the user sees what's there but doesn't
      have to overwrite it just to make another edit.
+   - **Emoji input** (NEW v1.7.5+) — single-line text field, max 8
+     characters. Falls back here when a remote entry's per-call emoji
+     is empty. iOS / Android keyboards have native emoji pickers, so
+     no special UI needed beyond a plain text input + a recognizable
+     placeholder like "🎯".
+   - **Ham2K PoLo URL** (NEW v1.7.5+) — read-only display on mobile.
+     Show the saved URL and the "N callsigns · fetched X ago" status
+     line; do **not** offer an edit/refresh button on mobile in this
+     phase. URL edits happen on desktop; mobile picks them up via the
+     settings push.
    - **Multi-line text area for callsigns.** Accept comma / whitespace / newline.
    - **Import CSV** button using `expo-document-picker` (or platform
      equivalent). Read the file as text, take the first column of each row,
