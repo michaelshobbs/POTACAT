@@ -1678,9 +1678,6 @@
       <label class="checkbox-label" style="margin-top:4px;" title="When on, CW XIT adds the offset to the VFO itself (legacy behavior — VFO display shifts). When off, POTACAT uses the radio's native TX-only XIT (Flex slice XIT, Yaesu TX CLAR) so the VFO stays on the spot's true frequency.">
         <input type="checkbox" id="set-cw-xit-shift-vfo"> Shift VFO for CW XIT (legacy)
       </label>
-      <label class="checkbox-label" style="margin-top:4px;" title="Flex only: temporarily mutes the radio's own CW sidetone only WHILE the WinKeyer is keying (busy / paddle breakin). Restores when the WK goes idle. Use this when the WinKeyer has its own sidetone and the radio sits in the same room — stops the doubled-tone effect without affecting POTACAT CW macros, SmartSDR CWX, HaliKey MIDI, or vBand keying (those all bypass the WK device and keep the Flex sidetone on).">
-        <input type="checkbox" id="set-mute-flex-cw-sidetone-wk"> Mute Flex CW sidetone while WinKeyer is keying
-      </label>
       <label>CW Filter Width (Hz):
         <input type="number" id="set-cw-filter" min="0" max="3000" step="50" value="0">
       </label>
@@ -2187,6 +2184,9 @@
             </label>
           </div>
           <span class="help-text" style="display:block;">Connect WinKeyer KEY output to your radio's straight key jack. Paddles plug into the WinKeyer, not the PC.</span>
+          <label class="checkbox-label" style="margin-top:6px;" title="Flex only: temporarily mutes the radio's own CW sidetone only WHILE the WinKeyer is keying (busy / paddle breakin). Restores when the WK goes idle. Use this when the WinKeyer has its own sidetone and the radio sits in the same room — stops the doubled-tone effect without affecting POTACAT CW macros, SmartSDR CWX, HaliKey MIDI, or vBand keying (those all bypass the WK device and keep the Flex sidetone on).">
+            <input type="checkbox" id="set-mute-flex-cw-sidetone-wk"> Mute Flex CW sidetone while WinKeyer is keying
+          </label>
         </div>
         <!-- Keyboard config -->
         <div id="cw-keyboard-config" class="hidden" style="margin-top:6px;">
