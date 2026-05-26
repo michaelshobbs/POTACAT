@@ -7313,6 +7313,15 @@ function render() {
       if (s.source === 'llota') tr.classList.add('spot-llota');
       if (s.source === 'pskr') tr.classList.add('spot-pskr');
       if (s.source === 'net') tr.classList.add('spot-net');
+      // Watchlist group — color the whole row when the activator's call
+      // is in any of the three groups. Same per-row pattern as the source
+      // tags above; CSS handles the box treatment.
+      const wlGroupIdx = lookupWatchlistGroup(s.callsign);
+      if (wlGroupIdx >= 0) {
+        tr.classList.add(`wl-group-${wlGroupIdx}`);
+        const wlName = (watchlistGroups[wlGroupIdx] && watchlistGroups[wlGroupIdx].name) || '';
+        if (wlName) tr.title = `Watchlist: ${wlName}`;
+      }
       if (enableDxe && expeditionCallsigns.has(s.callsign.toUpperCase())) tr.classList.add('spot-expedition');
       if (s.comments && /POTA.?CAT/i.test(s.comments)) tr.classList.add('potacat-respot');
 
@@ -7412,13 +7421,6 @@ function render() {
       const callTd = document.createElement('td');
       callTd.className = 'callsign-cell';
       callTd.setAttribute('data-col', 'callsign');
-      // Watchlist group decoration — outline + tint via .wl-group-N CSS.
-      const wlGroupIdx = lookupWatchlistGroup(s.callsign);
-      if (wlGroupIdx >= 0) {
-        callTd.classList.add(`wl-group-${wlGroupIdx}`);
-        const name = (watchlistGroups[wlGroupIdx] && watchlistGroups[wlGroupIdx].name) || '';
-        if (name) callTd.title = `Watchlist: ${name}`;
-      }
       if (myCallsign && s.callsign.toUpperCase() === myCallsign.toUpperCase()) {
         const cat = document.createElement('span');
         cat.textContent = '\uD83D\uDC08\u200D\u2B1B ';

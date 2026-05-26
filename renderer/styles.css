@@ -1871,34 +1871,75 @@ dialog input, dialog select {
 }
 
 /* =========================================================================
- * Watchlist Groups — colored outline around the callsign cell.
+ * Watchlist Groups — colored "box" around the WHOLE spot row when the
+ * activator's call is in one of the three user-defined groups.
  *
  * Three independent groups (e.g. local club / CW group / Discord group).
  * Each has a user-pickable color stored in settings.watchlistGroups[i].color
  * and pushed onto :root as --wl-color-0/-1/-2 at load + on every settings
- * save. The outline lives INSIDE the cell (outline-offset: -2px) so the
- * table grid stays clean, and the source's left-border row tint stays
- * visible — group membership and spot source are independent signals.
+ * save.
+ *
+ * Decoration is applied to every <td> in the row via inset box-shadows
+ * (TR borders don't render reliably across browsers under
+ * border-collapse). Top + bottom edges land on all cells; left edge on
+ * the first cell, right edge on the last cell — together that forms one
+ * continuous frame around the row. Background tint on each cell
+ * overrides the source's row tint where they overlap; the source's TR
+ * border-left still shows just outside the watchlist box, so source +
+ * group are both readable in one glance.
  * ========================================================================= */
 :root {
   --wl-color-0: #ff7066;
   --wl-color-1: #82b1ff;
   --wl-color-2: #b388ff;
 }
-.callsign-cell.wl-group-0 {
-  outline: 2px solid var(--wl-color-0);
-  outline-offset: -2px;
+tr.wl-group-0 td {
   background: color-mix(in srgb, var(--wl-color-0) 14%, transparent);
+  box-shadow: inset 0 2px 0 var(--wl-color-0), inset 0 -2px 0 var(--wl-color-0);
 }
-.callsign-cell.wl-group-1 {
-  outline: 2px solid var(--wl-color-1);
-  outline-offset: -2px;
+tr.wl-group-0 td:first-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-0),
+    inset 0 -2px 0 var(--wl-color-0),
+    inset 3px 0 0 var(--wl-color-0);
+}
+tr.wl-group-0 td:last-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-0),
+    inset 0 -2px 0 var(--wl-color-0),
+    inset -3px 0 0 var(--wl-color-0);
+}
+tr.wl-group-1 td {
   background: color-mix(in srgb, var(--wl-color-1) 14%, transparent);
+  box-shadow: inset 0 2px 0 var(--wl-color-1), inset 0 -2px 0 var(--wl-color-1);
 }
-.callsign-cell.wl-group-2 {
-  outline: 2px solid var(--wl-color-2);
-  outline-offset: -2px;
+tr.wl-group-1 td:first-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-1),
+    inset 0 -2px 0 var(--wl-color-1),
+    inset 3px 0 0 var(--wl-color-1);
+}
+tr.wl-group-1 td:last-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-1),
+    inset 0 -2px 0 var(--wl-color-1),
+    inset -3px 0 0 var(--wl-color-1);
+}
+tr.wl-group-2 td {
   background: color-mix(in srgb, var(--wl-color-2) 14%, transparent);
+  box-shadow: inset 0 2px 0 var(--wl-color-2), inset 0 -2px 0 var(--wl-color-2);
+}
+tr.wl-group-2 td:first-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-2),
+    inset 0 -2px 0 var(--wl-color-2),
+    inset 3px 0 0 var(--wl-color-2);
+}
+tr.wl-group-2 td:last-child {
+  box-shadow:
+    inset 0 2px 0 var(--wl-color-2),
+    inset 0 -2px 0 var(--wl-color-2),
+    inset -3px 0 0 var(--wl-color-2);
 }
 
 /* Settings dialog — group editor block */

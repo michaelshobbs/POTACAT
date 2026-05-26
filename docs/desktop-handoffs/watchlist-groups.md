@@ -17,11 +17,21 @@ Defaults — all three user-overridable via a color picker per group:
 | 1 | _(empty — user types e.g. "CW Group")_ | `#82b1ff` Sky |
 | 2 | _(empty — user types e.g. "Discord")_ | `#b388ff` Lavender |
 
-Decoration on desktop: a 2 px outline around the callsign cell with a 12%
-background tint of the group's color. Outline lives inside the cell
-(`outline-offset: -2px`) so the table grid stays unbroken and the existing
-source-color left-border on the row stays visible. Cat-paw / donor badges sit
-alongside, unchanged.
+Decoration on desktop: the **whole spot row** gets a 14% background tint
+of the group's color plus a 2 px–3 px frame in the full-strength group
+color (top/bottom on every cell, 3 px on the leftmost and rightmost cells)
+via inset `box-shadow` on each `<td>` — TR borders don't render reliably
+under `border-collapse`, so cell-level box-shadows form the frame
+together. The source's existing `border-left` on the row sits just
+outside the watchlist frame, so source + group are both readable in one
+glance. Cat-paw / donor badges sit alongside, unchanged.
+
+**Mobile and desktop align on row-level decoration.** Both surfaces tint
+the whole spot row in the group color rather than calling out just the
+callsign — at-a-glance scannability matters on both. The exact frame
+mechanism differs (mobile uses a 3 px left border + tinted card
+background; desktop uses inset `box-shadow` cells), but the visual
+intent is identical.
 
 ## Settings shape (the contract)
 
@@ -57,6 +67,22 @@ treat it as the three defaults above with empty `name` and empty `callsigns`.
 The desktop validates `color` against `/^#[0-9a-f]{6}$/i` before saving — if a
 malformed value somehow reaches mobile, fall back to the defaults per index.
 
+## Prerequisite: desktop change first
+
+`updateRemoteSettings()` at `main.js:4800-4852` is an explicit allowlist of
+which settings keys go to ECHOCAT clients. As shipped, `watchlistGroups` is
+not in the list, so mobile's `auth-ok.settings.watchlistGroups` arrives
+`undefined` regardless of what's persisted on disk.
+
+Add one line, matching the pattern `customCatButtons` follows:
+
+```js
+watchlistGroups: settings.watchlistGroups || null,
+```
+
+Without this, mobile builds against a contract the desktop doesn't fulfill.
+Verify on the next desktop release before mobile starts implementing.
+
 ## What mobile needs to build
 
 1. **Parse + lookup helper.** Mobile should build the same
@@ -86,22 +112,38 @@ malformed value somehow reaches mobile, fall back to the defaults per index.
    First-match-wins matches desktop behavior — important so a call in multiple
    groups picks the same color on both surfaces.
 
-2. **Apply to the spot row.** Wherever the spot table / list renders an
-   activator's callsign, look up the group index. If `>= 0`:
+2. **Apply to the spot row container.** Mobile decorates the **whole row**
+   (the spot-row card/list item), not the callsign cell. Reason: phone
+   surface area is too small for a 2 px cell outline to read at a glance.
+   Wherever `SpotRow` renders, look up the group index. If `>= 0`:
 
-   - Wrap the callsign (or its container view) in a colored 2 px border with
-     the group's color.
-   - Add a faint tint of the same color (≈ 12% alpha) as the background.
-   - Set an accessibility label / long-press tooltip showing the group's
-     `name` if non-empty (e.g. "Watchlist: My Club"). Empty name → still
-     decorate, just no tooltip.
+   - Tint the row card background with the group's color at ~12% alpha
+     so the source-tag column and the rest of the row stay readable.
+   - Add a 3 px left border in the full-strength group color along the
+     row's leading edge as a clear group flag. (The existing source
+     visual lives in the source-tag column, not as a row border — no
+     conflict.)
+   - Set the row's `accessibilityLabel` to include the group's `name`
+     when non-empty (e.g. "K3SBP, watchlist group: My Club"). Empty
+     name → still decorate, just don't add the label suffix.
 
-3. **Settings screen — UI parity.** Add three editors mirroring the desktop:
+   No long-press tooltip — RN has no built-in tooltip primitive and the
+   cost of building one isn't justified for a "what group is this?"
+   secondary signal. The accessibility label covers screen-reader users.
 
-   - Name input (text).
-   - Color picker (native iOS / Android color picker is fine — desktop uses
-     `<input type="color">`).
-   - Multi-line text area for callsigns. Accept comma / whitespace / newline.
+3. **Settings screen — three group editors.** Mobile uses a fixed color
+   palette instead of a free-form picker (RN has no built-in color picker
+   and pulling in a 3rd-party lib is unjustified for a 5-choice selection).
+   Each editor surfaces:
+
+   - **Name input** (text, 0-40 chars).
+   - **Color swatch grid** — 5 swatches per theme, see the palettes below.
+     Tap to select; the active swatch shows a thick border. If the persisted
+     hex value isn't in the palette (e.g. desktop user picked a custom
+     color via `<input type="color">`), render it as a sixth "Current"
+     swatch outside the grid so the user sees what's there but doesn't
+     have to overwrite it just to make another edit.
+   - **Multi-line text area for callsigns.** Accept comma / whitespace / newline.
    - **Import CSV** button using `expo-document-picker` (or platform
      equivalent). Read the file as text, take the first column of each row,
      validate each candidate against `/^[A-Z0-9\/]{3,15}$/i`, dedup against the
@@ -122,14 +164,59 @@ malformed value somehow reaches mobile, fall back to the defaults per index.
 
    - **Clear** button — wipes the textarea (user still has to Save).
 
+   ### Color palette (5 + 5)
+
+   Picked to satisfy three constraints: (a) distinct from each other within
+   a theme so three groups in view stay distinguishable, (b) distinct from
+   the existing source-tag colors (POTA green / SOTA orange / WWFF teal /
+   LLOTA sky / DXC magenta / RBN cyan / PSKR red / NET yellow) so a group
+   tint doesn't read as a source signal, (c) the 12% alpha tint reads
+   clearly against the theme's row card background.
+
+   The persisted `color` value is always the **full-strength hex** below.
+   The mobile renderer derives the 12% alpha tint at draw time (RN supports
+   `rgba()` color strings, so `#ff7066` becomes `rgba(255,112,102,0.12)`
+   for the background and stays full-strength for the left border).
+
+   **Light mode palette** (saturated tints that read on `#ffffff` cards):
+
+   | Slot | Name     | Hex       |
+   |------|----------|-----------|
+   | 0    | Coral    | `#ff7066` |
+   | 1    | Sky      | `#82b1ff` |
+   | 2    | Lavender | `#b388ff` |
+   | 3    | Rose     | `#ec407a` |
+   | 4    | Amber    | `#ffa726` |
+
+   **Dark mode palette** (lifted brightness so the same 12% alpha is
+   visible on `#15181d` cards — straight-luminance versions of the light
+   palette would mud out):
+
+   | Slot | Name     | Hex       |
+   |------|----------|-----------|
+   | 0    | Coral    | `#ff8a80` |
+   | 1    | Sky      | `#90caf9` |
+   | 2    | Lavender | `#ce93d8` |
+   | 3    | Rose     | `#f48fb1` |
+   | 4    | Amber    | `#ffcc80` |
+
+   Slot index is informational only — mobile stores and reads the hex,
+   matching the desktop's data model.
+
+   The defaults listed in the top "Settings shape" table (`#ff7066`,
+   `#82b1ff`, `#b388ff`) intentionally match light-mode slots 0/1/2 so a
+   fresh install lands on a sensible default set without any user picks.
+
    - **Save** flow — write the three groups back through the existing settings
      save pipe (the same one that owns `myCallsign`, `watchlist`, etc.) as
      `watchlistGroups`. Desktop merges via `{...settings, ...newSettings}`, so
      mobile partial saves are safe.
 
-4. **Live color updates.** When the user drags the color picker, update the
-   in-app CSS / style variable immediately so the spot list re-tints without
-   waiting for Save. Match desktop UX (the color picker fires on every drag).
+4. **Live swatch updates.** Tapping a swatch immediately updates the row
+   tint preview in any visible Spots list (treat swatch tap as a draft state
+   that re-renders the list without persisting). Persist on the screen's
+   normal Save flow / blur — matches the rest of mobile Settings, no
+   special "live save" plumbing needed.
 
 ## What mobile should NOT do
 
@@ -137,10 +224,10 @@ malformed value somehow reaches mobile, fall back to the defaults per index.
   legacy `watchlist` setting only (already in place). The groups are a purely
   visual signal; promoting them to push would invert user expectations.
 - **Don't trigger sounds / haptics on group match.** Same reason.
-- **Don't decorate the entire row.** Decorate the callsign cell or callsign
-  text only. The row-level decoration is reserved for the spot source (POTA /
-  SOTA / DXC / RBN / etc.). Group + source are independent signals; both
-  should be readable simultaneously.
+- **Don't override the source-tag column** when tinting the row. The source
+  badges (POTA / SOTA / DXC / etc.) need to remain readable; the row tint
+  is a soft background only, not a saturated fill. The 12% alpha guidance
+  in §2 above keeps both signals legible at once.
 
 ## Versioning
 
@@ -154,12 +241,22 @@ malformed value somehow reaches mobile, fall back to the defaults per index.
 
 ## Test checklist
 
-- [ ] Decorated callsign visible on spot list AND map / cluster popups (if the
-      map uses popups with callsigns).
-- [ ] Multiple groups configured — distinct outline colors render per call.
+- [ ] Row tint + left border visible on the main Spots list for any call in
+      a group.
+- [ ] Same row tint applied to the spot popup on MapScreen (the WebView
+      popup that opens when tapping a marker).
+- [ ] Multiple groups configured — three distinct tint colors render per
+      call across the visible list.
 - [ ] Call in two groups — picks the lower-indexed group (matches desktop).
 - [ ] CSV import dedups against existing callsigns in the same group.
-- [ ] Color picker update re-tints the visible spot list without app reload.
-- [ ] Group name shows up as the accessibility label / long-press tooltip.
-- [ ] `watchlistGroups` survives a settings round-trip (desktop save → mobile
-      read → mobile save → desktop read) with no data loss.
+- [ ] Tapping a different swatch in the Settings group editor re-tints the
+      visible Spots list without an app reload (draft state re-render).
+- [ ] Group name appears in the row's `accessibilityLabel` (verified via
+      iOS VoiceOver or Android TalkBack).
+- [ ] Out-of-palette hex from desktop (e.g. `#abcdef` set via desktop
+      free-form picker) renders correctly as a row tint AND is offered
+      as the sixth "Current" swatch in the mobile picker.
+- [ ] Invalid color value (`#zzz`, `'red'`, `null`) falls back to the
+      slot's default without crashing.
+- [ ] `watchlistGroups` survives a settings round-trip (desktop save →
+      mobile read → mobile save → desktop read) with no data loss.
