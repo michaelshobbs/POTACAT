@@ -5063,41 +5063,23 @@ function disconnectCwKeyPort() {
  * muted via the rig-popover stays muted across keying sessions.
  */
 function _maybeMuteFlexCwSidetoneForWinKeyer(wkActive) {
-  if (!settings.muteFlexCwSidetoneOnWinKeyer) {
-    sendCatLog(`[WK-mute] skip wkActive=${wkActive} — setting OFF`);
-    return;
-  }
+  if (!settings.muteFlexCwSidetoneOnWinKeyer) return;
   const flexUp = detectRigType() === 'flex' && smartSdr && smartSdr.connected;
-  if (!flexUp) {
-    sendCatLog(`[WK-mute] skip wkActive=${wkActive} — rigType=${detectRigType()} smartSdrConn=${!!(smartSdr && smartSdr.connected)}`);
-    return;
-  }
+  if (!flexUp) return;
   if (wkActive) {
-    if (_flexCwSidetoneMutedByWk) {
-      sendCatLog('[WK-mute] busy edge but already muted — skip');
-      return;
-    }
+    if (_flexCwSidetoneMutedByWk) return;
     _flexCwSidetonePreWkState = _currentCwSidetoneState;
-    try { smartSdr.setCwSidetone(false); } catch (e) {
-      sendCatLog(`[WK-mute] setCwSidetone(off) threw: ${e.message}`);
-      return;
-    }
+    try { smartSdr.setCwSidetone(false); } catch { return; }
     _currentCwSidetoneState = false;
     _flexCwSidetoneMutedByWk = true;
-    sendCatLog(`[WK-mute] MUTED Flex CW sidetone (was ${_flexCwSidetonePreWkState ? 'ON' : 'OFF'})`);
+    console.log(`[WK-mute] muted Flex CW sidetone (was ${_flexCwSidetonePreWkState ? 'on' : 'off'})`);
     broadcastRigState();
   } else {
-    if (!_flexCwSidetoneMutedByWk) {
-      sendCatLog('[WK-mute] idle edge but we did not mute — skip');
-      return;
-    }
-    try { smartSdr.setCwSidetone(_flexCwSidetonePreWkState); } catch (e) {
-      sendCatLog(`[WK-mute] setCwSidetone(restore) threw: ${e.message}`);
-      return;
-    }
+    if (!_flexCwSidetoneMutedByWk) return;
+    try { smartSdr.setCwSidetone(_flexCwSidetonePreWkState); } catch { return; }
     _currentCwSidetoneState = _flexCwSidetonePreWkState;
     _flexCwSidetoneMutedByWk = false;
-    sendCatLog(`[WK-mute] RESTORED Flex CW sidetone (back to ${_flexCwSidetonePreWkState ? 'ON' : 'OFF'})`);
+    console.log(`[WK-mute] restored Flex CW sidetone (back to ${_flexCwSidetonePreWkState ? 'on' : 'off'})`);
     broadcastRigState();
   }
 }
@@ -5153,21 +5135,19 @@ function connectWinKeyer() {
     }, 500);
   });
   winKeyer.on('busy', () => {
-    sendCatLog('[WK-event] busy');
     if (win && !win.isDestroyed()) {
       win.webContents.send('winkeyer-busy', true);
     }
     _maybeMuteFlexCwSidetoneForWinKeyer(true);
   });
   winKeyer.on('idle', () => {
-    sendCatLog('[WK-event] idle');
     if (win && !win.isDestroyed()) {
       win.webContents.send('winkeyer-busy', false);
     }
     _maybeMuteFlexCwSidetoneForWinKeyer(false);
   });
   winKeyer.on('breakin', () => {
-    sendCatLog('[WK-event] breakin');
+    console.log('[WinKeyer] Paddle breakin');
     // breakin = paddle touched mid-buffer-send; the keyer is now actively
     // emitting paddle CW. Treat as a 'busy' edge so the mute kicks in
     // even when the WK never explicitly transitions through idle->busy.
