@@ -13821,6 +13821,14 @@ const rigRfGainLabel = document.getElementById('rig-rfgain-label');
 const rigTxPower = document.getElementById('rig-txpower');
 const rigTxPowerLabel = document.getElementById('rig-txpower-label');
 const rigFilterPresets = document.getElementById('rig-filter-presets');
+// Phase-1 expanded rig modifiers (Flex 8600M underbuild fix, 2026-05-25).
+const rigPreampBtn = document.getElementById('rig-preamp-btn');
+const rigAttBtn    = document.getElementById('rig-att-btn');
+const rigCompBtn   = document.getElementById('rig-comp-btn');
+const rigNrBtn     = document.getElementById('rig-nr-btn');
+const rigAnfBtn    = document.getElementById('rig-anf-btn');
+const rigVoxBtn    = document.getElementById('rig-vox-btn');
+const rigAgcSelect = document.getElementById('rig-agc-select');
 let rigPopoverOpen = false;
 let rigCurrentCaps = {};
 let rigCurrentMode = '';
@@ -13866,6 +13874,21 @@ function rigApplyCapabilities(caps) {
   rigRfGain.closest('.rig-popover-row').style.display = caps.rfgain ? '' : 'none';
   rigTxPower.closest('.rig-popover-row').style.display = caps.txpower ? '' : 'none';
   rigFilterPresets.closest('.rig-popover-row').style.display = caps.filter ? '' : 'none';
+  // Phase-1 expanded modifiers — each button individually gated. Hide the
+  // whole modifiers row only if every modifier is unsupported (keeps the
+  // popover compact for rigs that expose none of them, like the legacy
+  // 706MkIIG entry as it was before this expansion).
+  if (rigPreampBtn) rigPreampBtn.style.display = caps.preamp ? '' : 'none';
+  if (rigAttBtn)    rigAttBtn.style.display    = caps.att    ? '' : 'none';
+  if (rigCompBtn)   rigCompBtn.style.display   = caps.comp   ? '' : 'none';
+  if (rigNrBtn)     rigNrBtn.style.display     = caps.nr     ? '' : 'none';
+  if (rigAnfBtn)    rigAnfBtn.style.display    = caps.anf    ? '' : 'none';
+  if (rigVoxBtn)    rigVoxBtn.style.display    = caps.vox    ? '' : 'none';
+  const anyModifier = caps.preamp || caps.att || caps.comp || caps.nr || caps.anf || caps.vox;
+  const modRow = document.getElementById('rig-modifiers-row');
+  if (modRow) modRow.style.display = anyModifier ? '' : 'none';
+  const agcRow = document.getElementById('rig-agc-row');
+  if (agcRow) agcRow.style.display = caps.agc ? '' : 'none';
   // Clamp TX power slider to radio's min/max
   if (caps.minPower != null) rigTxPower.min = caps.minPower;
   if (caps.maxPower != null) rigTxPower.max = caps.maxPower;
@@ -13929,6 +13952,31 @@ rigPowerOffBtn.addEventListener('click', () => {
   window.api.rigControl({ action: 'power-off' });
 });
 
+// Phase-1 modifier-button handlers. Each toggles the .active class as a
+// hint while we wait for the rig-state echo from main to confirm the new
+// state — same pattern as the existing NB button.
+function _bindModifierBtn(btn, action) {
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const newState = !btn.classList.contains('active');
+    window.api.rigControl({ action, value: newState });
+  });
+}
+_bindModifierBtn(rigPreampBtn, 'set-preamp');
+_bindModifierBtn(rigAttBtn,    'set-att');
+_bindModifierBtn(rigCompBtn,   'set-comp');
+_bindModifierBtn(rigNrBtn,     'set-nr');
+_bindModifierBtn(rigAnfBtn,    'set-anf');
+_bindModifierBtn(rigVoxBtn,    'set-vox');
+
+if (rigAgcSelect) {
+  rigAgcSelect.addEventListener('change', () => {
+    const mode = rigAgcSelect.value;
+    if (!mode) return; // ignore the "—" placeholder
+    window.api.rigControl({ action: 'set-agc', value: mode });
+  });
+}
+
 // Slider handlers
 // Throttle rig control sliders to prevent flooding serial port
 let rigSliderTimer = null;
@@ -13960,6 +14008,22 @@ window.api.onRigState((state) => {
     rigNbBtn.classList.add('active');
   } else {
     rigNbBtn.classList.remove('active');
+  }
+  // Phase-1 modifier buttons — same active-class pattern as NB. Each is
+  // independently nullable; treat undefined as "no opinion" so a partial
+  // rig-state (e.g. just an AGC change) doesn't clobber the others.
+  function _syncModBtn(btn, val) {
+    if (!btn || val == null) return;
+    if (val) btn.classList.add('active'); else btn.classList.remove('active');
+  }
+  _syncModBtn(rigPreampBtn, state.preamp);
+  _syncModBtn(rigAttBtn,    state.att);
+  _syncModBtn(rigCompBtn,   state.comp);
+  _syncModBtn(rigNrBtn,     state.nr);
+  _syncModBtn(rigAnfBtn,    state.anf);
+  _syncModBtn(rigVoxBtn,    state.vox);
+  if (rigAgcSelect && state.agc != null && rigAgcSelect.value !== state.agc) {
+    rigAgcSelect.value = state.agc || '';
   }
   // Update sliders (only if user is not actively dragging)
   if (document.activeElement !== rigRfGain && state.rfGain != null) {

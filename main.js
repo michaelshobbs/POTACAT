@@ -528,6 +528,16 @@ let _currentTxPower = 0; // 0 = unknown until radio reports actual power
 let _vfoLocked = false;  // VFO lock — blocks tune requests from spots/table/map
 let _rfGainSuppressBroadcast = 0;  // timestamp: suppress ECHOCAT echo-back until this time
 let _txPowerSuppressBroadcast = 0;
+// Phase-1 expanded rig modifiers (2026-05-25 — Flex 8600M underbuild fix).
+// All boolean toggles default to false until the user (or the rig) tells us
+// otherwise; AGC stays unset so the dropdown shows "—" rather than guessing.
+let _currentPreampState = false;
+let _currentAttState = false;
+let _currentCompState = false;
+let _currentNrState = false;
+let _currentAnfState = false;
+let _currentVoxState = false;
+let _currentAgcMode = '';
 
 // Filter preset tables for rig controls (Hz values)
 const FILTER_PRESETS = {
@@ -1001,6 +1011,16 @@ function broadcastRigState() {
     filterWidth: _currentFilterWidth,
     atuActive: _currentAtuState,
     mode: _currentMode,
+    // Phase-1 expanded modifiers — the renderer keeps these in sync so the
+    // popover toggles reflect the actual rig state instead of just the
+    // last user click.
+    preamp: _currentPreampState,
+    att: _currentAttState,
+    comp: _currentCompState,
+    nr: _currentNrState,
+    anf: _currentAnfState,
+    vox: _currentVoxState,
+    agc: _currentAgcMode,
     capabilities: caps,
   };
   if (win && !win.isDestroyed()) win.webContents.send('rig-state', state);
@@ -14234,6 +14254,74 @@ app.whenReady().then(() => {
         break;
       }
       case 'get-state': {
+        broadcastRigState();
+        break;
+      }
+      case 'set-preamp': {
+        if (flexNeedsApi) { _flexWarnOnce('Preamp requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        // Flex 6000/8000 have no discrete preamp toggle — RF gain handles
+        // it. Accept the call so the UI logic stays uniform; no-op on Flex.
+        if (cat && cat.connected && typeof cat.setPreamp === 'function') cat.setPreamp(on);
+        _currentPreampState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-att': {
+        if (flexNeedsApi) { _flexWarnOnce('Attenuator requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (cat && cat.connected && typeof cat.setAttenuator === 'function') cat.setAttenuator(on);
+        _currentAttState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-comp': {
+        if (flexNeedsApi) { _flexWarnOnce('Compressor requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (flexSdr()) smartSdr.setCompressor(0, on);
+        else if (cat && cat.connected && typeof cat.setCompressor === 'function') cat.setCompressor(on);
+        _currentCompState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-nr': {
+        if (flexNeedsApi) { _flexWarnOnce('NR requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (flexSdr()) smartSdr.setNoiseReduction(0, on);
+        else if (cat && cat.connected && typeof cat.setNoiseReduction === 'function') cat.setNoiseReduction(on);
+        _currentNrState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-anf': {
+        if (flexNeedsApi) { _flexWarnOnce('Auto-notch requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (flexSdr()) smartSdr.setAutoNotch(0, on);
+        else if (cat && cat.connected && typeof cat.setAutoNotch === 'function') cat.setAutoNotch(on);
+        _currentAnfState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-vox': {
+        if (flexNeedsApi) { _flexWarnOnce('VOX requires SmartSDR API — not connected'); break; }
+        const on = !!data.value;
+        if (flexSdr()) smartSdr.setVox(on);
+        else if (cat && cat.connected && typeof cat.setVox === 'function') cat.setVox(on);
+        _currentVoxState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-agc': {
+        if (flexNeedsApi) { _flexWarnOnce('AGC requires SmartSDR API — not connected'); break; }
+        const mode = String(data.value || '').toLowerCase();
+        if (!['off', 'fast', 'med', 'slow'].includes(mode)) break;
+        if (flexSdr()) smartSdr.setAgc(0, mode);
+        else if (cat && cat.connected && typeof cat.setAgc === 'function') {
+          // Older Icom (706/7100/7200/9100) supports fast/slow only; the
+          // codec silently ignores 'med' and 'off' on those rigs.
+          cat.setAgc(mode);
+        }
+        _currentAgcMode = mode;
         broadcastRigState();
         break;
       }
