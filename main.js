@@ -4040,6 +4040,15 @@ function connectSmartSdr() {
   smartSdr.on('connected', () => {
     _sdrErrorLogged = false;
     sendCatLog('SmartSDR API connected (port 4992) — rig controls active');
+    // Cleanup for stale slice audio_mute=1 that an earlier experimental
+    // build (since reverted) wrote to the radio. The Flex's band
+    // persistence retains the flag across POTACAT crashes and reboots,
+    // and `audio_mute` silences DAX too — so users who hit that build
+    // would otherwise have a silent DAX stream forever until something
+    // clears it. Send `audio_mute=0` once after connect; idempotent
+    // when already 0. Slice 0 only — that's the only slice the
+    // experimental code ever touched. (K3SBP 2026-05-27.)
+    setTimeout(() => smartSdr._send('slice set 0 audio_mute=0'), 200);
     // DAX-free audio path lives on a SEPARATE TCP connection (non-GUI
     // client) — see startSmartSdrAudio() below. The primary client
     // here is GUI-bound for CW + spots and can't subscribe to audio.
