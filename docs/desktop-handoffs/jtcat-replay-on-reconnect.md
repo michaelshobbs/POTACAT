@@ -1,8 +1,26 @@
 # JTCAT replay-on-reconnect
 
-Status: open
+Status: shipped (2026-05-26)
 Filed: 2026-05-06
 Repo for changes: d:/projects/potacat-dev
+
+## Resolution
+
+The cached-state replay was wired in commits leading up to v1.6.0:
+
+- `lib/remote-server.js:1448-1453` — auth handler sends `jtcat-status`,
+  `jtcat-qso-state`, `jtcat-tx-status`, and a `jtcat-decode-batch` with
+  the cached buffer (cap: 10 cycles) immediately after auth-ok.
+- `lib/remote-server.js:2531-2535` — `broadcastJtcatDecode` populates
+  the buffer on every cycle, shifting at >10 entries.
+- `main.js:5842` — `jtcat-hold-tx-state` is pushed on `client-connected`.
+- `main.js:5829-5838` — `jtcat-tune-state` and `jtcat-auto-seq-state`
+  also pushed on `client-connected`.
+
+Final follow-up on 2026-05-26: `broadcastJtcatStatus` now clears the
+decode buffer when the engine stops, so a phone reconnecting long after
+a previous JTCAT session ended doesn't see stale decodes replayed as if
+fresh.
 
 ## Context
 

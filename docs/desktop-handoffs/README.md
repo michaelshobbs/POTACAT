@@ -13,7 +13,6 @@ This folder is the mirror of `docs/ios-handoffs/`. The iOS app at `D:\Projects\p
 
 ## Open
 
-- [jtcat-replay-on-reconnect.md](jtcat-replay-on-reconnect.md) — Replay the last 5–10 cycles of `jtcat-decode-batch` on every client reconnect so iOS users coming back from a screen-off don't see 15s of empty UI. **HIGH priority.**
 - [jtcat-auto-cq-both-slots.md](jtcat-auto-cq-both-slots.md) — Auto-CQ transmits on both even and odd slots back-to-back without ever listening for replies. Should alternate TX/RX in the standard FT8 pattern. **HIGH priority — blocks usable auto-CQ.**
 - [relay-call-incoming-push.md](relay-call-incoming-push.md) — Desktop calls Cloudflare Worker `/push` endpoint when a CQ is heard / FT8 decode of operator's call lands / operator pings phone. Wakes iOS from suspend via PushKit. **HIGH priority — required for Phase 2D end-to-end.**
 - [pd-mode-sstv-encoder.md](pd-mode-sstv-encoder.md) — Accept PD90/120/160/180/240 mode strings in `sstv-photo` and route to a PD encoder. iOS UI advertises these modes already.
@@ -26,4 +25,4 @@ This folder is the mirror of `docs/ios-handoffs/`. The iOS app at `D:\Projects\p
 
 ## Shipped
 
-- (none yet)
+- [jtcat-replay-on-reconnect.md](jtcat-replay-on-reconnect.md) — Cached-state replay on auth (decode buffer + status snapshots). Buffer now clears on engine stop so stale decodes don't reappear on a later reconnect.
