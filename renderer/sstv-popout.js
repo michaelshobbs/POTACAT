@@ -1112,6 +1112,33 @@ window.api.onSstvTxAudio(async (data) => {
   progressBar.style.width = '0%';
   progressBar.classList.add('tx');
 
+  // Flex Direct: main is streaming the audio to the radio over dax_tx; we
+  // must NOT play it through Web Audio (no DAX TX device exists, and it
+  // would just blast the PC speakers). Show the progress bar for the
+  // duration, then reset UI. PTT is owned by main on this path, so don't
+  // call sstvTxComplete here. K3SBP 2026-05-28.
+  if (data && data.daxTx) {
+    const durationSec = data.durationSec || 0;
+    statusBar.textContent = 'Transmitting ' + modeSelect.value + ' via Flex Direct... ' + durationSec.toFixed(0) + 's';
+    const startTime = Date.now();
+    const iv = setInterval(() => {
+      const pct = Math.min(100, ((Date.now() - startTime) / 1000 / durationSec) * 100);
+      progressBar.style.width = pct + '%';
+      if (pct >= 100) clearInterval(iv);
+    }, 200);
+    setTimeout(() => {
+      clearInterval(iv);
+      progressBar.style.width = '100%';
+      isTx = false;
+      txBtn.textContent = replyImage ? 'REPLY' : 'TRANSMIT';
+      txBtn.classList.remove('transmitting');
+      progressBar.classList.remove('tx');
+      setTimeout(() => { progressBar.style.width = '0%'; }, 1000);
+      statusBar.textContent = 'TX complete';
+    }, (durationSec + 1) * 1000);
+    return;
+  }
+
   const samplesArray = data.samples || data;
   const gainLevel = (txGainSlider.value / 100) || 0.5;
 

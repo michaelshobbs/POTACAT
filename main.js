@@ -13341,10 +13341,34 @@ app.whenReady().then(() => {
         }
       }
 
-      // Send audio to popout for playback after PTT settles (extra delay if popout just opened)
+      // Flex Direct (SmartSDR Direct): there's no Windows DAX TX device for
+      // the pop-out's Web Audio to play into, so the radio would key but
+      // transmit silence. Route the encoded SSTV audio to the radio over
+      // VITA-49 dax_tx instead — the same path FT8/voice use. The pop-out
+      // still shows the TX progress bar but does NOT play audio (daxTx flag).
+      // K3SBP 2026-05-28.
+      const useDaxTx = settings.audioSource === 'smartsdr' && smartSdrAudio && smartSdrAudio.txReady;
       const delay = (!sstvPopoutWin || sstvPopoutWin.isDestroyed()) ? 1500 : 200;
       setTimeout(() => {
-        if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
+        if (useDaxTx) {
+          // Downsample 48 kHz SSTV audio → 12 kHz mono (decimate by 4 with a
+          // box average — SSTV tones are ≤2300 Hz, far below 6 kHz Nyquist).
+          // sendTxAudio() upsamples 12 k → 24 k stereo for the dax_tx wire.
+          // offsetMs=500 cancels sendTxAudio's FT8 slot lead-in silence.
+          const inLen = outSamples.length;
+          const dn = new Float32Array(Math.floor(inLen / 4));
+          for (let i = 0; i < dn.length; i++) {
+            const j = i * 4;
+            dn[i] = (outSamples[j] + outSamples[j + 1] + outSamples[j + 2] + outSamples[j + 3]) * 0.25;
+          }
+          sendCatLog(`[SSTV] TX via Flex Direct dax_tx — ${outDurSec.toFixed(0)}s (${dn.length} samples @12k)`);
+          if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
+            sstvPopoutWin.webContents.send('sstv-tx-audio', { samples: [], durationSec: outDurSec, daxTx: true });
+          }
+          smartSdrAudio.sendTxAudio(dn, 500)
+            .then(() => { handleRemotePtt(false); sendCatLog('[SSTV] TX complete (dax_tx)'); })
+            .catch((err) => { handleRemotePtt(false); sendCatLog(`[SSTV] dax_tx send failed: ${err.message}`); });
+        } else if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
           sstvPopoutWin.webContents.send('sstv-tx-audio', {
             samples: Array.from(outSamples),
             durationSec: outDurSec,
