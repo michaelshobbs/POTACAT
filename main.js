@@ -324,6 +324,7 @@ let sstvEngine = null;       // SSTV encode/decode engine (single-slice)
 // stops accumulating doomed frames. Recovery: stop+start the SSTV view,
 // or restart POTACAT.
 let _sstvFeedPaused = false;
+let _sstvFeedDiagAt = 0; // throttle for the SSTV audio-feed amplitude diagnostic
 
 // =====================================================================
 // Bounded audio IPC fan-out — see audioSafeSend below.
@@ -4222,6 +4223,25 @@ function startSmartSdrAudio() {
       // both. Without this the waterfall is blank on SmartSDR Direct
       // (Windows DAX RX device is bypassed and silent). K3SBP 2026-05-15.
       const srcSstv = (pcm instanceof Float32Array) ? pcm : new Float32Array(pcm);
+      // DIAGNOSTIC (K3SBP SSTV-decode investigation 2026-05-28): log the
+      // peak/RMS of the audio actually handed to the SSTV decoder, every
+      // ~3 s. If peak is ~0 the decoder is being fed silence (DAX/slice
+      // routing problem); if peak is healthy (~0.05+) the audio is fine
+      // and the problem is downstream in the decoder/sync/gate. Remove
+      // once the root cause is found.
+      {
+        const now = Date.now();
+        if (now - _sstvFeedDiagAt > 3000) {
+          _sstvFeedDiagAt = now;
+          let peak = 0, sumSq = 0;
+          for (let i = 0; i < srcSstv.length; i++) {
+            const a = Math.abs(srcSstv[i]); if (a > peak) peak = a;
+            sumSq += srcSstv[i] * srcSstv[i];
+          }
+          const rms = srcSstv.length ? Math.sqrt(sumSq / srcSstv.length) : 0;
+          sendCatLog(`[SSTV-diag] fed peak=${peak.toFixed(4)} rms=${rms.toFixed(4)} n=${srcSstv.length} rate=24k→48k`);
+        }
+      }
       const upsampled = new Float32Array(srcSstv.length * 2);
       for (let i = 0; i < srcSstv.length; i++) {
         const s0 = srcSstv[i];
