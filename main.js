@@ -13455,6 +13455,14 @@ app.whenReady().then(() => {
       if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
         sstvPopoutWin.webContents.send('sstv-rx-debug', data);
       }
+      // DIAGNOSTIC (K3SBP SSTV-decode 2026-05-28): surface the quality-gate
+      // discard reason to the CAT log too, so a discarded REAL decode shows
+      // its sync%/spread without digging into the popout's debug pane. This
+      // is the number that decides whether the 5/21 gate is rejecting good
+      // decodes. Remove once root cause is found.
+      if (data && data.detail && /discard/i.test(data.detail)) {
+        sendCatLog('[SSTV-diag] ' + data.detail);
+      }
     });
 
     // Per-frame error rate is high enough to flood the CAT log with the same
