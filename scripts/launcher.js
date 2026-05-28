@@ -91,12 +91,17 @@ function getOtherPids() {
       const out = execSync(`tasklist /FI "IMAGENAME eq ${PROCESS_NAME}" /FO CSV /NH`, {
         encoding: 'utf8', timeout: 5000, windowsHide: true,
       });
+      // Parse line-by-line, anchored to the first two CSV fields
+      // ("IMAGE","PID",...). The old global regex /"[^"]*","(\d+)"/g
+      // also matched later quoted-number fields like the session column
+      // ("Console","1") and returned bogus PID 1 — which made isRunning()
+      // permanently true so "start" became a silent no-op. K3SBP 2026-05-28.
       const pids = [];
-      const re = /"[^"]*","(\d+)"/g;
-      let m;
-      while ((m = re.exec(out)) !== null) {
+      for (const line of out.trim().split(/\r?\n/)) {
+        const m = line.match(/^"[^"]*","(\d+)"/);
+        if (!m) continue;
         const pid = parseInt(m[1], 10);
-        if (pid !== MY_PID) pids.push(pid);
+        if (pid && pid !== MY_PID) pids.push(pid);
       }
       return pids;
     } else {
@@ -280,6 +285,28 @@ function derInt(b) { if (b[0] & 0x80) b = Buffer.concat([Buffer.from([0x00]), b]
 function derExplicit(tag, c) { return Buffer.concat([Buffer.from([0xa0 | tag]), derLen(c.length), c]); }
 function derOctetString(b) { return Buffer.concat([Buffer.from([0x04]), derLen(b.length), b]); }
 function derGeneralizedTime(d) { const s = d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + 'Z'; const b = Buffer.from(s, 'ascii'); return Buffer.concat([Buffer.from([0x18]), derLen(b.length), b]); }
+
+// Prefer the Tailscale-issued Let's Encrypt cert that ECHOCAT already
+// serves on :7300. iOS trusts it natively (no pinning), so the phone can
+// reach the launcher over HTTPS — which it must, since App Transport
+// Security blocks the plaintext-HTTP launcher and iOS rejects our own
+// self-signed cert. Same files, same CONFIG_DIR as ECHOCAT writes them.
+// Cert covers the Tailscale MagicDNS hostname, so the phone must address
+// the launcher as https://<that-hostname>:7301. K3SBP 2026-05-28.
+function loadTailscaleCert() {
+  try {
+    const certPath = path.join(CONFIG_DIR, 'tailscale-cert.pem');
+    const keyPath = path.join(CONFIG_DIR, 'tailscale-cert.key');
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      const cert = fs.readFileSync(certPath, 'utf8');
+      const key = fs.readFileSync(keyPath, 'utf8');
+      if (cert.includes('BEGIN CERTIFICATE') && /PRIVATE KEY/.test(key)) {
+        return { cert, key };
+      }
+    }
+  } catch {}
+  return null;
+}
 
 function generateTlsCert() {
   const certPath = path.join(CONFIG_DIR, 'launcher-cert.pem');
@@ -582,15 +609,27 @@ if (!passphrase) {
 }
 
 let server;
-if (config.https) {
+let _usingHttps = false;
+const _tsCert = loadTailscaleCert();
+if (_tsCert) {
+  // Trusted Tailscale cert available — always prefer it. This is the only
+  // HTTPS mode iOS can actually reach (self-signed is rejected, plaintext
+  // HTTP is blocked by ATS).
+  server = https.createServer({ cert: _tsCert.cert, key: _tsCert.key }, handleRequest);
+  _usingHttps = true;
+  console.log('[Launcher] Serving HTTPS with the Tailscale cert (iOS-trusted)');
+} else if (config.https) {
   const tls = generateTlsCert();
   if (tls) {
     server = https.createServer({ cert: tls.cert, key: tls.key }, handleRequest);
+    _usingHttps = true;
+    console.log('[Launcher] No Tailscale cert — serving HTTPS with a self-signed cert (browser-only; iOS will reject)');
   } else {
     console.warn('[Launcher] TLS cert generation failed, falling back to HTTP');
     server = http.createServer(handleRequest);
   }
 } else {
+  console.log('[Launcher] No Tailscale cert and https=false — serving plaintext HTTP (LAN/browser only; iOS ATS will block)');
   server = http.createServer(handleRequest);
 }
 
@@ -605,7 +644,7 @@ server.on('error', (err) => {
 });
 
 server.listen(config.port, '0.0.0.0', () => {
-  const proto = config.https ? 'https' : 'http';
+  const proto = _usingHttps ? 'https' : 'http';
   const ips = getLocalIPs();
   console.log(`[Launcher] POTACAT Remote Launcher running on port ${config.port}`);
   console.log(`[Launcher] Passphrase: your callsign (${passphrase})`);
