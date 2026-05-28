@@ -325,6 +325,25 @@ let sstvEngine = null;       // SSTV encode/decode engine (single-slice)
 // or restart POTACAT.
 let _sstvFeedPaused = false;
 let _sstvFeedDiagAt = 0; // throttle for the SSTV audio-feed amplitude diagnostic
+// SSTV-decode WAV capture diagnostic (K3SBP 2026-05-28) — see audio-frame.
+let _sstvWavChunks = [];
+let _sstvWavSamples = 0;
+let _sstvWavDone = false;
+// Encode mono Float32 [-1,1] samples to a 16-bit PCM WAV Buffer.
+function _encodeWavMono16(samples, sampleRate) {
+  const n = samples.length;
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) {
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    buf.writeInt16LE(Math.round(s * 32767), 44 + i * 2);
+  }
+  return buf;
+}
 
 // =====================================================================
 // Bounded audio IPC fan-out — see audioSafeSend below.
@@ -4223,23 +4242,28 @@ function startSmartSdrAudio() {
       // both. Without this the waterfall is blank on SmartSDR Direct
       // (Windows DAX RX device is bypassed and silent). K3SBP 2026-05-15.
       const srcSstv = (pcm instanceof Float32Array) ? pcm : new Float32Array(pcm);
-      // DIAGNOSTIC (K3SBP SSTV-decode investigation 2026-05-28): log the
-      // peak/RMS of the audio actually handed to the SSTV decoder, every
-      // ~3 s. If peak is ~0 the decoder is being fed silence (DAX/slice
-      // routing problem); if peak is healthy (~0.05+) the audio is fine
-      // and the problem is downstream in the decoder/sync/gate. Remove
-      // once the root cause is found.
-      {
-        const now = Date.now();
-        if (now - _sstvFeedDiagAt > 3000) {
-          _sstvFeedDiagAt = now;
-          let peak = 0, sumSq = 0;
-          for (let i = 0; i < srcSstv.length; i++) {
-            const a = Math.abs(srcSstv[i]); if (a > peak) peak = a;
-            sumSq += srcSstv[i] * srcSstv[i];
+      // DIAGNOSTIC (K3SBP SSTV-decode 2026-05-28): capture the raw 24 kHz
+      // mono audio fed to the decoder to a WAV so it can be replayed
+      // through the decoder offline with full instrumentation. Records a
+      // rolling 90 s window; writes when ~90 s captured, then stops. This
+      // gives us the EXACT real-world audio to root-cause the garbage
+      // decode instead of guessing. Remove once fixed.
+      if (!_sstvWavDone) {
+        _sstvWavChunks.push(Float32Array.from(srcSstv));
+        _sstvWavSamples += srcSstv.length;
+        if (_sstvWavSamples >= 24000 * 90) {
+          _sstvWavDone = true;
+          try {
+            const all = new Float32Array(_sstvWavSamples);
+            let off = 0;
+            for (const c of _sstvWavChunks) { all.set(c, off); off += c.length; }
+            _sstvWavChunks = [];
+            const wavPath = path.join(app.getPath('userData'), 'sstv-debug-capture.wav');
+            fs.writeFileSync(wavPath, _encodeWavMono16(all, 24000));
+            sendCatLog(`[SSTV-diag] Wrote ${(_sstvWavSamples/24000).toFixed(0)}s of raw 24k decoder audio to ${wavPath}`);
+          } catch (e) {
+            sendCatLog('[SSTV-diag] WAV capture failed: ' + e.message);
           }
-          const rms = srcSstv.length ? Math.sqrt(sumSq / srcSstv.length) : 0;
-          sendCatLog(`[SSTV-diag] fed peak=${peak.toFixed(4)} rms=${rms.toFixed(4)} n=${srcSstv.length} rate=24k→48k`);
         }
       }
       const upsampled = new Float32Array(srcSstv.length * 2);
