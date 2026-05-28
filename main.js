@@ -16528,6 +16528,15 @@ app.whenReady().then(() => {
   let _daxTxLastPeakReport = 0;
   ipcMain.on('dax-tx-chunk', (_e, buf) => {
     if (!smartSdrAudio || !smartSdrAudio.txReady) return;
+    // Only stream the phone's mic to the radio's dax_tx WHILE transmitting.
+    // The renderer's dax_tx tap runs continuously once the iOS app's WebRTC
+    // audio is connected, so without this gate POTACAT pumps ~188 silent
+    // VITA-49 TX packets/sec to the radio during RX — wasteful, and it grew
+    // main-process native memory until the app OOM'd at ~1.7 GB after ~50
+    // min on an idle ECHOCAT listen. (oom-flex-audio.md root cause, K3SBP
+    // 2026-05-28.) Voice TX from the phone sets _remoteTxState via
+    // handleRemotePtt, so real transmit audio still flows.
+    if (!_isEffectivelyTransmitting()) return;
     let samples;
     if (buf instanceof Float32Array) samples = buf;
     else if (ArrayBuffer.isView(buf) || buf instanceof ArrayBuffer) samples = new Float32Array(buf);

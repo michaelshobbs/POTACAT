@@ -208,7 +208,13 @@ async function startDaxTxTap(stream, eqConfig) {
   _daxTxSource = _daxTxCtx.createMediaStreamSource(stream);
   _daxTxNode = new AudioWorkletNode(_daxTxCtx, 'dax-tx-processor');
   _daxTxNode.port.onmessage = (ev) => {
-    if (ev.data) window.api.daxTxChunk(ev.data);
+    // Only forward the phone mic to the radio's dax_tx WHILE transmitting.
+    // kiwiTxMuted tracks the remote-tx-state broadcast (true during any TX).
+    // Without this gate the worklet pumps mic audio to dax_tx ~188×/s during
+    // RX — needless IPC + radio TX-stream churn that grew memory until the
+    // app OOM'd on a long idle ECHOCAT listen. (oom-flex-audio.md, K3SBP
+    // 2026-05-28.) Main also drops non-TX chunks defensively.
+    if (ev.data && kiwiTxMuted) window.api.daxTxChunk(ev.data);
   };
   // Remember the requested EQ state so live updates have something to
   // reconfigure on top of, even when the user later flips enabled off.
