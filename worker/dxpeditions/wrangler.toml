@@ -1,0 +1,19 @@
+name = "potacat-dxpeditions"
+main = "index.js"
+compatibility_date = "2024-01-01"
+account_id = "3dc9c47e0ae659e8eeed97bc7f6eeaf4"
+workers_dev = true
+
+route = { pattern = "dxpeditions.potacat.com/*", zone_name = "potacat.com" }
+
+# Create the KV namespace and paste its id here:
+#   wrangler kv:namespace create DXPEDITIONS
+# (preview namespace optional — fine to share the same id locally)
+kv_namespaces = [
+  { binding = "DXPEDITIONS", id = "REPLACE_WITH_KV_NAMESPACE_ID" }
+]
+
+# Refresh four times a day. DX-World's RSS updates a few times per day
+# at most, so 6h cadence is plenty and stays well under any rate limits.
+[triggers]
+crons = ["0 */6 * * *"]

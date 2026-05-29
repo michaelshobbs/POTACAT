@@ -1,0 +1,95 @@
+# potacat-dxpeditions
+
+Cloudflare Worker that aggregates active and upcoming DXpeditions from
+public community sources and serves a single canonical feed. POTACAT
+desktop subscribes to this feed so users get auto-highlighted callsigns
+for active operations without having to maintain the list themselves.
+
+## v1 sources
+
+- **DX-World RSS** (`https://dx-world.net/feed/`)
+
+Future candidates: DXNews.com RSS, ARRL Special Event calendar. Add by
+extending the cron handler with another normalize() call.
+
+## Endpoints
+
+| Path | Purpose |
+|---|---|
+| `GET /feeds/dxpeditions.xml` | Public XML feed (RSS-reader friendly). |
+| `GET /feeds/dxpeditions.json` | Same data, JSON. Desktop client uses this. |
+| `GET /healthz` | `{ ok, schemaVersion, lastFetchedAt, generatedAt, count, lastError }` for monitoring. |
+
+CORS is wide-open (`*`) — output is public DXpedition info.
+
+## Schema (v1)
+
+```jsonc
+{
+  "version": "1",
+  "generated": "<ISO 8601>",
+  "count": <int>,
+  "records": [
+    {
+      "call": "FT4WC",                     // primary callsign (always uppercase)
+      "title": "FT4WC – Crozet Island …",  // human-readable headline from the source
+      "link": "https://dx-world.net/…",    // source story URL
+      "publishedAt": "<ISO 8601>",         // source's pubDate, or first-seen if missing
+      "firstSeen": <epoch ms>,             // when this worker first picked it up
+      "source": "dx-world"
+    },
+    …
+  ]
+}
+```
+
+Records are sorted newest-firstSeen first. Records older than
+**60 days** since firstSeen are dropped on the next cron run.
+
+XML is a direct projection of the JSON; the schema version attribute
+matches.
+
+## Deploying
+
+```sh
+cd worker/dxpeditions
+
+# One-time: create KV namespace, then paste its `id` into wrangler.toml
+wrangler kv:namespace create DXPEDITIONS
+
+# Deploy
+wrangler deploy
+```
+
+The route binding (`dxpeditions.potacat.com/*`) assumes the apex zone
+`potacat.com` already exists in your Cloudflare account.
+
+## Operating
+
+- Cron fires `0 */6 * * *` (4×/day, UTC).
+- The HTTP handler **always** reads from KV — it never blocks on a
+  live fetch. If a cron run fails (DX-World down, parse error, etc.),
+  the previous payload keeps serving and `/healthz` exposes the error.
+- KV writes are tiny (a few KB) and infrequent — well inside the free
+  tier.
+
+## Manual smoke test (no deploy)
+
+After updating, run `node --check index.js` for a syntax pass. The
+parser is regex-based and has no external deps, so a Node script that
+calls `fetchDxWorld()` and prints `normalize(…)` is enough to validate
+new RSS quirks before redeploy.
+
+## Client-side TODO (POTACAT desktop)
+
+When the worker is live:
+
+1. Add `enableCommunityDxpeditions` setting (default false).
+2. Settings → Watchlist tab: toggle + "Last refreshed: …" / Refresh button.
+3. Add `main.js` poller (every 12h, on enable, on explicit Refresh) that
+   `GET`s `/feeds/dxpeditions.json` and stores the parsed records in
+   `settings.communityDxpeditions = { fetchedAt, version, records }`.
+4. In `renderer/app.js`, extend `rebuildWatchlistGroupLookup()` (or a
+   sibling function) so community records appear as a virtual watchlist
+   group — own color, 🌐 emoji, "from DX-World" tooltip. Users can't
+   edit it; they can only enable/disable the whole feed.
