@@ -14189,6 +14189,21 @@ const rigMonLevel      = document.getElementById('rig-monlevel');
 const rigMonLevelLabel = document.getElementById('rig-monlevel-label');
 const rigRitBtn        = document.getElementById('rig-rit-btn');
 const rigCwStBtn       = document.getElementById('rig-cwst-btn');
+// FTX-1-class extended controls.
+const rigMicGain          = document.getElementById('rig-micgain');
+const rigMicGainLabel     = document.getElementById('rig-micgain-label');
+const rigCompLevel        = document.getElementById('rig-complevel');
+const rigCompLevelLabel   = document.getElementById('rig-complevel-label');
+const rigDnrLevel         = document.getElementById('rig-dnrlevel');
+const rigDnrLevelLabel    = document.getElementById('rig-dnrlevel-label');
+const rigClarRxBtn        = document.getElementById('rig-clarrx-btn');
+const rigClarTxBtn        = document.getElementById('rig-clartx-btn');
+const rigClarOffset       = document.getElementById('rig-claroffset');
+const rigClarOffsetApply  = document.getElementById('rig-claroffset-apply');
+const rigBreakInBtn       = document.getElementById('rig-breakin-btn');
+const rigBreakInDelaySel  = document.getElementById('rig-breakin-delay-select');
+const rigPreampTargetSel  = document.getElementById('rig-preamp-target-select');
+const rigPreampLevelSel   = document.getElementById('rig-preamp-level-select');
 let rigPopoverOpen = false;
 let rigCurrentCaps = {};
 let rigCurrentMode = '';
@@ -14266,6 +14281,20 @@ function rigApplyCapabilities(caps) {
   if (rigRitBtn)   rigRitBtn.style.display   = caps.rit         ? '' : 'none';
   if (rigCwStBtn)  rigCwStBtn.style.display  = caps.cwSidetone  ? '' : 'none';
   setRowDisplay('rig-mon-row', !!(caps.mon || caps.rit || caps.cwSidetone));
+  // FTX-1-class advanced controls — each row hidden unless the active rig
+  // model declares the cap. Non-Yaesu rigs get nothing here; FTX-1 gets
+  // all of them; other Yaesus (FT-891, FTDX-10) inherit on a per-cap basis
+  // if/when their model entries opt in.
+  setRowDisplay('rig-micgain-row',       !!caps.micGain);
+  setRowDisplay('rig-complevel-row',     !!caps.compLevel);
+  setRowDisplay('rig-dnrlevel-row',      !!caps.dnrLevel);
+  setRowDisplay('rig-clar-row',          !!(caps.clarRx || caps.clarTx));
+  if (rigClarRxBtn) rigClarRxBtn.style.display = caps.clarRx ? '' : 'none';
+  if (rigClarTxBtn) rigClarTxBtn.style.display = caps.clarTx ? '' : 'none';
+  setRowDisplay('rig-claroffset-row',    !!caps.clarOffset);
+  setRowDisplay('rig-breakin-row',       !!caps.breakIn);
+  setRowDisplay('rig-breakindelay-row',  !!caps.breakInDelay);
+  setRowDisplay('rig-preamp-target-row', !!caps.preampTarget);
   // Clamp TX power slider to radio's min/max
   if (caps.minPower != null) rigTxPower.min = caps.minPower;
   if (caps.maxPower != null) rigTxPower.max = caps.maxPower;
@@ -14372,6 +14401,50 @@ _bindLevelSlider(rigMonLevel, rigMonLevelLabel, 'set-mon-level', '');
 _bindModifierBtn(rigMonBtn, 'set-mon');
 _bindModifierBtn(rigRitBtn, 'set-rit');
 _bindModifierBtn(rigCwStBtn, 'set-cw-sidetone');
+// FTX-1-class slider bindings.
+_bindLevelSlider(rigMicGain,   rigMicGainLabel,   'set-mic-gain',   '');
+_bindLevelSlider(rigCompLevel, rigCompLevelLabel, 'set-comp-level', '');
+_bindLevelSlider(rigDnrLevel,  rigDnrLevelLabel,  'set-dnr-level',  '');
+_bindModifierBtn(rigClarRxBtn,  'set-clar-rx');
+_bindModifierBtn(rigClarTxBtn,  'set-clar-tx');
+_bindModifierBtn(rigBreakInBtn, 'set-break-in');
+// CLAR offset uses a numeric input + explicit Set button (no live updates —
+// users tend to scrub and we don't want the radio's clarifier to follow
+// every digit edit). Pressing Enter also commits.
+if (rigClarOffsetApply) {
+  rigClarOffsetApply.addEventListener('click', () => {
+    const hz = parseInt(rigClarOffset.value, 10) || 0;
+    window.api.rigControl({ action: 'set-clar-offset', value: hz });
+  });
+}
+if (rigClarOffset) {
+  rigClarOffset.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const hz = parseInt(rigClarOffset.value, 10) || 0;
+      window.api.rigControl({ action: 'set-clar-offset', value: hz });
+    }
+  });
+}
+if (rigBreakInDelaySel) {
+  rigBreakInDelaySel.addEventListener('change', () => {
+    const ms = parseInt(rigBreakInDelaySel.value, 10) || 100;
+    window.api.rigControl({ action: 'set-break-in-delay', value: ms });
+  });
+}
+// Preamp target + level: re-send the combined command on either change so
+// the radio always sees a coherent (target, level) pair.
+function _sendPreampTarget() {
+  const target = (rigPreampTargetSel && rigPreampTargetSel.value) || 'hf50';
+  const level = parseInt((rigPreampLevelSel && rigPreampLevelSel.value) || '0', 10);
+  // AMP2 is only valid on HF/50 — clamp away on VHF/UHF rather than
+  // silently sending an out-of-range value.
+  const clampedLevel = (target !== 'hf50' && level > 1) ? 1 : level;
+  if (rigPreampLevelSel && clampedLevel !== level) rigPreampLevelSel.value = String(clampedLevel);
+  window.api.rigControl({ action: 'set-preamp-target', value: { target, level: clampedLevel } });
+}
+if (rigPreampTargetSel) rigPreampTargetSel.addEventListener('change', _sendPreampTarget);
+if (rigPreampLevelSel)  rigPreampLevelSel.addEventListener('change', _sendPreampTarget);
 
 // Slider handlers
 // Throttle rig control sliders to prevent flooding serial port
@@ -14436,6 +14509,33 @@ window.api.onRigState((state) => {
   _syncLevel(rigNbLevel,  rigNbLevelLabel,  state.nbLevel,  '');
   _syncLevel(rigVoxLevel, rigVoxLevelLabel, state.voxLevel, '');
   _syncLevel(rigMonLevel, rigMonLevelLabel, state.monLevel, '');
+  // FTX-1-class advanced controls — same "don't clobber while dragging" guard.
+  _syncLevel(rigMicGain,   rigMicGainLabel,   state.micGain,   '');
+  _syncLevel(rigCompLevel, rigCompLevelLabel, state.compLevel, '');
+  _syncLevel(rigDnrLevel,  rigDnrLevelLabel,  state.dnrLevel,  '');
+  _syncModBtn(rigClarRxBtn,  state.clarRx);
+  _syncModBtn(rigClarTxBtn,  state.clarTx);
+  _syncModBtn(rigBreakInBtn, state.breakIn);
+  if (rigClarOffset && state.clarOffset != null && document.activeElement !== rigClarOffset) {
+    rigClarOffset.value = state.clarOffset;
+  }
+  if (rigBreakInDelaySel && state.breakInDelay != null && document.activeElement !== rigBreakInDelaySel) {
+    // Snap to nearest available option so the dropdown reflects the
+    // coded value the radio actually accepted (radio quantizes via SD).
+    const opts = Array.from(rigBreakInDelaySel.options).map(o => parseInt(o.value, 10));
+    let best = opts[0], bestDist = Infinity;
+    for (const v of opts) {
+      const d = Math.abs(v - state.breakInDelay);
+      if (d < bestDist) { bestDist = d; best = v; }
+    }
+    rigBreakInDelaySel.value = String(best);
+  }
+  if (rigPreampTargetSel && state.preampTarget != null && document.activeElement !== rigPreampTargetSel) {
+    rigPreampTargetSel.value = state.preampTarget;
+  }
+  if (rigPreampLevelSel && state.preampLevel != null && document.activeElement !== rigPreampLevelSel) {
+    rigPreampLevelSel.value = String(state.preampLevel);
+  }
   // Update sliders (only if user is not actively dragging)
   if (document.activeElement !== rigRfGain && state.rfGain != null) {
     rigRfGain.value = state.rfGain;

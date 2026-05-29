@@ -545,6 +545,17 @@ let _currentVoxLevel = 0;
 let _currentMonState = false;
 let _currentMonLevel = 0;
 let _currentRitState = false;
+// FTX-1 extended modifiers (rig-popover advanced controls).
+let _currentMicGain = 0;
+let _currentCompLevel = 0;
+let _currentDnrLevel = 0;
+let _currentClarRxState = false;
+let _currentClarTxState = false;
+let _currentClarOffset = 0;
+let _currentBreakInState = false;
+let _currentBreakInDelay = 100; // ms
+let _currentPreampTarget = 'hf50';
+let _currentPreampLevel = 0;
 let _currentCwSidetoneState = true; // Flex default is sidetone ON; we mirror that.
 // WinKeyer-driven sidetone mute. Tracks whether the *WinKeyer activity*
 // path is currently holding the Flex sidetone off, plus the state we
@@ -1044,6 +1055,16 @@ function broadcastRigState() {
     monLevel: _currentMonLevel,
     rit: _currentRitState,
     cwSidetone: _currentCwSidetoneState,
+    micGain: _currentMicGain,
+    compLevel: _currentCompLevel,
+    dnrLevel: _currentDnrLevel,
+    clarRx: _currentClarRxState,
+    clarTx: _currentClarTxState,
+    clarOffset: _currentClarOffset,
+    breakIn: _currentBreakInState,
+    breakInDelay: _currentBreakInDelay,
+    preampTarget: _currentPreampTarget,
+    preampLevel: _currentPreampLevel,
     capabilities: caps,
   };
   if (win && !win.isDestroyed()) win.webContents.send('rig-state', state);
@@ -14663,6 +14684,74 @@ app.whenReady().then(() => {
         } else if (cat && cat.connected) {
           cat.sendRaw(cmd);
         }
+        break;
+      }
+      // --- FTX-1-class advanced rig controls ---
+      // No Flex equivalents — these are Yaesu-specific raw CAT only.
+      case 'set-mic-gain': {
+        const pct = Math.max(0, Math.min(100, Number(data.value) || 0));
+        if (cat && cat.connected && typeof cat.setMicGain === 'function') cat.setMicGain(pct);
+        _currentMicGain = pct;
+        broadcastRigState();
+        break;
+      }
+      case 'set-comp-level': {
+        const pct = Math.max(0, Math.min(100, Number(data.value) || 0));
+        if (cat && cat.connected && typeof cat.setCompLevel === 'function') cat.setCompLevel(pct);
+        _currentCompLevel = pct;
+        broadcastRigState();
+        break;
+      }
+      case 'set-dnr-level': {
+        const level = Math.max(1, Math.min(15, Number(data.value) || 1));
+        if (cat && cat.connected && typeof cat.setDnrLevel === 'function') cat.setDnrLevel(level);
+        _currentDnrLevel = level;
+        broadcastRigState();
+        break;
+      }
+      case 'set-clar-rx': {
+        const on = !!data.value;
+        if (cat && cat.connected && typeof cat.setClarRx === 'function') cat.setClarRx(on);
+        _currentClarRxState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-clar-tx': {
+        const on = !!data.value;
+        if (cat && cat.connected && typeof cat.setClarTx === 'function') cat.setClarTx(on);
+        _currentClarTxState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-clar-offset': {
+        const hz = Math.max(-9999, Math.min(9999, Math.round(Number(data.value) || 0)));
+        if (cat && cat.connected && typeof cat.setClarOffset === 'function') cat.setClarOffset(hz);
+        _currentClarOffset = hz;
+        broadcastRigState();
+        break;
+      }
+      case 'set-break-in': {
+        const on = !!data.value;
+        if (cat && cat.connected && typeof cat.setBreakIn === 'function') cat.setBreakIn(on);
+        _currentBreakInState = on;
+        broadcastRigState();
+        break;
+      }
+      case 'set-break-in-delay': {
+        const ms = Math.max(30, Math.min(3000, Number(data.value) || 100));
+        if (cat && cat.connected && typeof cat.setBreakInDelay === 'function') cat.setBreakInDelay(ms);
+        _currentBreakInDelay = ms;
+        broadcastRigState();
+        break;
+      }
+      case 'set-preamp-target': {
+        // value: { target: 'hf50'|'vhf'|'uhf', level: 0|1|2 }
+        const target = String((data.value && data.value.target) || data.target || 'hf50').toLowerCase();
+        const level = Math.max(0, Math.min(2, Number((data.value && data.value.level) ?? data.level ?? 0)));
+        if (cat && cat.connected && typeof cat.setPreampTarget === 'function') cat.setPreampTarget(target, level);
+        _currentPreampTarget = target;
+        _currentPreampLevel = level;
+        broadcastRigState();
         break;
       }
     }
