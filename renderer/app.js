@@ -5716,16 +5716,16 @@ function showTuneArc(lat, lon, freq, source) {
       tuneArcLayers.push(
         L.polyline(offsetPoints, {
           color: '#000',
-          weight: 5,
-          opacity: 0.7,
+          weight: 4,
+          opacity: 0.6,
           interactive: false,
         }).addTo(map)
       );
       tuneArcLayers.push(
         L.polyline(offsetPoints, {
           color,
-          weight: 2.5,
-          opacity: 1,
+          weight: 2,
+          opacity: 0.95,
           dashArray: '6 4',
           interactive: false,
         }).addTo(map)
