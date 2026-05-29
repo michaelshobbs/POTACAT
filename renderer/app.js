@@ -5710,11 +5710,22 @@ function showTuneArc(lat, lon, freq, source) {
     if (seg.length < 2) continue;
     for (const offset of [-360, 0, 360]) {
       const offsetPoints = seg.map(([a, b]) => [a, b + offset]);
+      // Halo: wider solid black stroke beneath the colored dashed line so
+      // the arc stays legible against busy OSM dark tiles + clusters of
+      // bright markers. K3SBP 2026-05-29.
+      tuneArcLayers.push(
+        L.polyline(offsetPoints, {
+          color: '#000',
+          weight: 5,
+          opacity: 0.7,
+          interactive: false,
+        }).addTo(map)
+      );
       tuneArcLayers.push(
         L.polyline(offsetPoints, {
           color,
-          weight: 2,
-          opacity: 0.7,
+          weight: 2.5,
+          opacity: 1,
           dashArray: '6 4',
           interactive: false,
         }).addTo(map)
