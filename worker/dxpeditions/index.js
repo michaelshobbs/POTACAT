@@ -177,10 +177,16 @@ function normalize(items, source, now) {
     const calls = source.extract(it);
     if (!calls.length) continue;
     const published = parseDate(it.pubDate) || now;
+    // Trim down the description: strip HTML tags / collapse whitespace /
+    // cap at ~800 chars so we don't store full blog posts (DX-World runs
+    // 1-2KB of post body per item). Tooltips and inline note rendering
+    // happen client-side; raw structured data is what we owe them.
+    const description = compactDescription(it.description);
     for (const call of calls) {
       out.push({
         call,
         title: it.title,
+        description,
         link: it.link || '',
         publishedAt: new Date(published).toISOString(),
         source: source.name,
@@ -189,6 +195,15 @@ function normalize(items, source, now) {
     }
   }
   return out;
+}
+
+function compactDescription(raw) {
+  if (!raw) return '';
+  let s = String(raw);
+  s = s.replace(/<[^>]+>/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > 800) s = s.slice(0, 800).replace(/\s+\S*$/, '') + '…';
+  return s;
 }
 
 function parseDate(s) {
@@ -225,6 +240,10 @@ function mergeWithExisting(existing, fresh, now) {
     byCall.set(r.call, {
       ...prev,
       title: newer.title,
+      // Prefer the fresh fetch's description: prev may be from an older
+      // schema version (no description) or a stale CDN cache. Falling
+      // back to prev only when this run's parse came up empty.
+      description: r.description || prev.description || '',
       link: newer.link,
       publishedAt: newer.publishedAt,
       source: [...sources].sort().join(','),

@@ -10619,33 +10619,72 @@ function fetchPotacatExpeditions() {
   });
 }
 
-// Derive a clean "entity" + short description from the worker record's
-// title. Source-specific shapes:
-//   - NG3K:    "Country: <dates> -- CALL -- QSL via: MGR"
-//   - DX-World: "CALL — Country" or "Country – CALL"
-//   - DXNews:  "CALL Country. From DXNews.com"
-// Falls back to the whole title as description if no clean entity match.
+// Derive a clean "entity" + structured fields from a worker record.
+//
+// Source-specific title/description shapes:
+//   NG3K title:       "Country: <dates> -- CALL -- QSL via: MGR"
+//   NG3K desc:        "<dates> -- Country -- CALL -- QSL: X -- Source: Y -- By <ops>; <bands>; <modes>; <ctx>"
+//   DX-World title:   "CALL — Country" or "Country – CALL"
+//   DX-World desc:    free-form first paragraph of the post
+//   DXNews title:     "CALL Country. From DXNews.com"
+//   DXNews desc:      first paragraph, "X will be active as CALL from <place>"
+//
+// NG3K's description is the most structured; the regex below pulls
+// operator(s) / bands / modes / QSL info. For the other sources we hand
+// the raw description to the renderer so it can still surface useful
+// text on hover even without per-field parsing.
 function _summarizePotacatRecord(rec) {
   const title = rec.title || '';
+  const description = rec.description || '';
   let entity = '';
+
   // NG3K
   let m = title.match(/^([^:]+):\s*[^-]+--\s*[A-Z0-9/]+/);
   if (m) entity = m[1].trim();
-  // DX-World style "CALL — Country" or "CALL – Country" (em/en dash)
   if (!entity) {
     m = title.match(/^[A-Z0-9/]+\s+[–—-]\s+(.+?)(?:,|$)/);
     if (m) entity = m[1].trim();
   }
-  // DXNews style "CALL Country. From DXNews.com"
   if (!entity) {
     m = title.match(/^[A-Z0-9/]+\s+(.+?)\.\s+From\s+DXNews/i);
     if (m) entity = m[1].trim();
   }
+
+  // Structured pulls from NG3K description (best-effort, regex-based).
+  let operators = '';
+  let bands = '';
+  let modes = '';
+  let qsl = '';
+  let dates = '';
+  if (description) {
+    // NG3K date field is the leading "Mar 25-May 31, 2026" before the
+    // first "--". Captures month-day ranges within one line.
+    const dm = description.match(/^([A-Z][a-z]+\s+\d+-[A-Z][a-z]+\s+\d+,?\s*\d{4})/);
+    if (dm) dates = dm[1].replace(/\s*,\s*/, ', ');
+    // "By <ops>" — the operator credit line. Stops at the first ";" or end.
+    const om = description.match(/\bBy\s+([^;\.]+?)(?:[;\.]|$)/);
+    if (om) operators = om[1].trim();
+    // QSL field — NG3K writes "QSL: X" or "QSL via: X".
+    const qm = description.match(/QSL(?:\s+via)?:\s*([^-]+?)(?:--|$)/i);
+    if (qm) qsl = qm[1].trim();
+    // Bands string — NG3K shorthand like "HF", "40-6m", "160-6m". Look
+    // for a token after operators that ends in 'm' or is "HF"/"VHF"/"UHF".
+    const bm = description.match(/[;,]\s*((?:HF|VHF|UHF|160m|80m|40m|20m|17m|15m|12m|10m|6m|2m|\d+-\d+m))\s*[;,]/i);
+    if (bm) bands = bm[1].trim();
+    // Modes — comma/space separated list of standard mode names.
+    const mm = description.match(/\b(CW|SSB|FM|AM|RTTY|FT8|FT4|JT65|PSK31|EME|SAT|DIGITAL)\b(?:[\s,]+\b(?:CW|SSB|FM|AM|RTTY|FT8|FT4|JT65|PSK31|EME|SAT|DIGITAL)\b){0,5}/i);
+    if (mm) modes = mm[0].replace(/\s+/g, ' ').trim();
+  }
+
   return {
     entity,
-    description: title,
-    startDate: '',
-    endDate: '',
+    description,
+    title,
+    operators,
+    bands,
+    modes,
+    qsl,
+    dates,
     sources: rec.source || '',
     link: rec.link || '',
   };

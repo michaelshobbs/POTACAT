@@ -110,6 +110,37 @@ let enableDxe = true;
 const DXE_SOURCE_KEYS = ['clublog', 'dx-world', 'dxnews', 'ng3k'];
 let enableDxeSources = { clublog: true, 'dx-world': true, dxnews: true, ng3k: true };
 
+// Merge the DXP note in front of the existing spot comment for the
+// Notes/Comments column. Pure text-join — the cell renderer further
+// down handles the title-on-hover for full text.
+function _composeCommentsCell(spot) {
+  const note = expeditionNote(spot && spot.callsign);
+  const base = (spot && spot.comments) || '';
+  if (note && base) return note + ' | ' + base;
+  return note || base;
+}
+
+// Build a compact one-line DXP note for a callsign — used to populate
+// the Comments column inline and the body of the badge tooltip.
+// Returns empty when not visible (master off or all sources off).
+//
+// Format:  "DXP <entity> · <dates> · By <op> · <bands>/<modes> · QSL <route>"
+// Each segment dropped when the corresponding metadata is missing.
+function expeditionNote(callsign) {
+  if (!isExpeditionVisible(callsign)) return '';
+  const m = expeditionMeta.get(String(callsign).toUpperCase());
+  if (!m) return '';
+  const segs = [];
+  if (m.entity) segs.push(m.entity);
+  if (m.dates) segs.push(m.dates);
+  if (m.operators) segs.push('By ' + m.operators);
+  const bm = [m.bands, m.modes].filter(Boolean).join(' ');
+  if (bm) segs.push(bm);
+  if (m.qsl) segs.push('QSL ' + m.qsl);
+  if (!segs.length) return 'DXP';
+  return 'DXP: ' + segs.join(' · ');
+}
+
 // True iff a callsign's expedition status should be honored in the UI.
 // Centralizes the per-source visibility check so every existing site that
 // asked "is this call an expedition?" gets the same answer.
@@ -7555,9 +7586,24 @@ function render() {
         const dxp = document.createElement('span');
         dxp.className = 'expedition-badge';
         const meta = expeditionMeta.get(s.callsign.toUpperCase());
-        dxp.title = meta
-          ? `DX Expedition: ${meta.entity}${meta.startDate ? ` (${meta.startDate} – ${meta.endDate})` : ''}`
-          : 'DX Expedition (Club Log)';
+        // Multi-line tooltip: structured one-liner first (rendered by
+        // browser as the title attribute), then the raw source
+        // description, then the contributing-feed list. Browsers wrap
+        // title attributes on \n so the operator gets the full context
+        // on hover without us needing a popover.
+        if (meta) {
+          const lines = [];
+          const note = expeditionNote(s.callsign);
+          if (note) lines.push(note);
+          if (meta.description && meta.description !== meta.title) lines.push(meta.description);
+          if (meta.sources) {
+            const srcList = String(meta.sources).split(',').filter(Boolean);
+            lines.push(srcList.length === 1 ? `Source: ${srcList[0]}` : `Sources (${srcList.length}): ${srcList.join(', ')}`);
+          }
+          dxp.title = lines.join('\n');
+        } else {
+          dxp.title = 'DX Expedition (Club Log)';
+        }
         dxp.textContent = 'DXP';
         callTd.appendChild(dxp);
       }
@@ -7656,7 +7702,12 @@ function render() {
         { val: formatDistance(s.distance), col: 'distance' },
         { val: formatBearing(s.bearing), cls: 'bearing-col', col: 'bearing' },
         { val: formatAge(s.spotTime), col: 'spotTime' },
-        { val: s.comments || '', col: 'comments' },
+        // Prepend the DXP one-liner to the spot's existing comment when the
+        // call is flagged as a DXpedition. POTA / cluster comments stay
+        // intact after the " | " separator. Casey 2026-05-30: surface
+        // worker-aggregated DXpedition metadata in the same Notes column
+        // POTA spots already use.
+        { val: _composeCommentsCell(s), col: 'comments' },
       ];
 
       for (const cell of cells) {
