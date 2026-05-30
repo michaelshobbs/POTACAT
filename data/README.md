@@ -47,10 +47,9 @@ A small DSL so a date-parser can compute the actual date for any year:
 Two rules to keep this maintainable:
 
 1. **Only public facts.** Sponsor's own site + sponsor's own date rule.
-   We do NOT copy from WA7BNM Contest Calendar (their terms allow
-   linking but not re-hosting); we DO recommend users cross-reference
-   there — `https://www.contestcalendar.com/` is the most comprehensive
-   third-party index.
+   Contest names, sponsor URLs, and date formulas published by the
+   sponsor are first-principles ham-radio public information — not
+   copied from any third-party index.
 2. **Verify the URL responds 2xx or 3xx.** A few major sponsors return
    406 to default curl UAs; those entries are kept (the URL is correct,
    the site just blocks bot UAs). Outright DNS failures or 404s mean
@@ -61,8 +60,7 @@ Two rules to keep this maintainable:
 Contest scoring rules, log-submission deadlines, multi-year exception
 dates (e.g. when a major contest moves a week to dodge a religious
 holiday), and per-year overrides. Those belong in an "exceptions" file
-or a permission-based pull from WA7BNM if Bruce Horn agrees to grant
-API access.
+keyed by contest id + year.
 
 ### Future: worker integration
 

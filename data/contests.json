@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "generated": "2026-05-30",
-  "attribution": "All contest data is public ham-radio knowledge — names, sponsor URLs, and date formulas as published by the sponsors themselves. The WA7BNM Contest Calendar (contestcalendar.com) is the most comprehensive third-party index; we recommend cross-referencing there.",
+  "attribution": "All contest data is public ham-radio knowledge — names, sponsor URLs, and date formulas as published by the sponsors themselves.",
   "whenComputedSyntax": {
     "nth-weekend-of:<month1to12>:<n>": "<n>=1..4 for first..fourth full weekend, -1 for last full weekend.",
     "nth-weekday-of:<month1to12>:<n>:<weekday>": "e.g. '4th Saturday of June'. weekday: Mon|Tue|Wed|Thu|Fri|Sat|Sun.",

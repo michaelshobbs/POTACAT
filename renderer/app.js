@@ -7109,8 +7109,8 @@ if (viewContestsBtn) viewContestsBtn.addEventListener('click', () => setView('co
 
 // --- Contests view ---
 // Card-grouped layout (one card per category in CONTESTS_CATEGORY_ORDER)
-// with status pills for running/upcoming. WA7BNM Contest Calendar link
-// labeled per their terms — never copies their layout or content.
+// with status pills for running/upcoming. Data drawn from
+// data/contests.json — sponsor-direct public materials only.
 const CONTESTS_CATEGORY_ORDER = [
   { key: 'worldwide-dx',    label: '🌍 Worldwide DX' },
   { key: 'north-american',  label: '🇺🇸 North American' },
@@ -7127,7 +7127,6 @@ const CONTESTS_CATEGORY_ORDER = [
   { key: 'pota-sota',       label: '🏞️ POTA / SOTA Events' },
   { key: 'regional',        label: '🌐 Regional' },
 ];
-const CONTESTS_WA7BNM_URL = 'https://www.contestcalendar.com/';
 let contestsCache = null;
 let contestsRefreshTimer = null;
 
@@ -7173,13 +7172,6 @@ async function renderContestsView() {
       return;
     }
   }
-  // WA7BNM link (labeled per their terms). Bound once per renderContestsView call.
-  const wa7bnmLink = document.getElementById('contests-wa7bnm-link');
-  if (wa7bnmLink) {
-    wa7bnmLink.textContent = 'WA7BNM Contest Calendar';
-    wa7bnmLink.onclick = (e) => { e.preventDefault(); window.api.openExternal(CONTESTS_WA7BNM_URL); };
-  }
-
   _contestsRender();
   // Live tick: refresh status labels every 60s so countdowns stay current.
   if (contestsRefreshTimer) clearInterval(contestsRefreshTimer);
@@ -7309,7 +7301,6 @@ function _contestsOpenDrawer(c) {
     <div class="contests-drawer-actions">
       <a href="#" class="contests-drawer-btn" data-url="${_contestsEscape(c.website || '')}">Open sponsor site &#x2197;</a>
       ${c.rulesUrl && c.rulesUrl !== c.website ? `<a href="#" class="contests-drawer-btn" data-url="${_contestsEscape(c.rulesUrl)}">Rules &#x2197;</a>` : ''}
-      <a href="#" class="contests-drawer-btn contests-drawer-btn-secondary" data-url="${_contestsEscape(CONTESTS_WA7BNM_URL)}">View on WA7BNM Contest Calendar &#x2197;</a>
     </div>
   `;
   body.querySelectorAll('.contests-drawer-btn').forEach((a) => {
