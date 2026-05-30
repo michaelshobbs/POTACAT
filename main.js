@@ -181,7 +181,10 @@ const { postWwffRespot } = require('./lib/wwff-respot');
 const { fetchNets: fetchDirectoryNets, fetchSwl: fetchDirectorySwl } = require('./lib/directory');
 const { QrzClient } = require('./lib/qrz');
 const { callsignToProgram, fetchParksForProgram, loadParksCache, saveParksCache, isCacheStale, searchParks: searchParksDb, getPark: getParkDb, buildParksMap } = require('./lib/pota-parks-db');
-const { fetchDxCalExpeditions } = require('./lib/dxcal');
+// NOTE: lib/dxcal.js (danplanet iCal) was retired 2026-05-29 in favor of
+// the community feed served by worker/dxpeditions — aggregated DX-World +
+// DXNews + NG3K, refreshed server-side every 6h. See README in that
+// worker for the schema served at /feeds/dxpeditions.json.
 const { getModel, getModelList } = require('./lib/rig-models');
 const { autoUpdater } = require('electron-updater');
 let registerCloudIpc;
@@ -4851,6 +4854,13 @@ function updateRemoteSettings() {
     refreshInterval: settings.refreshInterval || 30,
     maxAgeMin: settings.maxAgeMin != null ? settings.maxAgeMin : 5,
     distUnit: settings.distUnit || 'mi',
+    // License privileges — mirror to ECHOCAT so the phone can hide
+    // out-of-permission spots on the Spots table + Prop map. Same key
+    // names the desktop renderer uses (renderer/app.js). K3SBP
+    // 2026-05-29: NA7C / Ted reported 14.002 RBN spots clogging his
+    // Spots view on iOS even though desktop hides them as out-of-band.
+    licenseClass: settings.licenseClass || 'none',
+    hideOutOfBand: !!settings.hideOutOfBand,
     cwXit: settings.cwXit || 0,
     cwFilterWidth: settings.cwFilterWidth || 0,
     ssbFilterWidth: settings.ssbFilterWidth || 0,
@@ -7315,13 +7325,19 @@ function connectRemote() {
     }
     // Auto-place TX on quiet frequency from FFT analysis
     ft8Engine.setTxFreq(jtcatQuietFreq);
-    if (remoteServer.hasClient()) {
-      remoteServer.broadcastJtcatTxStatus({ state: 'rx', txFreq: jtcatQuietFreq });
-    }
     const txMsg = 'CQ ' + myCall + ' ' + myGrid;
     // TX on next available slot
     const nextSlot = ft8Engine._lastRxSlot === 'even' ? 'odd' : (ft8Engine._lastRxSlot === 'odd' ? 'even' : 'even');
     ft8Engine.setTxSlot(nextSlot);
+    // Tell the phone the planned slot so its "QUEUED Ns" countdown
+    // can target the next start of that parity. Without `slot` here
+    // mobile only knows the next cycle boundary, so if the desktop
+    // is waiting a full pair (late-start cutoff missed the current
+    // matching slot) the countdown hits 0 and restarts at 15 instead
+    // of showing the real 25s wait. K3SBP 2026-05-29.
+    if (remoteServer.hasClient()) {
+      remoteServer.broadcastJtcatTxStatus({ state: 'rx', txFreq: jtcatQuietFreq, slot: nextSlot });
+    }
     remoteJtcatQso = { mode: 'cq', call: null, grid: null, phase: 'cq', txMsg, report: null, sentReport: null, myCall, myGrid, txRetries: 0 };
     await remoteJtcatSetTxMsg(txMsg); // encode first, then enable TX
     ft8Engine._txEnabled = true;
@@ -10349,9 +10365,11 @@ function createWindow() {
     // on boot + on URL change; a manual Refresh button covers user-
     // initiated re-pulls.
     fetchAllWatchlistGroupsRemote();
-    // Fetch active DX expeditions from Club Log
+    // Fetch active DX expeditions from Club Log + POTACAT community
+    // aggregator. The community feed updates server-side every 6h and
+    // edge-caches 1h; polling more often than 6h is wasted bandwidth.
     fetchExpeditions();
-    setInterval(fetchExpeditions, 3600000); // refresh every hour
+    setInterval(fetchExpeditions, 6 * 3600000); // refresh every 6h
     // Fetch active events (contests, awards) from remote endpoint
     const cachedEvents = loadEventsCache();
     if (cachedEvents.events && cachedEvents.events.length) {
@@ -10553,7 +10571,86 @@ function fetchDonorList() {
   req.on('error', () => { /* silently ignore — no internet is fine */ });
 }
 
-// --- DX Expeditions (Club Log + danplanet iCal) ---
+// --- DX Expeditions (Club Log + potacat community feed) ---
+//
+// Two complementary sources:
+//   - Club Log: callsigns that have uploaded logs in the last 7 days.
+//     Signal = "this op is actually on the air right now."
+//   - POTACAT community feed (Cloudflare Worker aggregator):
+//     callsigns announced across DX-World, DXNews, NG3K. Signal =
+//     "this op is planning to be / currently active per the
+//     DXpedition press." Includes per-call metadata (title, link,
+//     contributing sources for corroboration weight).
+//
+// Replaces the danplanet iCal path (lib/dxcal.js) which was very thin
+// in coverage. The community feed picks up where the iCal didn't.
+
+const POTACAT_DXP_FEED = 'https://dxpeditions.potacat.com/feeds/dxpeditions.json';
+
+function fetchPotacatExpeditions() {
+  return new Promise((resolve) => {
+    const https = require('https');
+    const req = https.get(
+      POTACAT_DXP_FEED,
+      { headers: { 'User-Agent': `POTACAT-Desktop/${app.getVersion ? app.getVersion() : '0'}` } },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            // Schema v1: { version, generated, count, sources, records: [{ call, title, link, publishedAt, firstSeen, source }] }
+            if (!parsed || !Array.isArray(parsed.records)) {
+              resolve([]);
+              return;
+            }
+            resolve(parsed.records);
+          } catch {
+            resolve([]);
+          }
+        });
+      },
+    );
+    req.on('error', () => resolve([]));
+    // Defensive timeout — the worker is fast (KV reads + edge cache) but
+    // network can stall. 10s is generous; we'd rather have stale
+    // expeditionCallsigns than a hung fetch.
+    req.setTimeout(10000, () => { try { req.destroy(); } catch { /* noop */ } });
+  });
+}
+
+// Derive a clean "entity" + short description from the worker record's
+// title. Source-specific shapes:
+//   - NG3K:    "Country: <dates> -- CALL -- QSL via: MGR"
+//   - DX-World: "CALL — Country" or "Country – CALL"
+//   - DXNews:  "CALL Country. From DXNews.com"
+// Falls back to the whole title as description if no clean entity match.
+function _summarizePotacatRecord(rec) {
+  const title = rec.title || '';
+  let entity = '';
+  // NG3K
+  let m = title.match(/^([^:]+):\s*[^-]+--\s*[A-Z0-9/]+/);
+  if (m) entity = m[1].trim();
+  // DX-World style "CALL — Country" or "CALL – Country" (em/en dash)
+  if (!entity) {
+    m = title.match(/^[A-Z0-9/]+\s+[–—-]\s+(.+?)(?:,|$)/);
+    if (m) entity = m[1].trim();
+  }
+  // DXNews style "CALL Country. From DXNews.com"
+  if (!entity) {
+    m = title.match(/^[A-Z0-9/]+\s+(.+?)\.\s+From\s+DXNews/i);
+    if (m) entity = m[1].trim();
+  }
+  return {
+    entity,
+    description: title,
+    startDate: '',
+    endDate: '',
+    sources: rec.source || '',
+    link: rec.link || '',
+  };
+}
+
 function fetchClubLogExpeditions() {
   return new Promise((resolve) => {
     const https = require('https');
@@ -10578,32 +10675,33 @@ function fetchClubLogExpeditions() {
 }
 
 async function fetchExpeditions() {
-  const [clubLogResult, dxCalResult] = await Promise.allSettled([
+  const [clubLogResult, potacatResult] = await Promise.allSettled([
     fetchClubLogExpeditions(),
-    fetchDxCalExpeditions(),
+    fetchPotacatExpeditions(),
   ]);
 
   const merged = new Set();
   const meta = new Map();
 
-  // Club Log callsigns
+  // Club Log: bare callsigns of ops who uploaded logs in the last 7 days.
+  // No metadata — just membership in the set so the spot table can flag
+  // them as "actively on the air."
   if (clubLogResult.status === 'fulfilled') {
     for (const cs of clubLogResult.value) merged.add(cs);
   }
 
-  // danplanet iCal expeditions — richer metadata
-  if (dxCalResult.status === 'fulfilled') {
-    for (const exp of dxCalResult.value) {
-      for (const cs of exp.callsigns) {
-        const upper = cs.toUpperCase();
-        merged.add(upper);
-        meta.set(upper, {
-          entity: exp.entity,
-          startDate: exp.startDate,
-          endDate: exp.endDate,
-          description: exp.description,
-        });
-      }
+  // POTACAT community feed: structured records with title / source list /
+  // link / publishedAt. Richer than Club Log; supplies the tooltip text
+  // and the "in N feeds" corroboration signal.
+  if (potacatResult.status === 'fulfilled') {
+    for (const rec of potacatResult.value) {
+      if (!rec || !rec.call) continue;
+      const upper = String(rec.call).toUpperCase();
+      merged.add(upper);
+      // Only set metadata if this is the first record for the call; the
+      // worker already deduped + chose the freshest title server-side, so
+      // we don't need to compare publishedAt here.
+      if (!meta.has(upper)) meta.set(upper, _summarizePotacatRecord(rec));
     }
   }
 
