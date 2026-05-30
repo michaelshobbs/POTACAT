@@ -14366,6 +14366,24 @@ app.whenReady().then(() => {
     }
   });
 
+  // Open a URL that came from the contests DB. The allow-list above is
+  // intentionally tight; contest sponsor sites are spread across 80+
+  // hostnames and aren't worth enumerating there. Instead we validate
+  // the URL against our own data/contests.json — if it appears as a
+  // website or rulesUrl on any contest, it's an authorized link-out.
+  // Same shell.openExternal under the hood, just with a different
+  // boundary check.
+  ipcMain.on('open-contest-url', (_e, url) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
+    try {
+      const db = require('./lib/contests-db');
+      const all = db.getAllContests();
+      const ok = all.some((c) => c.website === url || c.rulesUrl === url);
+      if (!ok) return;
+      require('electron').shell.openExternal(url);
+    } catch { /* silent — invalid URL or load failure */ }
+  });
+
   ipcMain.on('rotate-to', (_e, azimuth) => {
     if (settings.enableRotor && !isNaN(azimuth)) {
       sendRotorBearing(Math.round(azimuth));

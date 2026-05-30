@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   refresh: () => ipcRenderer.send('refresh'),
   getSdrDirectory: () => ipcRenderer.invoke('get-sdr-directory'),
   getContests: () => ipcRenderer.invoke('get-contests'),
+  openContestUrl: (url) => ipcRenderer.send('open-contest-url', url),
   // ECHOCAT mobile-app pairing
   echocatCreatePairingQr: (opts) => ipcRenderer.invoke('echocat-create-pairing-qr', opts || {}),
   echocatListPairedDevices: () => ipcRenderer.invoke('echocat-list-paired-devices'),

@@ -7307,7 +7307,7 @@ function _contestsOpenDrawer(c) {
     a.addEventListener('click', (e) => {
       e.preventDefault();
       const u = a.getAttribute('data-url');
-      if (u) window.api.openExternal(u);
+      if (u) window.api.openContestUrl(u);
     });
   });
   drawer.classList.remove('hidden');
