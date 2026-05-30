@@ -5,12 +5,29 @@ public community sources and serves a single canonical feed. POTACAT
 desktop subscribes to this feed so users get auto-highlighted callsigns
 for active operations without having to maintain the list themselves.
 
-## v1 sources
+## v2 sources
 
-- **DX-World RSS** (`https://dx-world.net/feed/`)
+Each source is scraped on every cron run; failures are isolated per
+source (one outage doesn't stop the others).
 
-Future candidates: DXNews.com RSS, ARRL Special Event calendar. Add by
-extending the cron handler with another normalize() call.
+| Source | URL | Format | Notes |
+|---|---|---|---|
+| DX-World | `https://dx-world.net/feed/` | RSS | Lead-callsign titles, multi-call posts split. |
+| DXNews   | `https://dxnews.com/rss.xml` | RSS | Lead-callsign titles incl. PREFIX/CALL forms. |
+| NG3K ADXO | `https://www.ng3k.com/adxo.xml` | RSS | Canonical title schema; extractor narrows to the call field to skip the QSL manager. |
+
+Add a source: append `{ name, url, extract }` to the `SOURCES` array in
+`index.js`. The `extract` callback receives a parsed item
+`{ title, link, pubDate, description }` and returns an array of
+callsigns. For most RSS feeds `extractCallsigns(item.title)` is enough;
+sources whose title format includes non-op callsigns (e.g. NG3K's QSL
+manager) need a narrower extractor.
+
+Considered but deferred:
+- **ARRL Special Event calendar** — different category (SES, not DX);
+  belongs in a sibling feed.
+- **NG3K HTML page** — superseded by their canonical RSS at adxo.xml.
+- **ham365.net** — data loads client-side; no backend endpoint to scrape.
 
 ## Endpoints
 
@@ -18,7 +35,7 @@ extending the cron handler with another normalize() call.
 |---|---|
 | `GET /feeds/dxpeditions.xml` | Public XML feed (RSS-reader friendly). |
 | `GET /feeds/dxpeditions.json` | Same data, JSON. Desktop client uses this. |
-| `GET /healthz` | `{ ok, schemaVersion, lastFetchedAt, generatedAt, count, lastError }` for monitoring. |
+| `GET /healthz` | `{ ok, schemaVersion, lastFetchedAt, generatedAt, count, lastError, sources: { name: { lastFetchedAt, lastError, lastCount }}}` for monitoring. |
 
 CORS is wide-open (`*`) — output is public DXpedition info.
 
@@ -36,7 +53,7 @@ CORS is wide-open (`*`) — output is public DXpedition info.
       "link": "https://dx-world.net/…",    // source story URL
       "publishedAt": "<ISO 8601>",         // source's pubDate, or first-seen if missing
       "firstSeen": <epoch ms>,             // when this worker first picked it up
-      "source": "dx-world"
+      "source": "dx-world,ng3k"       // comma-joined when corroborated across sources
     },
     …
   ]

@@ -3,23 +3,25 @@
 // Aggregates active / upcoming DXpeditions from public sources and serves
 // a single canonical feed that POTACAT desktop clients can subscribe to.
 //
-// v1 sources:
-//   - DX-World RSS (https://dx-world.net/feed/)
+// v2 sources (each scraped independently every 6h):
+//   - DX-World RSS  (https://dx-world.net/feed/)
+//   - DXNews RSS    (https://dxnews.com/rss.xml)
+//   - NG3K ADXO RSS (https://www.ng3k.com/adxo.xml)
 //
-// Cron runs every 6h: fetch sources, normalize/dedupe, store JSON in KV.
-// HTTP handler reads from KV (always the last successful fetch — if cron
-// fails or DX-World is down, clients keep getting the previous payload
-// rather than 404s).
+// Each source is wrapped in its own try/catch so a single outage / parse
+// regression can't take the cron down. KV state tracks per-source
+// lastFetchedAt / lastError / lastCount; /healthz surfaces them.
+//
+// HTTP handler reads from KV only — never blocks on a live fetch, so
+// source outages translate to stale records, not 5xx responses.
 //
 // Endpoints:
 //   GET /feeds/dxpeditions.xml   — custom XML schema (see toXml below)
-//   GET /feeds/dxpeditions.json  — same data, JSON. Easier for the client
-//                                  to parse; XML is for RSS-reader compat.
-//   GET /healthz                 — { ok, lastFetchedAt, lastError, count }
+//   GET /feeds/dxpeditions.json  — same data, JSON. Desktop client target.
+//   GET /healthz                 — top-level + per-source state
 //
 // CORS: open (`*`). Output is public DXpedition info; no auth needed.
 
-const DXWORLD_FEED = 'https://dx-world.net/feed/';
 const KV_KEY = 'feed:v1';
 const SCHEMA_VERSION = '1';
 const FEED_TTL_DAYS = 60; // drop records this many days after first seen
@@ -29,14 +31,13 @@ const USER_AGENT = 'POTACAT-DXpeditions/1.0 (+https://potacat.com)';
 // expedition codenames like "AS-104" (IOTA) or "EU-013" — filter out.
 const BLOCKLIST = new Set([
   'IOTA', 'SOTA', 'POTA', 'WWFF', 'DXCC', 'CQWW', 'DXing', 'IARU',
-  'ITU', 'WPX', 'ARRL', 'YOTA', 'OQRS',
+  'ITU', 'WPX', 'ARRL', 'YOTA', 'OQRS', 'LOTW', 'EQSL', 'OPDX', 'TDDX',
 ]);
 
 // Bare callsign shapes:
 //   1) Letter[Letter|Digit] Digit [Letter]{1,4}    — K3SBP, M0CFW, DL2SBY, WF2A
 //   2) Digit Letter[Letter|Digit] [Digit] [Letter]{1,4}
 //      — 3G0Z, 3B9KW, 4U1ITU, 9V1AB
-// Two patterns rather than one mega-alternation so each is readable.
 const BARE_CALL_RE_1 = /^[A-Z][A-Z0-9]?\d[A-Z]{1,4}$/;
 const BARE_CALL_RE_2 = /^\d[A-Z][A-Z0-9]?\d?[A-Z]{1,4}$/;
 
@@ -45,20 +46,21 @@ function isBareCall(s) {
   return BARE_CALL_RE_1.test(s) || BARE_CALL_RE_2.test(s);
 }
 
-// ---------- DX-World fetch + parse ----------
+// ---------- Generic RSS parser ----------
 
-async function fetchDxWorld() {
-  const res = await fetch(DXWORLD_FEED, {
+async function fetchUrl(url) {
+  const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/rss+xml,text/xml,*/*' },
-    cf: { cacheTtl: 60 }, // dedupe back-to-back cron + fetch traffic at the edge
+    cf: { cacheTtl: 60 }, // dedupe back-to-back cron + edge-request traffic
+    redirect: 'follow',
   });
-  if (!res.ok) throw new Error(`dx-world feed HTTP ${res.status}`);
-  const xml = await res.text();
-  return parseRss(xml);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
 }
 
 // Tiny regex-based RSS parser. Avoids pulling a real XML parser into the
-// Worker — the feed is well-formed, and we only need <item> fields.
+// Worker — all three v2 feeds are well-formed and only need <item>/<title>/
+// <link>/<pubDate> for our purposes.
 function parseRss(xml) {
   const items = [];
   const itemRe = /<item\b[^>]*>([\s\S]*?)<\/item>/g;
@@ -84,10 +86,6 @@ function textOf(body, tag) {
   return decodeEntities(s);
 }
 
-// Decode the entity zoo WordPress / DX-World actually emits. The first
-// pass missed numeric entities (DX-World writes "&#038;" for ampersand,
-// "&#8217;" for ’, "&#8211;" for –) so titles like "V6AIU &#038; V63JX"
-// stayed raw — breaking tokenization on the &.
 function decodeEntities(s) {
   return s
     .replace(/&amp;/g, '&')
@@ -102,7 +100,7 @@ function decodeEntities(s) {
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
 
-// Extract every plausible operating callsign from a DX-World title.
+// Extract every plausible operating callsign from a free-form title.
 //
 // Returns an array because real DXpedition posts routinely list multiple
 // calls ("V6AIU & V63JX", "3G0Z & XR0Z", "3B9KW & 3B9/M0CFW") and we want
@@ -111,7 +109,7 @@ function decodeEntities(s) {
 // Slash forms (FP/WF2A, HB0/DL2SBY, 3B9/M0CFW, EI9KA/MM, W1AW/4) are
 // preserved verbatim AND each bare-callsign component is emitted
 // separately — clusters carry the call in whichever form the spotter
-// typed, so we have to recognize both.
+// typed.
 function extractCallsigns(title) {
   if (!title) return [];
   const out = new Set();
@@ -122,8 +120,6 @@ function extractCallsigns(title) {
     if (tok.includes('/')) {
       const parts = tok.split('/').filter(Boolean);
       if (parts.length < 2 || parts.length > 3) continue;
-      // Require at least one piece to look like a real bare call so we
-      // don't grab arbitrary "URL/path" debris.
       const hasBareCall = parts.some(isBareCall);
       if (!hasBareCall) continue;
       out.add(tok);
@@ -135,12 +131,50 @@ function extractCallsigns(title) {
   return [...out];
 }
 
+// ---------- Source registry ----------
+//
+// Each entry knows its URL plus how to extract callsigns from its items.
+// Format-aware extractors avoid false positives: NG3K titles include the
+// QSL-manager's callsign (real, but not the on-air call), so we narrow
+// the search window to the second "--"-delimited field of the title.
+
+const SOURCES = [
+  {
+    name: 'dx-world',
+    url: 'https://dx-world.net/feed/',
+    extract: (item) => extractCallsigns(item.title),
+  },
+  {
+    name: 'dxnews',
+    url: 'https://dxnews.com/rss.xml',
+    // DXNews titles lead with the call: "<CALL> <topic>. From DXNews.com".
+    // The generic extractor lands on the lead token first; we accept any
+    // additional bare-calls or slash-forms in the title for cases where
+    // a single post covers multiple ops.
+    extract: (item) => extractCallsigns(item.title),
+  },
+  {
+    name: 'ng3k',
+    url: 'https://www.ng3k.com/adxo.xml',
+    // NG3K title schema is canonical:
+    //   "<Country>: <dates> -- <CALL> -- QSL via: <MANAGER>"
+    // Pulling from the whole title would also pick up the QSL manager's
+    // call (real callsign, but not the DXpedition op) — false positive.
+    // Restrict to the call field between the first two "--" separators.
+    extract: (item) => {
+      const parts = item.title.split(/\s*--\s*/);
+      const window = parts.length >= 2 ? parts[1] : item.title;
+      return extractCallsigns(window);
+    },
+  },
+];
+
 // ---------- Normalize / merge ----------
 
-function normalize(items, sourceName, now) {
+function normalize(items, source, now) {
   const out = [];
   for (const it of items) {
-    const calls = extractCallsigns(it.title);
+    const calls = source.extract(it);
     if (!calls.length) continue;
     const published = parseDate(it.pubDate) || now;
     for (const call of calls) {
@@ -149,7 +183,7 @@ function normalize(items, sourceName, now) {
         title: it.title,
         link: it.link || '',
         publishedAt: new Date(published).toISOString(),
-        source: sourceName,
+        source: source.name,
         firstSeen: now,
       });
     }
@@ -166,22 +200,35 @@ function parseDate(s) {
 // Merge new records with existing KV state. Preserves firstSeen of records
 // the client has already been told about (so client-side max-age windows
 // stay stable across cron runs) and drops anything past FEED_TTL_DAYS.
+//
+// When the same callsign appears in multiple sources, the most-recent
+// publishedAt wins for title/link, but `source` becomes a comma-joined
+// list so the client (and /healthz) can see the corroboration.
 function mergeWithExisting(existing, fresh, now) {
   const byCall = new Map();
-  // Seed with the previous payload so historical firstSeen sticks.
   for (const r of existing || []) {
     if (!r || !r.call) continue;
     byCall.set(r.call, r);
   }
   for (const r of fresh) {
     const prev = byCall.get(r.call);
-    if (prev) {
-      // Keep the earliest firstSeen, refresh the title/link/source to the
-      // newest occurrence in case DX-World rewrites a post.
-      byCall.set(r.call, { ...prev, title: r.title, link: r.link, publishedAt: r.publishedAt, source: r.source });
-    } else {
+    if (!prev) {
       byCall.set(r.call, r);
+      continue;
     }
+    // Merge source list; freshest publishedAt wins for the headline fields.
+    const sources = new Set(String(prev.source || '').split(',').filter(Boolean));
+    sources.add(r.source);
+    const prevPub = Date.parse(prev.publishedAt) || 0;
+    const currPub = Date.parse(r.publishedAt) || 0;
+    const newer = currPub > prevPub ? r : prev;
+    byCall.set(r.call, {
+      ...prev,
+      title: newer.title,
+      link: newer.link,
+      publishedAt: newer.publishedAt,
+      source: [...sources].sort().join(','),
+    });
   }
   const cutoff = now - FEED_TTL_DAYS * 24 * 3600 * 1000;
   return [...byCall.values()]
@@ -196,6 +243,7 @@ function toJson(state) {
     version: SCHEMA_VERSION,
     generated: new Date(state.generatedAt || Date.now()).toISOString(),
     count: state.records.length,
+    sources: state.sources || {},
     records: state.records,
   });
 }
@@ -228,11 +276,13 @@ function toXml(state) {
 
 async function readState(env) {
   const raw = await env.DXPEDITIONS.get(KV_KEY);
-  if (!raw) return { records: [], generatedAt: 0, lastFetchedAt: 0, lastError: '' };
+  if (!raw) return { records: [], generatedAt: 0, lastFetchedAt: 0, lastError: '', sources: {} };
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    parsed.sources = parsed.sources || {};
+    return parsed;
   } catch {
-    return { records: [], generatedAt: 0, lastFetchedAt: 0, lastError: 'corrupt kv payload' };
+    return { records: [], generatedAt: 0, lastFetchedAt: 0, lastError: 'corrupt kv payload', sources: {} };
   }
 }
 
@@ -248,7 +298,7 @@ const CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
-export default {
+const worker = {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
@@ -261,9 +311,6 @@ export default {
         headers: {
           ...CORS,
           'Content-Type': 'application/xml; charset=utf-8',
-          // Edge-cache 1h. Worker updates KV via cron, so a stale edge
-          // cache is at worst 1h behind the KV — fine for daily-cadence
-          // DXpedition announcements.
           'Cache-Control': 'public, max-age=3600',
         },
       });
@@ -278,18 +325,23 @@ export default {
       });
     }
     if (url.pathname === '/healthz') {
+      const sourcesHealth = {};
+      for (const [k, v] of Object.entries(state.sources || {})) {
+        sourcesHealth[k] = {
+          lastFetchedAt: v.lastFetchedAt ? new Date(v.lastFetchedAt).toISOString() : null,
+          lastError: v.lastError || null,
+          lastCount: v.lastCount || 0,
+        };
+      }
       return new Response(
         JSON.stringify({
           ok: !state.lastError,
           schemaVersion: SCHEMA_VERSION,
-          lastFetchedAt: state.lastFetchedAt
-            ? new Date(state.lastFetchedAt).toISOString()
-            : null,
-          generatedAt: state.generatedAt
-            ? new Date(state.generatedAt).toISOString()
-            : null,
+          lastFetchedAt: state.lastFetchedAt ? new Date(state.lastFetchedAt).toISOString() : null,
+          generatedAt: state.generatedAt ? new Date(state.generatedAt).toISOString() : null,
           count: state.records.length,
           lastError: state.lastError || null,
+          sources: sourcesHealth,
         }),
         { headers: { ...CORS, 'Content-Type': 'application/json' } },
       );
@@ -298,30 +350,59 @@ export default {
     return new Response('Not Found', { status: 404 });
   },
 
-  // Cron handler — fetch DX-World, merge, write back to KV.
-  // Failures are absorbed: we update lastError but DO NOT clobber the
-  // previous records[], so the public feed keeps serving last-known-good.
+  // Cron handler — fetch each registered source independently, merge their
+  // outputs, write back to KV.
+  //
+  // Per-source failure does NOT bubble: it gets recorded in
+  // sources[name].lastError but other sources still run and the merge
+  // proceeds with whatever did succeed. Only when ALL sources fail do we
+  // preserve the previous payload unchanged.
   async scheduled(_event, env, _ctx) {
     const now = Date.now();
     const prev = await readState(env);
-    try {
-      const items = await fetchDxWorld();
-      const fresh = normalize(items, 'dx-world', now);
-      const merged = mergeWithExisting(prev.records, fresh, now);
-      await writeState(env, {
-        records: merged,
-        generatedAt: now,
-        lastFetchedAt: now,
-        lastError: '',
-      });
-    } catch (err) {
-      // Bump lastFetchedAt so /healthz reflects the attempt; keep records.
-      await writeState(env, {
-        records: prev.records || [],
-        generatedAt: prev.generatedAt || 0,
-        lastFetchedAt: now,
-        lastError: String(err && err.message ? err.message : err),
-      });
+    const sources = { ...(prev.sources || {}) };
+    const allFresh = [];
+    let anyOk = false;
+
+    for (const src of SOURCES) {
+      try {
+        const xml = await fetchUrl(src.url);
+        const items = parseRss(xml);
+        const fresh = normalize(items, src, now);
+        allFresh.push(...fresh);
+        sources[src.name] = { lastFetchedAt: now, lastError: '', lastCount: fresh.length };
+        anyOk = true;
+      } catch (err) {
+        const prevSrc = sources[src.name] || {};
+        sources[src.name] = {
+          lastFetchedAt: now,
+          lastError: String(err && err.message ? err.message : err),
+          lastCount: prevSrc.lastCount || 0,
+        };
+      }
     }
+
+    // Build top-level lastError only when EVERY source failed. Partial
+    // failures stay reported in sources[] but ok=true at the top level —
+    // the public feed is still fresh, just less complete.
+    const failures = Object.entries(sources).filter(([_, s]) => s.lastError);
+    const topError = !anyOk
+      ? failures.map(([n, s]) => `${n}: ${s.lastError}`).join('; ')
+      : '';
+
+    const merged = anyOk ? mergeWithExisting(prev.records, allFresh, now) : (prev.records || []);
+    await writeState(env, {
+      records: merged,
+      generatedAt: anyOk ? now : (prev.generatedAt || 0),
+      lastFetchedAt: now,
+      lastError: topError,
+      sources,
+    });
   },
+
+  // Exposed so the temporary __bootstrap-cron endpoint (if re-added) can
+  // call into the same code path as the real cron without duplicating logic.
+  _SOURCES: SOURCES,
 };
+
+export default worker;
