@@ -800,6 +800,8 @@ let pskrConnected = false;
 let pskrMapConnected = false;
 const viewRbnBtn = document.getElementById('view-rbn-btn');
 const rbnView = document.getElementById('rbn-view');
+const viewContestsBtn = document.getElementById('view-contests-btn');
+const contestsView = document.getElementById('contests-view');
 const rbnCountEl = document.getElementById('rbn-count');
 const rbnClearBtn = document.getElementById('rbn-clear-btn');
 const rbnLegendEl = document.getElementById('rbn-legend');
@@ -6915,8 +6917,8 @@ window.api.onJtcatPopoutStatus((open) => {
 // RBN and DXCC are exclusive views that hide the split container.
 
 function setView(view) {
-  // Called for exclusive views (rbn, dxcc, directory) or to force a specific state
-  if (view === 'rbn' || view === 'dxcc' || view === 'directory') {
+  // Called for exclusive views (rbn, dxcc, directory, contests) or to force a specific state
+  if (view === 'rbn' || view === 'dxcc' || view === 'directory' || view === 'contests') {
     currentView = view;
     showTable = false;
     showMap = false;
@@ -6939,6 +6941,7 @@ function updateViewLayout() {
   rbnView.classList.add('hidden');
   jtcatView.classList.add('hidden');
   if (directoryView) directoryView.classList.add('hidden');
+  if (contestsView) contestsView.classList.add('hidden');
   stopDirvAutoRefresh();
 
   // Deactivate all view buttons
@@ -6976,6 +6979,15 @@ function updateViewLayout() {
     renderDirectoryView();
     startDirvAutoRefresh();
     updateParksStatsOverlay();
+    saveViewState();
+    return;
+  }
+
+  if (currentView === 'contests') {
+    splitContainerEl.classList.add('hidden');
+    if (contestsView) contestsView.classList.remove('hidden');
+    if (viewContestsBtn) viewContestsBtn.classList.add('active');
+    renderContestsView();
     saveViewState();
     return;
   }
@@ -7036,7 +7048,7 @@ function saveViewState() {
 }
 
 viewTableBtn.addEventListener('click', () => {
-  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory') {
+  if (currentView === 'rbn' || currentView === 'dxcc' || currentView === 'jtcat' || currentView === 'directory' || currentView === 'contests') {
     // Switching from exclusive view -> table only
     if (currentView === 'jtcat') stopJtcatView();
     currentView = 'table';
@@ -7093,6 +7105,235 @@ viewMapBtn.addEventListener('click', () => {
 });
 
 viewRbnBtn.addEventListener('click', () => setView('rbn'));
+if (viewContestsBtn) viewContestsBtn.addEventListener('click', () => setView('contests'));
+
+// --- Contests view ---
+// Card-grouped layout (one card per category in CONTESTS_CATEGORY_ORDER)
+// with status pills for running/upcoming. WA7BNM Contest Calendar link
+// labeled per their terms — never copies their layout or content.
+const CONTESTS_CATEGORY_ORDER = [
+  { key: 'worldwide-dx',    label: '🌍 Worldwide DX' },
+  { key: 'north-american',  label: '🇺🇸 North American' },
+  { key: 'state-qso-party', label: '🗺️ State QSO Parties' },
+  { key: 'special-event',   label: '🏛️ Special Events' },
+  { key: 'operating-event', label: '🎯 Operating Events' },
+  { key: 'single-band',     label: '📡 Single-Band' },
+  { key: 'vhf-uhf',         label: '📶 VHF / UHF' },
+  { key: 'digital',         label: '💾 Digital' },
+  { key: 'weekly-sprint',   label: '⚡ Weekly Sprints' },
+  { key: 'monthly-qrp',     label: '🔋 QRP / Monthly' },
+  { key: 'monthly',         label: '📅 Monthly' },
+  { key: 'newcomer',        label: '🌱 Newcomer / YOTA' },
+  { key: 'pota-sota',       label: '🏞️ POTA / SOTA Events' },
+  { key: 'regional',        label: '🌐 Regional' },
+];
+const CONTESTS_WA7BNM_URL = 'https://www.contestcalendar.com/';
+let contestsCache = null;
+let contestsRefreshTimer = null;
+
+function _contestsParseDate(s) { return s ? new Date(s) : null; }
+
+function _contestsStatus(c, now) {
+  const start = _contestsParseDate(c.start);
+  const end = _contestsParseDate(c.end);
+  if (!start) return { kind: 'unscheduled', label: c.whenRule || 'See sponsor' };
+  if (start <= now && end >= now) return { kind: 'live', label: 'LIVE', start, end };
+  const diffMs = start.getTime() - now.getTime();
+  const diffH = Math.round(diffMs / 3600000);
+  const diffD = Math.floor(diffH / 24);
+  if (diffD >= 1) return { kind: 'soon', label: `in ${diffD}d`, start, end };
+  if (diffH >= 1) return { kind: 'imminent', label: `in ${diffH}h`, start, end };
+  return { kind: 'imminent', label: 'starting soon', start, end };
+}
+
+function _contestsFmtUtc(d) {
+  if (!d) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}z`;
+}
+
+function _contestsRunningEndLabel(end, now) {
+  const ms = end.getTime() - now.getTime();
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h left`;
+  if (h >= 1) return `${h}h ${m}m left`;
+  return `${m}m left`;
+}
+
+async function renderContestsView() {
+  const host = document.getElementById('contests-cards');
+  if (!host) return;
+  if (!contestsCache) {
+    host.innerHTML = '<div class="contests-loading">Loading contests…</div>';
+    try {
+      contestsCache = await window.api.getContests();
+    } catch (err) {
+      host.innerHTML = '<div class="contests-error">Failed to load contests: ' + (err && err.message) + '</div>';
+      return;
+    }
+  }
+  // WA7BNM link (labeled per their terms). Bound once per renderContestsView call.
+  const wa7bnmLink = document.getElementById('contests-wa7bnm-link');
+  if (wa7bnmLink) {
+    wa7bnmLink.textContent = 'WA7BNM Contest Calendar';
+    wa7bnmLink.onclick = (e) => { e.preventDefault(); window.api.openExternal(CONTESTS_WA7BNM_URL); };
+  }
+
+  _contestsRender();
+  // Live tick: refresh status labels every 60s so countdowns stay current.
+  if (contestsRefreshTimer) clearInterval(contestsRefreshTimer);
+  contestsRefreshTimer = setInterval(() => {
+    if (currentView !== 'contests') {
+      clearInterval(contestsRefreshTimer);
+      contestsRefreshTimer = null;
+      return;
+    }
+    _contestsRender();
+  }, 60000);
+}
+
+function _contestsRender() {
+  const host = document.getElementById('contests-cards');
+  if (!host || !contestsCache) return;
+  const now = new Date();
+  const showPast = document.getElementById('contests-show-past').checked;
+
+  // Group by category, preserving each contest's status for sort.
+  const byCat = new Map();
+  for (const c of contestsCache.contests) {
+    const status = _contestsStatus(c, now);
+    if (!showPast && status.kind === 'unscheduled') {
+      // Unresolved-cadence entries still show — they're useful even without dates.
+    }
+    const entry = { ...c, _status: status };
+    const k = c.category || 'other';
+    if (!byCat.has(k)) byCat.set(k, []);
+    byCat.get(k).push(entry);
+  }
+  // Within each category: live first, then soon, then imminent, then by date, then unscheduled.
+  const kindRank = { live: 0, imminent: 1, soon: 2, unscheduled: 3 };
+  for (const arr of byCat.values()) {
+    arr.sort((a, b) => {
+      const ra = kindRank[a._status.kind] ?? 9;
+      const rb = kindRank[b._status.kind] ?? 9;
+      if (ra !== rb) return ra - rb;
+      const sa = a._status.start ? a._status.start.getTime() : Infinity;
+      const sb = b._status.start ? b._status.start.getTime() : Infinity;
+      return sa - sb;
+    });
+  }
+
+  // Render cards in CONTESTS_CATEGORY_ORDER; any unknown categories appended.
+  const html = [];
+  const seen = new Set();
+  for (const { key, label } of CONTESTS_CATEGORY_ORDER) {
+    if (!byCat.has(key)) continue;
+    seen.add(key);
+    html.push(_contestsCardHtml(label, byCat.get(key), now));
+  }
+  for (const [key, arr] of byCat.entries()) {
+    if (seen.has(key)) continue;
+    html.push(_contestsCardHtml(key, arr, now));
+  }
+  host.innerHTML = html.join('');
+
+  // Wire entry click → drawer.
+  host.querySelectorAll('.contest-entry').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = el.getAttribute('data-id');
+      const c = contestsCache.contests.find((x) => x.id === id);
+      if (c) _contestsOpenDrawer(c);
+    });
+  });
+}
+
+function _contestsCardHtml(label, arr, now) {
+  const rows = arr.map((c) => {
+    const s = c._status;
+    const pillClass = `contest-pill contest-pill-${s.kind}`;
+    let pillText = s.label;
+    if (s.kind === 'live') pillText = `LIVE — ${_contestsRunningEndLabel(s.end, now)}`;
+    const modes = (c.modes || []).join(', ');
+    const sponsor = c.sponsor || '';
+    return `
+      <div class="contest-entry" data-id="${c.id}">
+        <span class="${pillClass}">${_contestsEscape(pillText)}</span>
+        <div class="contest-entry-name">${_contestsEscape(c.name)}</div>
+        <div class="contest-entry-meta">${_contestsEscape(modes)} · ${_contestsEscape(sponsor)}</div>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="contest-card">
+      <div class="contest-card-header">${label} <span class="contest-card-count">${arr.length}</span></div>
+      <div class="contest-card-body">${rows}</div>
+    </div>
+  `;
+}
+
+function _contestsEscape(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function _contestsOpenDrawer(c) {
+  const drawer = document.getElementById('contests-detail-drawer');
+  const body = document.getElementById('contests-drawer-body');
+  if (!drawer || !body) return;
+  const start = _contestsParseDate(c.start);
+  const end = _contestsParseDate(c.end);
+  const bands = (c.bands || []).join(', ');
+  const modes = (c.modes || []).join(', ');
+  const sponsor = _contestsEscape(c.sponsor || '');
+  const name = _contestsEscape(c.name || '');
+  const whenRule = _contestsEscape(c.whenRule || '');
+  const notes = _contestsEscape(c.notes || '');
+  const duration = c.durationHours
+    ? (c.durationHours >= 168 ? `${Math.round(c.durationHours / 168)}w` : (c.durationHours >= 24 ? `${Math.round(c.durationHours / 24)}d` : `${c.durationHours}h`))
+    : '';
+  const startStr = start ? _contestsFmtUtc(start) : whenRule;
+  const endStr = end ? _contestsFmtUtc(end) : '';
+  body.innerHTML = `
+    <h3>${name}</h3>
+    <div class="contests-drawer-sponsor">${sponsor}</div>
+    <dl class="contests-drawer-dl">
+      <dt>When</dt><dd>${_contestsEscape(whenRule)}</dd>
+      <dt>Next occurrence</dt><dd>${_contestsEscape(startStr)}${endStr ? ' → ' + _contestsEscape(endStr) : ''}</dd>
+      ${duration ? `<dt>Duration</dt><dd>${duration}</dd>` : ''}
+      <dt>Bands</dt><dd>${_contestsEscape(bands)}</dd>
+      <dt>Modes</dt><dd>${_contestsEscape(modes)}</dd>
+      ${notes ? `<dt>Notes</dt><dd>${notes}</dd>` : ''}
+    </dl>
+    <div class="contests-drawer-actions">
+      <a href="#" class="contests-drawer-btn" data-url="${_contestsEscape(c.website || '')}">Open sponsor site &#x2197;</a>
+      ${c.rulesUrl && c.rulesUrl !== c.website ? `<a href="#" class="contests-drawer-btn" data-url="${_contestsEscape(c.rulesUrl)}">Rules &#x2197;</a>` : ''}
+      <a href="#" class="contests-drawer-btn contests-drawer-btn-secondary" data-url="${_contestsEscape(CONTESTS_WA7BNM_URL)}">View on WA7BNM Contest Calendar &#x2197;</a>
+    </div>
+  `;
+  body.querySelectorAll('.contests-drawer-btn').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const u = a.getAttribute('data-url');
+      if (u) window.api.openExternal(u);
+    });
+  });
+  drawer.classList.remove('hidden');
+}
+
+document.getElementById('contests-drawer-close')?.addEventListener('click', () => {
+  document.getElementById('contests-detail-drawer')?.classList.add('hidden');
+});
+document.getElementById('contests-show-past')?.addEventListener('change', () => {
+  if (contestsCache) _contestsRender();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && currentView === 'contests') {
+    const drawer = document.getElementById('contests-detail-drawer');
+    if (drawer && !drawer.classList.contains('hidden')) drawer.classList.add('hidden');
+  }
+});
 if (viewConditionsBtn) viewConditionsBtn.addEventListener('click', () => {
   // Conditions is a popout, not an in-window view — keeps the main app
   // on whatever spot view the user was hunting from, and the panel can

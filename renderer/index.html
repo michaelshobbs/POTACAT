@@ -194,6 +194,7 @@
             <button class="view-menu-item" id="view-sstv-btn">SSTV</button>
             <button class="view-menu-item" id="view-bandspread-btn">Bandspread</button>
             <button class="view-menu-item" id="view-rbn-btn">Propagation</button>
+            <button class="view-menu-item" id="view-contests-btn">Contests</button>
             <button class="view-menu-item" id="cluster-terminal-btn">Terminal</button>
             <button class="view-menu-item" id="view-directory-btn">SWL/HF Net Directory</button>
             <button class="view-menu-item" id="view-conditions-btn" title="Open Solar &amp; Propagation Conditions in a new window">Conditions &#x2197;</button>
@@ -958,6 +959,25 @@
       <div class="dirv-footer">
         <span class="dir-suggest-link">Want a net or SWL station added? <a href="#" id="dirv-suggest-sheet">Leave a comment on the Google Sheet</a></span>
         <span class="dirv-hint">Click a row to tune your radio</span>
+      </div>
+    </div>
+    <div id="contests-view" class="hidden">
+      <div class="contests-header">
+        <h2>Contests &amp; Operating Events</h2>
+        <div class="contests-attribution">
+          Data curated from sponsor sources. For the most comprehensive
+          third-party index, see
+          <a href="#" id="contests-wa7bnm-link" class="link">WA7BNM Contest Calendar</a>.
+        </div>
+        <div class="contests-filter-row">
+          <label class="contests-toggle"><input type="checkbox" id="contests-show-past" /> Show past (next-year occurrence)</label>
+          <span class="contests-hint">Tap any card for sponsor link &amp; rules</span>
+        </div>
+      </div>
+      <div id="contests-cards"></div>
+      <div id="contests-detail-drawer" class="contests-drawer hidden">
+        <button class="contests-drawer-close" id="contests-drawer-close" title="Close (Esc)">&times;</button>
+        <div id="contests-drawer-body"></div>
       </div>
     </div>
     <div id="rbn-view" class="hidden">

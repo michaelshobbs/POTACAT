@@ -39,6 +39,7 @@ A small DSL so a date-parser can compute the actual date for any year:
 | `weekly:<day>:<HHMM>z` | `weekly:Wed:1300z` | Recurring weekly. |
 | `monthly-first-weekend` | — | First full Sat+Sun weekend of every month (POTA Plaque pattern). |
 | `monthly-nth:<n>:<day>` | `monthly-nth:3:Sun` | Third Sunday of every month. |
+| `range:<MM-DD>:<MM-DD>` | `range:07-01:07-07` | Fixed calendar date range each year (13 Colonies, YOTA Month). |
 | `custom:<text>` | `custom:see SOTA reflector` | Fallback when no formula applies. |
 
 ### Adding entries

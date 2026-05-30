@@ -14936,6 +14936,24 @@ app.whenReady().then(() => {
   ipcMain.handle('get-rig-models', () => getModelList());
   ipcMain.handle('get-sdr-directory', () => require('./lib/sdr-directory').STATIONS);
 
+  // Resolve contest occurrences for the current moment + serialize as
+  // ISO strings (Date objects don't survive structured-clone through IPC
+  // round-trips cleanly across all Electron versions). Renderer parses
+  // back to Date when rendering.
+  ipcMain.handle('get-contests', () => {
+    const db = require('./lib/contests-db');
+    const now = new Date();
+    const resolved = db.getResolved(now);
+    return {
+      now: now.toISOString(),
+      contests: resolved.map((c) => ({
+        ...c,
+        start: c.start ? c.start.toISOString() : null,
+        end: c.end ? c.end.toISOString() : null,
+      })),
+    };
+  });
+
   // Ensure ECHOCAT is serving a Tailscale-issued LE cert before we
   // hand a pair URL to the user. iOS rejects self-signed certs at
   // the trust evaluation (NSAllowsLocalNetworking neuters
