@@ -1196,11 +1196,29 @@
       <!-- Mode + frequency + status bar -->
       <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-header);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">
         <select id="sstv-mode-phone" style="font-size:13px;padding:3px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;">
-          <option value="martin1">Martin M1</option>
-          <option value="scottie1">Scottie S1</option>
-          <option value="scottie2">Scottie S2</option>
-          <option value="robot36">Robot 36</option>
-          <option value="robot72">Robot 72</option>
+          <optgroup label="Martin">
+            <option value="martin1">Martin M1</option>
+            <option value="martin2">Martin M2</option>
+            <option value="martin3">Martin M3</option>
+            <option value="martin4">Martin M4</option>
+          </optgroup>
+          <optgroup label="Scottie">
+            <option value="scottie1">Scottie S1</option>
+            <option value="scottie2">Scottie S2</option>
+            <option value="scottieDx">Scottie DX</option>
+          </optgroup>
+          <optgroup label="Robot">
+            <option value="robot24">Robot 24</option>
+            <option value="robot36">Robot 36</option>
+            <option value="robot72">Robot 72</option>
+          </optgroup>
+          <optgroup label="PD">
+            <option value="pd90">PD-90</option>
+            <option value="pd120">PD-120</option>
+            <option value="pd160">PD-160</option>
+            <option value="pd180">PD-180</option>
+            <option value="pd240">PD-240</option>
+          </optgroup>
         </select>
         <select id="sstv-freq-phone" style="font-size:13px;padding:3px 6px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:4px;">
           <optgroup label="80m">

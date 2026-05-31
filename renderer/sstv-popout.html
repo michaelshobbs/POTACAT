@@ -191,11 +191,29 @@
   <!-- Controls -->
   <div class="sstv-controls">
     <select id="mode-select" title="SSTV Mode">
-      <option value="martin1">Martin M1</option>
-      <option value="scottie1">Scottie S1</option>
-      <option value="scottie2">Scottie S2</option>
-      <option value="robot36">Robot 36</option>
-      <option value="robot72">Robot 72</option>
+      <optgroup label="Martin">
+        <option value="martin1">Martin M1 (114s)</option>
+        <option value="martin2">Martin M2 (58s)</option>
+        <option value="martin3">Martin M3 (57s)</option>
+        <option value="martin4">Martin M4 (29s)</option>
+      </optgroup>
+      <optgroup label="Scottie">
+        <option value="scottie1">Scottie S1 (110s)</option>
+        <option value="scottie2">Scottie S2 (71s)</option>
+        <option value="scottieDx">Scottie DX (269s)</option>
+      </optgroup>
+      <optgroup label="Robot">
+        <option value="robot24">Robot 24 (24s)</option>
+        <option value="robot36">Robot 36 (36s)</option>
+        <option value="robot72">Robot 72 (72s)</option>
+      </optgroup>
+      <optgroup label="PD">
+        <option value="pd90">PD-90 (90s)</option>
+        <option value="pd120">PD-120 (126s)</option>
+        <option value="pd160">PD-160 (161s)</option>
+        <option value="pd180">PD-180 (187s)</option>
+        <option value="pd240">PD-240 (248s)</option>
+      </optgroup>
     </select>
     <button class="sstv-btn" id="load-btn" title="Load image from file">Choose Photo</button>
     <button class="sstv-btn" id="random-btn" title="Generate random pattern">Random</button>
