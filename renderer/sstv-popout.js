@@ -38,6 +38,60 @@ let bgImage = null;       // loaded/generated background Image or ImageData
 let bgParams = null;      // pattern generator params (for template save)
 let replyImage = null;    // received image for PiP reply (ImageData)
 let lastRxImage = null;   // most recent decode, for the "Reply with this" button on rx-canvas
+let rxSlantPx = 0;        // user-applied horizontal shear in px (top→bottom)
+
+// Re-render the last decoded image onto rx-canvas with a horizontal shear.
+// Each row y gets shifted by Math.round(slantPx * y / (h-1)) pixels, so:
+//   slantPx = 0   →  no change
+//   slantPx > 0   →  bottom rows shifted right (corrects top-right→bottom-left slant)
+//   slantPx < 0   →  bottom rows shifted left (corrects top-left→bottom-right slant)
+// Pixels that fall outside the source row are filled black.
+function renderSlantedImage(rxImage, slantPx) {
+  if (!rxImage || !rxImage.imageData) return;
+  const w = rxImage.width, h = rxImage.height;
+  rxCanvas.width = w; rxCanvas.height = h;
+  if (!slantPx) {
+    rxCtx.putImageData(new ImageData(new Uint8ClampedArray(rxImage.imageData), w, h), 0, 0);
+    return;
+  }
+  const src = rxImage.imageData;
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const dx = Math.round(slantPx * y / (h - 1));
+    for (let x = 0; x < w; x++) {
+      const srcX = x - dx;
+      const di = (y * w + x) * 4;
+      if (srcX < 0 || srcX >= w) {
+        out[di] = 0; out[di + 1] = 0; out[di + 2] = 0; out[di + 3] = 255;
+      } else {
+        const si = (y * w + srcX) * 4;
+        out[di] = src[si]; out[di + 1] = src[si + 1]; out[di + 2] = src[si + 2]; out[di + 3] = 255;
+      }
+    }
+  }
+  rxCtx.putImageData(new ImageData(out, w, h), 0, 0);
+}
+
+// Wire the slant slider once the DOM is ready.
+(function wireSlantSlider() {
+  const slider = document.getElementById('rx-slant-slider');
+  const valueEl = document.getElementById('rx-slant-value');
+  const resetBtn = document.getElementById('rx-slant-reset');
+  if (!slider || !valueEl) return;
+  slider.addEventListener('input', () => {
+    rxSlantPx = parseInt(slider.value, 10) || 0;
+    valueEl.textContent = (rxSlantPx > 0 ? '+' : '') + rxSlantPx + ' px';
+    if (lastRxImage) renderSlantedImage(lastRxImage, rxSlantPx);
+  });
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      slider.value = 0;
+      rxSlantPx = 0;
+      valueEl.textContent = '0 px';
+      if (lastRxImage) renderSlantedImage(lastRxImage, 0);
+    });
+  }
+})();
 let replyInset = { x: -1, y: -1, scale: 0.28, rotation: 0 }; // -1 = auto position (bottom-right)
 let galleryImages = [];   // [{filename, timestamp, mode, dataUrl}]
 let sstvAudioCtx = null;
@@ -1960,6 +2014,14 @@ window.api.onSstvRxImage((data) => {
     };
     const rxReplyBtn = document.getElementById('rx-reply-btn');
     if (rxReplyBtn) rxReplyBtn.style.display = '';
+    // Reveal the slant slider; reset slant for the new decode.
+    const slantRow = document.getElementById('rx-slant-row');
+    const slantSlider = document.getElementById('rx-slant-slider');
+    const slantValue = document.getElementById('rx-slant-value');
+    if (slantRow) slantRow.style.display = 'flex';
+    if (slantSlider) slantSlider.value = 0;
+    if (slantValue) slantValue.textContent = '0 px';
+    rxSlantPx = 0;
   }
 
   // Add to gallery regardless of mode
