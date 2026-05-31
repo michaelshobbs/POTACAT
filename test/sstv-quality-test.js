@@ -157,6 +157,13 @@ const BASELINES = [
   { mode: 'pd160', drift: 0, baseline: 12.9 },
   { mode: 'pd180', drift: 0, baseline: 12.3 },
   { mode: 'pd240', drift: 0, baseline: 14.8 },
+  // Additional modes (added 2026-05-31). Martin M2/M3/M4, Scottie
+  // DX, Robot 24 — reuse existing decoders, just new entries.
+  { mode: 'martin2',   drift: 0, baseline: 28.0 },
+  { mode: 'martin3',   drift: 0, baseline: 50.0 },  // small image, encode round-trips perfectly
+  { mode: 'martin4',   drift: 0, baseline: 38.0 },
+  { mode: 'scottieDx', drift: 0, baseline: 50.0 },  // slow scan, near-perfect
+  { mode: 'robot24',   drift: 0, baseline: 22.0 },
 ];
 
 function fmtDrift(d) {
