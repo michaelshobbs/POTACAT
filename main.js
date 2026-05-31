@@ -3815,7 +3815,49 @@ function stopJtcatTune() {
   sendCatLog('[JTCAT] Tune OFF');
 }
 
+// In-process spectrum FFT — runs at ~10 fps when a mobile client
+// has the spectrum panel open. Reads directly from
+// ft8Engine._audioBuffer so it works regardless of which renderer
+// window happens to have audio. Stopped when nobody's subscribed
+// so CPU is zero when nobody's looking. K3SBP 2026-05-31.
+const { computeSpectrumBins } = require('./lib/spectrum-fft');
+const SPECTRUM_INTERVAL_MS = 100;
+const SPECTRUM_BIN_COUNT = 160;
+let _spectrumTimer = null;
+
+function startInProcessSpectrum() {
+  if (_spectrumTimer) return;
+  _spectrumTimer = setInterval(() => {
+    if (!ft8Engine || !ft8Engine._audioBuffer) return;
+    if (!remoteServer || !remoteServer.hasClient()) return;
+    const bins = computeSpectrumBins(
+      ft8Engine._audioBuffer,
+      ft8Engine._audioOffset || 0,
+      SPECTRUM_BIN_COUNT,
+    );
+    // Convert Uint8Array to plain array — JSON.stringify on Uint8Array
+    // emits an object with numeric string keys, not what the protocol
+    // validator expects.
+    const out = new Array(bins.length);
+    for (let i = 0; i < bins.length; i++) out[i] = bins[i];
+    remoteServer.broadcastJtcatSpectrum(out);
+  }, SPECTRUM_INTERVAL_MS);
+  console.log('[JTCAT] In-process spectrum loop started');
+}
+
+function stopInProcessSpectrum() {
+  if (!_spectrumTimer) return;
+  clearInterval(_spectrumTimer);
+  _spectrumTimer = null;
+  console.log('[JTCAT] In-process spectrum loop stopped');
+}
+
 function stopJtcat() {
+  // Spectrum loop has no reason to keep running once the engine is
+  // gone — audioBuffer reads would all return zeros anyway. Mobile
+  // re-subscribes on the next FT8-tab open.
+  stopInProcessSpectrum();
+
   // Clean up any active QSOs to prevent stuck state
   if (remoteJtcatQso) {
     remoteJtcatQso = null;
@@ -5742,6 +5784,10 @@ function connectRemote() {
     if (win && !win.isDestroyed()) {
       win.webContents.send('remote-status', { connected: false });
     }
+    // Stop the in-process spectrum loop — only mobile would have
+    // subscribed it, and mobile re-subscribes on reconnect via the
+    // SpectrumPanel useEffect. K3SBP 2026-05-31.
+    stopInProcessSpectrum();
     // Defer the heavy teardown by a 60-second grace period so an iOS
     // background-suspend (commonly 30-45s) doesn't kill the JTCAT
     // engine and force a full restart when the phone wakes back up.
@@ -7115,6 +7161,16 @@ function connectRemote() {
     stopJtcat();
     remoteJtcatQso = null;
     if (win && !win.isDestroyed()) win.webContents.send('jtcat-stop-for-remote');
+  });
+
+  // Mobile spectrum subscribe — see lib/spectrum-fft.js for the
+  // FFT, and lib/echocat-protocol.js for the message def. Started
+  // / stopped here so it survives across reconnects and doesn't
+  // depend on which renderer window happens to be open. K3SBP
+  // 2026-05-31.
+  remoteServer.on('jtcat-spectrum-subscribe', ({ on }) => {
+    if (on) startInProcessSpectrum();
+    else stopInProcessSpectrum();
   });
 
   remoteServer.on('jtcat-call-cq', async () => {
