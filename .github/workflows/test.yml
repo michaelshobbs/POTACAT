@@ -30,3 +30,5 @@ jobs:
           node-version: '20'
       - name: Run JTCAT regression suite
         run: node test/jtcat-test.js
+      - name: Run SSTV regression suite
+        run: node test/sstv-test.js
