@@ -1,0 +1,32 @@
+name: Test
+
+# Runs on every push to master + every PR. Fast (~1 min) — pure-JS
+# regression suite for JTCAT FT8/FT4/FT2 state machine, decode
+# classifier, callsign heuristic, mode handling, and the pre-encode
+# race fix. No Electron, no native modules, no live radio.
+#
+# See test/jtcat-test.js for what's covered and
+# memory/project_jtcat_regression_invariants.md for the documented
+# WSJT-X-parity contract these tests enforce.
+#
+# To gate merges on this passing, enable branch protection in
+# GitHub Settings → Branches → master → "Require status checks
+# to pass before merging" and tick the "jtcat-tests" job below.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  jtcat-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run JTCAT regression suite
+        run: node test/jtcat-test.js
