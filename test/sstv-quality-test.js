@@ -64,6 +64,39 @@ function psnr(mse) {
   return 10 * Math.log10(255 * 255 / mse);
 }
 
+// Add Gaussian white noise to a sample buffer at a target SNR (dB
+// relative to signal RMS). The encoder produces sine waves with peak
+// 1.0 / RMS ≈ 0.707. We measure the actual signal RMS and scale noise
+// to hit the requested SNR. Box-Muller for the Gaussian samples;
+// seeded LCG so noise tests are deterministic.
+function addNoise(samples, snrDb, seed) {
+  if (snrDb == null || snrDb >= 200) return samples;
+  // Signal RMS
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i];
+  const sigRms = Math.sqrt(sumSq / samples.length);
+  // Target noise RMS
+  const targetNoiseRms = sigRms * Math.pow(10, -snrDb / 20);
+  // Seeded LCG (Numerical Recipes constants) for reproducible noise
+  let s = (seed || 1) >>> 0;
+  function rand() {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  }
+  // Box-Muller pairs
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i += 2) {
+    const u1 = Math.max(1e-12, rand());
+    const u2 = rand();
+    const mag = Math.sqrt(-2 * Math.log(u1)) * targetNoiseRms;
+    const z0 = mag * Math.cos(2 * Math.PI * u2);
+    const z1 = mag * Math.sin(2 * Math.PI * u2);
+    out[i] = samples[i] + z0;
+    if (i + 1 < samples.length) out[i + 1] = samples[i + 1] + z1;
+  }
+  return out;
+}
+
 // Linear-interp resample to simulate encoder-clock drift (in ppm).
 function addClockDrift(samples, driftPpm) {
   if (driftPpm === 0) return samples;
@@ -83,6 +116,7 @@ function addClockDrift(samples, driftPpm) {
 function decodeOne(modeKey, opts) {
   opts = opts || {};
   const drift = opts.drift || 0;
+  const snrDb = opts.snrDb;
   const mode = MODES[modeKey];
   const srcImg = makeTestImage(mode.width, mode.height);
   let samples = encodeImage(srcImg, mode.width, mode.height, modeKey);
@@ -92,6 +126,7 @@ function decodeOne(modeKey, opts) {
   padded.set(samples, padSamples);
   samples = padded;
   if (drift) samples = addClockDrift(samples, drift);
+  if (snrDb != null) samples = addNoise(samples, snrDb, opts.noiseSeed || 1);
   const decoder = new SstvDecoder();
   let finalImage = null;
   for (let i = 0; i < samples.length; i += CHUNK) {
@@ -168,6 +203,36 @@ const BASELINES = [
   { mode: 'martin4',   drift: 0, baseline: 41.2 },
   { mode: 'scottieDx', drift: 0, baseline: 50.0 },  // slow scan, near-perfect
   { mode: 'robot24',   drift: 0, baseline: 24.3 },
+
+  // Noise robustness cells (added 2026-05-31). Deterministic
+  // Gaussian noise injected after encode at the specified SNR (seed=1).
+  // Locks in current noise-floor behavior — any future change that
+  // breaks weak-signal decoding gets caught.
+  //
+  // SNR is dB of signal RMS over noise RMS. Real-world weak-SSTV
+  // sits in the 10–20 dB SNR range; below 5 dB even MMSSTV
+  // struggles, so we stop the matrix there.
+  //
+  // ANOMALY: robot36 @ 30dB seed=1 produces 15.4 dB PSNR — WORSE than
+  // 20dB SNR (24.3 dB) on the same seed. With seed=42 it's 25.2 dB.
+  // This is a noise-pattern sensitivity in robot36's sync detection
+  // (probe-noise.js confirms). Baseline captures current reality; a
+  // future sync-detection fix should raise this floor.
+  { mode: 'martin1',  drift: 0, snrDb: 30, baseline: 41.9 },
+  { mode: 'martin1',  drift: 0, snrDb: 20, baseline: 35.3 },
+  { mode: 'scottie1', drift: 0, snrDb: 30, baseline: 40.7 },
+  { mode: 'scottie1', drift: 0, snrDb: 20, baseline: 34.6 },
+  { mode: 'scottie2', drift: 0, snrDb: 30, baseline: 31.3 },
+  { mode: 'scottie2', drift: 0, snrDb: 20, baseline: 29.1 },
+  { mode: 'scottie2', drift: 0, snrDb: 10, baseline: 22.6 },
+  { mode: 'robot36',  drift: 0, snrDb: 30, baseline: 15.4 },  // anomalously low (seed=1 sensitivity)
+  { mode: 'robot36',  drift: 0, snrDb: 20, baseline: 24.3 },
+  { mode: 'robot36',  drift: 0, snrDb: 10, baseline: 19.6 },
+  { mode: 'robot72',  drift: 0, snrDb: 30, baseline: 28.4 },
+  { mode: 'robot72',  drift: 0, snrDb: 20, baseline: 26.5 },
+  { mode: 'pd180',    drift: 0, snrDb: 30, baseline: 14.2 },
+  { mode: 'pd180',    drift: 0, snrDb: 20, baseline: 14.1 },
+  { mode: 'pd180',    drift: 0, snrDb: 10, baseline: 13.0 },
 ];
 
 function fmtDrift(d) {
@@ -181,20 +246,25 @@ let regressions = [];
 
 console.log('SSTV PSNR regression matrix (tolerance: ±' + TOLERANCE_DB + ' dB)\n');
 
+function fmtCond(cell) {
+  const d = fmtDrift(cell.drift);
+  if (cell.snrDb != null) return `${d} snr=${(cell.snrDb + 'dB').padStart(4)}`;
+  return d;
+}
+
 for (const cell of BASELINES) {
-  const r = decodeOne(cell.mode, { drift: cell.drift });
+  const r = decodeOne(cell.mode, { drift: cell.drift, snrDb: cell.snrDb });
   const floor = cell.baseline - TOLERANCE_DB;
   const psnrStr = r.psnr == null ? '---' : r.psnr.toFixed(2);
   const baselineStr = cell.baseline.toFixed(1);
-  const drift = fmtDrift(cell.drift);
   const ok = r.psnr != null && r.psnr >= floor;
   if (ok) {
     pass++;
-    console.log(`  ✓ [${cell.mode.padEnd(8)}] drift=${drift}  ${psnrStr} dB  (baseline ${baselineStr}, floor ${floor.toFixed(1)})`);
+    console.log(`  ✓ [${cell.mode.padEnd(8)}] ${fmtCond(cell)}  ${psnrStr} dB  (baseline ${baselineStr}, floor ${floor.toFixed(1)})`);
   } else {
     fail++;
     regressions.push({ cell, actual: r.psnr });
-    console.log(`  ✗ [${cell.mode.padEnd(8)}] drift=${drift}  ${psnrStr} dB  REGRESSION (baseline ${baselineStr}, floor ${floor.toFixed(1)})`);
+    console.log(`  ✗ [${cell.mode.padEnd(8)}] ${fmtCond(cell)}  ${psnrStr} dB  REGRESSION (baseline ${baselineStr}, floor ${floor.toFixed(1)})`);
   }
 }
 
@@ -204,7 +274,7 @@ if (fail > 0) {
   console.log('\nFAILURES:');
   for (const r of regressions) {
     const drop = r.cell.baseline - (r.actual == null ? 0 : r.actual);
-    console.log(`  ${r.cell.mode} drift=${fmtDrift(r.cell.drift)}: dropped ${drop.toFixed(2)} dB (got ${r.actual == null ? 'NULL' : r.actual.toFixed(2)}, baseline ${r.cell.baseline.toFixed(1)})`);
+    console.log(`  ${r.cell.mode} ${fmtCond(r.cell)}: dropped ${drop.toFixed(2)} dB (got ${r.actual == null ? 'NULL' : r.actual.toFixed(2)}, baseline ${r.cell.baseline.toFixed(1)})`);
   }
   process.exit(1);
 }
