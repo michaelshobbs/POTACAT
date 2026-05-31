@@ -225,7 +225,13 @@ const BASELINES = [
   { mode: 'scottie2', drift: 0, snrDb: 30, baseline: 31.3 },
   { mode: 'scottie2', drift: 0, snrDb: 20, baseline: 29.1 },
   { mode: 'scottie2', drift: 0, snrDb: 10, baseline: 22.6 },
-  { mode: 'robot36',  drift: 0, snrDb: 30, baseline: 15.4 },  // anomalously low (seed=1 sensitivity)
+  // robot36 @ 30dB SNR seed=1 — lifted 2026-05-31 from 15.4 → 24.9 dB
+  // by gating late-trigger slant updates on a "drift detected" flag
+  // (only run lines 128+ if line-12 correction was >300 ppm). The
+  // seed=1 noise was tricking the late regressor into applying fake
+  // slope; YCbCr modes have noisy enough per-line sync that late
+  // triggers were over-correcting on it.
+  { mode: 'robot36',  drift: 0, snrDb: 30, baseline: 24.9 },
   { mode: 'robot36',  drift: 0, snrDb: 20, baseline: 24.3 },
   { mode: 'robot36',  drift: 0, snrDb: 10, baseline: 19.6 },
   { mode: 'robot72',  drift: 0, snrDb: 30, baseline: 28.4 },
