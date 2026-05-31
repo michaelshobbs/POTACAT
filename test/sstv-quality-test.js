@@ -146,6 +146,17 @@ const BASELINES = [
   { mode: 'scottie1', drift: -2000, baseline: 29.8 },
   { mode: 'scottie2', drift:  2000, baseline: 25.5 },
   { mode: 'scottie2', drift: -2000, baseline: 25.4 },
+  // PD modes (new in this commit — encoder existed, decoder added
+  // 2026-05-31). PSNRs are low because PD's averaged-chroma
+  // line-pair structure inherently loses some information; the
+  // ceiling is content-dependent. Floors here lock in "the decoder
+  // produces a recognizable image" — future improvements to
+  // chroma upsampling or per-pixel sampling will raise these.
+  { mode: 'pd90',  drift: 0, baseline: 12.0 },
+  { mode: 'pd120', drift: 0, baseline:  9.9 },
+  { mode: 'pd160', drift: 0, baseline: 12.9 },
+  { mode: 'pd180', drift: 0, baseline: 12.3 },
+  { mode: 'pd240', drift: 0, baseline: 14.8 },
 ];
 
 function fmtDrift(d) {
