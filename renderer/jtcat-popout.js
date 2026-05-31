@@ -1443,7 +1443,10 @@
 
   if (window.api.onJtcatVita49Audio) {
     window.api.onJtcatVita49Audio(function (frame) {
-      if (!popoutVita49Ctx || !popoutVita49Dest || !frame || !frame.pcm || !frame.pcm.length) return;
+      // Return false so the preload acks immediately when this window
+      // isn't the live consumer — see preload-jtcat-popout.js. K3SBP
+      // 2026-05-30.
+      if (!popoutVita49Ctx || !popoutVita49Dest || !frame || !frame.pcm || !frame.pcm.length) return false;
       if (popoutVita49Ctx.state === 'suspended') popoutVita49Ctx.resume().catch(function () {});
       var sr = frame.sampleRate || 24000;
       var pcm = new Float32Array(frame.pcm);
@@ -1458,6 +1461,7 @@
       }
       src.start(popoutVita49NextPlay);
       popoutVita49NextPlay += pcm.length / sr;
+      return true;
     });
   }
 

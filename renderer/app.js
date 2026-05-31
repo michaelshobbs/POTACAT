@@ -18437,7 +18437,10 @@ var jtcatVita49Dest = null;
 var jtcatVita49NextPlay = 0;
 
 window.api.onJtcatVita49Audio(function (frame) {
-  if (!jtcatVita49Ctx || !jtcatVita49Dest || !frame || !frame.pcm || !frame.pcm.length) return;
+  // Return false so the preload acks immediately when we're not the
+  // active consumer — keeps main's IPC backlog at 0 for this window
+  // while the JTCAT popout is the live audio sink.
+  if (!jtcatVita49Ctx || !jtcatVita49Dest || !frame || !frame.pcm || !frame.pcm.length) return false;
   if (jtcatVita49Ctx.state === 'suspended') jtcatVita49Ctx.resume().catch(function () {});
   var sr = frame.sampleRate || 24000;
   var pcm = new Float32Array(frame.pcm);
@@ -18454,6 +18457,7 @@ window.api.onJtcatVita49Audio(function (frame) {
   }
   src.start(jtcatVita49NextPlay);
   jtcatVita49NextPlay += pcm.length / sr;
+  return true;
 });
 
 async function startJtcatAudio() {

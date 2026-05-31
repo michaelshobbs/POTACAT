@@ -338,10 +338,21 @@ contextBridge.exposeInMainWorld('api', {
   // would normally capture is bypassed in that mode. K3SBP 2026-05-14.
   onJtcatVita49Audio: (cb) => {
     // Batch-ack so main can bound the IPC backlog. See main.js audioBus.
+    //
+    // Both the main window and the JTCAT popout are wired to this channel
+    // (main forwards to both — only the one with an active AudioContext
+    // actually plays). The cb returns true when it consumed the frame and
+    // false (or undefined) when it didn't. For a no-op consumer we ack
+    // EAGERLY — otherwise the dead window's backlog grows to
+    // AUDIO_MAX_BACKLOG in <1 s and main starts dropping frames for the
+    // live consumer too. K3SBP 2026-05-30, observed as "[Audio]
+    // Backpressure: 200+ frames dropped" every 10 s while JTCAT view was
+    // active.
     let _ackCount = 0;
     ipcRenderer.on('jtcat-vita49-audio', (_e, frame) => {
-      cb(frame);
-      if (++_ackCount >= 20) {
+      const consumed = cb(frame);
+      _ackCount++;
+      if (!consumed || _ackCount >= 20) {
         ipcRenderer.send('audio-ack', { channel: 'jtcat-vita49-audio', count: _ackCount });
         _ackCount = 0;
       }

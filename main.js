@@ -14131,11 +14131,20 @@ app.whenReady().then(() => {
       await replyEngine.setTxMessage(txMsg);
       replyEngine.tryImmediateTx();
       if (!sameCall) await jtcatAutoLog(popoutJtcatQso);
+    } else if (phase === 'reply') {
+      // Fresh reply to a CQ — always rebuild popoutJtcatQso with the
+      // new call. Previous code gated on phase!==phase, which silently
+      // kept the previous QSO's call when the user clicked from one
+      // reply-phase QSO into another (e.g. abandon KG4OJT mid-cycle,
+      // click 7Z1CE; advanceJtcatQso then kept scanning for KG4OJT and
+      // never noticed 7Z1CE's reply). K3SBP 2026-05-30.
+      popoutJtcatQso = { mode: 'reply', call: data.call, grid: data.grid, phase, txMsg, report: null, sentReport: null, myCall, myGrid, txRetries: 0, sliceId: replySliceId };
+      replyEngine._txEnabled = true;
+      await replyEngine.setTxMessage(txMsg);
+      replyEngine.tryImmediateTx();
     } else if (!popoutJtcatQso || popoutJtcatQso.phase !== phase) {
-      // Only set up QSO if not already created above (report case)
-      if (phase === 'reply') {
-        popoutJtcatQso = { mode: 'reply', call: data.call, grid: data.grid, phase, txMsg, report: null, sentReport: null, myCall, myGrid, txRetries: 0, sliceId: replySliceId };
-      }
+      // Other phases (rr73, r+report, report) have already populated
+      // popoutJtcatQso above — this branch is a safety net.
       replyEngine._txEnabled = true;
       await replyEngine.setTxMessage(txMsg);
       replyEngine.tryImmediateTx();

@@ -34,11 +34,14 @@ contextBridge.exposeInMainWorld('api', {
   // the pop-out builds a synthetic MediaStream from these to drive its
   // waterfall, same as the main window does. K3SBP 2026-05-14.
   onJtcatVita49Audio: (cb) => {
-    // Batch-ack so main can bound the IPC backlog. See main.js audioBus.
+    // Batch-ack so main can bound the IPC backlog. cb returns true on
+    // actual consumption; no-op acks eagerly so this window doesn't
+    // build a backlog and starve the live consumer. K3SBP 2026-05-30.
     let _ackCount = 0;
     ipcRenderer.on('jtcat-vita49-audio', (_e, frame) => {
-      cb(frame);
-      if (++_ackCount >= 20) {
+      const consumed = cb(frame);
+      _ackCount++;
+      if (!consumed || _ackCount >= 20) {
         ipcRenderer.send('audio-ack', { channel: 'jtcat-vita49-audio', count: _ackCount });
         _ackCount = 0;
       }
