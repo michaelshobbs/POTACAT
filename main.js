@@ -12256,7 +12256,38 @@ app.whenReady().then(() => {
         win.webContents.send('pass-enforcement-ended', info);
       }
       sendCatLog(`[pass] session ended: ${info.reason}`);
+      // #46a: also broadcast to pass-authed WS clients so mobile gets
+      // real-time end (its client-side timer is UX-only).
+      try { if (remoteServer) remoteServer.broadcastPassEnded(info.reason); } catch {}
     });
+
+    // #46a: wire remoteServer's pass auth-mode handlers.
+    // Validator: re-checks pass status via public cloud endpoint.
+    // Auth callback: triggers PassEnforcement.loadPass() if idle,
+    // accepts same-pass re-attach, rejects mismatch.
+    if (remoteServer) {
+      remoteServer.setPassValidator(async (code) => {
+        try {
+          const res = await fetch(`https://api.potacat.com/v1/passes/${encodeURIComponent(code)}`);
+          if (!res.ok) return null;
+          return await res.json();
+        } catch (err) {
+          sendCatLog('[pass] validator fetch failed: ' + (err.message || err));
+          return null;
+        }
+      });
+      remoteServer.setPassAuthCallback(async (code, _sessionId) => {
+        const state = passEnforcement.getState();
+        if (state === 'idle') {
+          await passEnforcement.loadPass(code);
+        } else {
+          const cur = passEnforcement.getSessionStatus();
+          if (cur.code !== code) {
+            throw new Error('Another pass session is already active on this station');
+          }
+        }
+      });
+    }
   } catch (err) {
     sendCatLog('[pass-enforcement] init failed: ' + (err.message || err));
   }
