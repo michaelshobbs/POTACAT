@@ -552,4 +552,144 @@
 
   // Initial load
   setTimeout(() => { loadCloudSettings(); refreshStatus(); }, 2000);
+
+  // ─────────────────────────────────────────────────────────────────
+  // POTACAT Cloud (CF tunnel) — one-tap remote toggle
+  // ─────────────────────────────────────────────────────────────────
+  //
+  // Backend: lib/cloud-tunnel.js (CloudTunnelManager). IPC:
+  //   cloudTunnelGetState()  → { enabled, status, cloudHost, lastError, ... }
+  //   cloudTunnelEnable()    → { ok, state } | { error: 'entitlement-required' | ... }
+  //   cloudTunnelDisable()   → { ok, state } | { error }
+  //   onCloudTunnelState(cb) → live 'change' events from the manager
+  // The tray indicator (#36) sends 'open-settings-panel' { panel:
+  // 'cloud-tunnel' } when the user clicks the tray row — we scroll the
+  // fieldset into view here.
+
+  const ctFieldset = document.getElementById('cloud-tunnel-fieldset');
+  const ctStatusPill = document.getElementById('cloud-tunnel-status-pill');
+  const ctHost = document.getElementById('cloud-tunnel-host');
+  const ctEnableBtn = document.getElementById('cloud-tunnel-enable-btn');
+  const ctDisableBtn = document.getElementById('cloud-tunnel-disable-btn');
+  const ctError = document.getElementById('cloud-tunnel-error');
+
+  function renderTunnelState(state) {
+    if (!ctStatusPill || !state) return;
+    let label, pillClass;
+    if (!state.enabled) {
+      label = 'LAN only'; pillClass = 'status disconnected';
+    } else if (state.status === 'live') {
+      label = 'Live'; pillClass = 'status connected';
+    } else if (state.status === 'error') {
+      label = 'Error'; pillClass = 'status disconnected';
+    } else {
+      label = state.status === 'provisioning' ? 'Provisioning…' : 'Reconnecting…';
+      pillClass = 'status connecting';
+    }
+    ctStatusPill.textContent = label;
+    ctStatusPill.className = pillClass;
+    if (ctHost) ctHost.textContent = state.enabled && state.cloudHost ? state.cloudHost : '';
+    if (ctEnableBtn) ctEnableBtn.classList.toggle('hidden', !!state.enabled);
+    if (ctDisableBtn) ctDisableBtn.classList.toggle('hidden', !state.enabled);
+    if (ctError) {
+      if (state.lastError) {
+        ctError.textContent = state.lastError;
+        ctError.classList.remove('hidden');
+      } else {
+        ctError.classList.add('hidden');
+      }
+    }
+  }
+
+  async function refreshTunnelState() {
+    if (!window.api || !window.api.cloudTunnelGetState) return;
+    try {
+      const state = await window.api.cloudTunnelGetState();
+      renderTunnelState(state);
+    } catch (err) {
+      console.error('[cloud-tunnel] getState failed:', err);
+    }
+  }
+
+  if (ctEnableBtn) {
+    ctEnableBtn.addEventListener('click', async () => {
+      if (!window.api || !window.api.cloudTunnelEnable) return;
+      ctEnableBtn.disabled = true;
+      ctEnableBtn.textContent = 'Enabling…';
+      try {
+        const res = await window.api.cloudTunnelEnable();
+        if (res && res.error === 'entitlement-required') {
+          // Route to existing paywall — the Cloud login section's
+          // "Become a Supporter" button is the established path.
+          const sub = document.getElementById('cloud-subscribe-btn');
+          if (sub) sub.click();
+          else if (ctError) {
+            ctError.textContent = 'POTACAT Cloud subscription required. Subscribe in the Sync section above.';
+            ctError.classList.remove('hidden');
+          }
+        } else if (res && res.error) {
+          if (ctError) {
+            ctError.textContent = res.error === 'cloudflared-missing'
+              ? 'cloudflared binary missing — reinstall POTACAT.'
+              : res.error === 'auth-required'
+                ? 'Sign in to POTACAT Cloud above to enable one-tap remote.'
+                : res.error;
+            ctError.classList.remove('hidden');
+          }
+        } else if (res && res.ok) {
+          renderTunnelState(res.state);
+        }
+      } catch (err) {
+        if (ctError) {
+          ctError.textContent = err.message || String(err);
+          ctError.classList.remove('hidden');
+        }
+      } finally {
+        ctEnableBtn.disabled = false;
+        ctEnableBtn.textContent = 'Enable POTACAT Cloud';
+      }
+    });
+  }
+
+  if (ctDisableBtn) {
+    ctDisableBtn.addEventListener('click', async () => {
+      if (!window.api || !window.api.cloudTunnelDisable) return;
+      if (!confirm('Disable POTACAT Cloud? The tunnel will be revoked; the LAN connection still works.')) return;
+      ctDisableBtn.disabled = true;
+      ctDisableBtn.textContent = 'Disabling…';
+      try {
+        const res = await window.api.cloudTunnelDisable();
+        if (res && res.ok) renderTunnelState(res.state);
+        else if (res && res.error && ctError) {
+          ctError.textContent = res.error;
+          ctError.classList.remove('hidden');
+        }
+      } finally {
+        ctDisableBtn.disabled = false;
+        ctDisableBtn.textContent = 'Disable';
+      }
+    });
+  }
+
+  if (window.api && window.api.onCloudTunnelState) {
+    window.api.onCloudTunnelState((state) => renderTunnelState(state));
+  }
+
+  if (window.api && window.api.onOpenSettingsPanel) {
+    window.api.onOpenSettingsPanel((payload) => {
+      if (!payload || payload.panel !== 'cloud-tunnel') return;
+      const dlg = document.getElementById('settings-dialog');
+      if (dlg && typeof dlg.showModal === 'function' && !dlg.open) {
+        try { dlg.showModal(); } catch {}
+      }
+      // Switch to Cloud tab — app.js uses .settings-tab[data-tab="cloud"]
+      // buttons inside #settings-tab-bar; clicking dispatches its own
+      // handler which calls switchSettingsTab().
+      const cloudTabBtn = document.querySelector('.settings-tab[data-tab="cloud"]');
+      if (cloudTabBtn) cloudTabBtn.click();
+      if (ctFieldset) ctFieldset.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  setTimeout(refreshTunnelState, 2000);
 })();

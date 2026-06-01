@@ -12142,6 +12142,32 @@ app.whenReady().then(() => {
     return cloudTunnel ? cloudTunnel.getState() : { enabled: false, status: 'off' };
   });
 
+  ipcMain.handle('cloud-tunnel-enable', async () => {
+    if (!cloudTunnel) return { error: 'cloud-tunnel module not initialized' };
+    try {
+      const state = await cloudTunnel.enable();
+      return { ok: true, state };
+    } catch (err) {
+      const msg = err.message || String(err);
+      if (msg === 'entitlement-required') return { error: 'entitlement-required' };
+      if (msg === 'cloudflared-missing') return { error: 'cloudflared-missing' };
+      if (msg === 'auth-required') return { error: 'auth-required' };
+      sendCatLog('[cloud-tunnel] enable failed: ' + msg);
+      return { error: msg };
+    }
+  });
+
+  ipcMain.handle('cloud-tunnel-disable', async () => {
+    if (!cloudTunnel) return { error: 'cloud-tunnel module not initialized' };
+    try {
+      const state = await cloudTunnel.disable();
+      return { ok: true, state };
+    } catch (err) {
+      sendCatLog('[cloud-tunnel] disable failed: ' + (err.message || err));
+      return { error: err.message || String(err) };
+    }
+  });
+
   // --- POTA.app Profile (display-only; no CSV sync) ---
   // The previous CSV-pull design depended on an IAM-authorized endpoint
   // that POTACAT's Cognito User Pool JWT can't reach. The worked-parks
@@ -17947,6 +17973,7 @@ function gracefulCleanup() {
   try { extraUdpBridge.stop(); } catch {}
   try { ft8brBridge.stop(); } catch {}
   try { if (potaSync) potaSync.stop(); } catch {}
+  try { if (cloudTunnel) cloudTunnel.shutdown(); } catch {}
   killRigctld();
 }
 

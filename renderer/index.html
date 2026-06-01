@@ -2617,6 +2617,21 @@
       </div>
     </fieldset>
 
+    <!-- POTACAT Cloud — one-tap remote (CF tunnel) -->
+    <fieldset id="cloud-tunnel-fieldset" class="source-toggles" data-settings-tab="cloud">
+      <legend>POTACAT Cloud (one-tap remote)</legend>
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">Reach your radio from anywhere — no Tailscale, no port forwarding. POTACAT opens an outbound tunnel to Cloudflare; your phone connects over <code style="background:var(--bg-tertiary);padding:1px 4px;border-radius:2px;">https://&lt;callsign&gt;.cloud.potacat.com</code>.</p>
+      <div id="cloud-tunnel-status-row" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <span id="cloud-tunnel-status-pill" class="status disconnected">LAN only</span>
+        <span id="cloud-tunnel-host" style="font-size:12px;color:var(--text-secondary);"></span>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button type="button" id="cloud-tunnel-enable-btn" class="btn btn-primary">Enable POTACAT Cloud</button>
+        <button type="button" id="cloud-tunnel-disable-btn" class="btn hidden">Disable</button>
+      </div>
+      <p id="cloud-tunnel-error" class="help-text hidden" style="color:var(--accent-red);margin-top:6px;"></p>
+    </fieldset>
+
     <fieldset class="source-toggles" data-settings-tab="cloud">
       <legend>Sync</legend>
       <label class="checkbox-label"><input type="checkbox" id="cloud-sync-enabled"> Enable QSO Cloud Sync</label>

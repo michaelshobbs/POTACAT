@@ -57,6 +57,20 @@ contextBridge.exposeInMainWorld('api', {
   },
   onEchocatPairedDevices: (cb) => ipcRenderer.on('echocat-paired-devices', (_e, list) => cb(list)),
   pairPopoutOpen: () => ipcRenderer.send('pair-popout-open'),
+  // --- POTACAT Cloud (one-tap remote tunnel) ---
+  cloudTunnelGetState: () => ipcRenderer.invoke('cloud-tunnel-get-state'),
+  cloudTunnelEnable: () => ipcRenderer.invoke('cloud-tunnel-enable'),
+  cloudTunnelDisable: () => ipcRenderer.invoke('cloud-tunnel-disable'),
+  onCloudTunnelState: (cb) => {
+    const handler = (_e, state) => cb(state);
+    ipcRenderer.on('cloud-tunnel-state', handler);
+    return () => ipcRenderer.removeListener('cloud-tunnel-state', handler);
+  },
+  onOpenSettingsPanel: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('open-settings-panel', handler);
+    return () => ipcRenderer.removeListener('open-settings-panel', handler);
+  },
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getRigModels: () => ipcRenderer.invoke('get-rig-models'),
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
