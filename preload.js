@@ -66,6 +66,30 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('cloud-tunnel-state', handler);
     return () => ipcRenderer.removeListener('cloud-tunnel-state', handler);
   },
+  // --- POTACAT Guest Pass enforcement (#43) ---
+  passEnforcementGetState: () => ipcRenderer.invoke('pass-enforcement-get-state'),
+  passEnforcementLoad: (code) => ipcRenderer.invoke('pass-enforcement-load', code),
+  passEnforcementEnd: (reason) => ipcRenderer.invoke('pass-enforcement-end', reason),
+  onPassEnforcementState: (cb) => {
+    const handler = (_e, status) => cb(status);
+    ipcRenderer.on('pass-enforcement-state', handler);
+    return () => ipcRenderer.removeListener('pass-enforcement-state', handler);
+  },
+  onPassEnforcementExpiring: (cb) => {
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on('pass-enforcement-expiring', handler);
+    return () => ipcRenderer.removeListener('pass-enforcement-expiring', handler);
+  },
+  onPassEnforcementEnded: (cb) => {
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on('pass-enforcement-ended', handler);
+    return () => ipcRenderer.removeListener('pass-enforcement-ended', handler);
+  },
+  onPassCatBlocked: (cb) => {
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on('pass-cat-blocked', handler);
+    return () => ipcRenderer.removeListener('pass-cat-blocked', handler);
+  },
   onOpenSettingsPanel: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('open-settings-panel', handler);

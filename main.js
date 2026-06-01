@@ -192,6 +192,7 @@ let registerCloudIpc;
 try { registerCloudIpc = require('./lib/cloud-ipc').registerCloudIpc; } catch { registerCloudIpc = null; }
 const { CloudTunnelManager } = require('./lib/cloud-tunnel');
 const { resolveCloudflaredPath } = require('./lib/cloudflared');
+const { PassEnforcement } = require('./lib/pass-enforcement');
 logStartupStage('top-level requires complete');
 
 // --- QRZ.com callsign lookup ---
@@ -202,6 +203,7 @@ let cloudIpc = null;
 let potaSync = null; // lib/pota-sync.js instance — created lazily on first access
 // --- POTACAT Cloud (CF tunnel) — initialized in app.whenReady, after cloudIpc ---
 let cloudTunnel = null;
+let passEnforcement = null;
 let cloudTray = null;
 
 // --- Parks DB (activator mode) ---
@@ -5885,11 +5887,11 @@ function connectRemote() {
       // Delayed safety TX-off: catches VOX re-trigger from audio artifacts
       // during teardown and any race conditions from FT8 engine shutdown
       setTimeout(() => {
-        if (cat && cat.connected) cat.setTransmit(false);
+        if (cat && cat.connected) gatedSetTransmit(false);
         if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
       }, 500);
       setTimeout(() => {
-        if (cat && cat.connected) cat.setTransmit(false);
+        if (cat && cat.connected) gatedSetTransmit(false);
         if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
       }, 2000);
     }, 60_000);
@@ -6440,8 +6442,7 @@ function connectRemote() {
         smartSdr.setTxPower(value);
       } else if (cat && cat.connected) {
         const rigType = detectRigType();
-        if (rigType === 'rigctld') cat.setTxPower(value / 100);
-        else cat.setTxPower(value);
+        gatedSetTxPower(value, { rigType });
       }
     }, 50);
     if (win && !win.isDestroyed()) win.webContents.send('rig-state', {
@@ -6525,26 +6526,26 @@ function connectRemote() {
     try {
       if (cat.setModeOnly) cat.setModeOnly('CW', _currentFreqHz);
       else if (cat.setMode) cat.setMode('CW');
-      cat.setTxPower(watts);
+      gatedSetTxPower(watts);
       await new Promise(r => setTimeout(r, 300));
       if (_externalAtuCancel) throw new Error('cancelled');
-      cat.setTransmit(true);
+      gatedSetTransmit(true);
       // Wait in ~250ms slices so cancel can interrupt mid-burst
       const endAt = Date.now() + seconds * 1000;
       while (Date.now() < endAt) {
         if (_externalAtuCancel) break;
         await new Promise(r => setTimeout(r, 250));
       }
-      cat.setTransmit(false);
+      gatedSetTransmit(false);
     } catch (err) {
-      try { cat.setTransmit(false); } catch {}
+      try { gatedSetTransmit(false); } catch {}
       sendCatLog(`[ExtATU] ${err.message}`);
     } finally {
       await new Promise(r => setTimeout(r, 200));
       try {
         if (cat.setModeOnly) cat.setModeOnly(restoreMode, _currentFreqHz);
         else if (cat.setMode) cat.setMode(restoreMode);
-        cat.setTxPower(restorePower);
+        gatedSetTxPower(restorePower);
       } catch {}
       _externalAtuActive = false;
       _externalAtuCancel = false;
@@ -6633,8 +6634,7 @@ function connectRemote() {
         const value = Number(data.value) || 0;
         if (flexSdr()) smartSdr.setTxPower(value);
         else if (cat && cat.connected) {
-          if (rigType === 'rigctld') cat.setTxPower(value / 100);
-          else cat.setTxPower(value);
+          gatedSetTxPower(value, { rigType });
         }
         _currentTxPower = value;
         broadcastRigState();
@@ -7450,9 +7450,9 @@ function connectRemote() {
     if (freedvEngine) freedvEngine.setTxEnabled(enabled);
     // PTT via CAT
     if (enabled) {
-      if (cat && cat.connected) cat.setTransmit(true);
+      if (cat && cat.connected) gatedSetTransmit(true);
     } else {
-      if (cat && cat.connected) cat.setTransmit(false);
+      if (cat && cat.connected) gatedSetTransmit(false);
     }
   });
   remoteServer.on('freedv-set-squelch', ({ enabled, threshold }) => {
@@ -7946,7 +7946,7 @@ function handleRemotePtt(state, opts = {}) {
       smartSdr.setTransmit(state);
     } else if (cat && cat.connected) {
       if (state) sendCatLog('[PTT] SmartSDR API unavailable — falling back to TS-2000 TX; command (slice selection skipped)');
-      cat.setTransmit(state);
+      gatedSetTransmit(state);
     } else if (state) {
       console.warn('[PTT] Cannot key TX — neither SmartSDR API nor CAT TCP is connected');
       sendCatLog('PTT FAILED: neither SmartSDR API nor CAT TCP is connected');
@@ -7960,7 +7960,7 @@ function handleRemotePtt(state, opts = {}) {
       if (state && target && target.type === 'k4-network') {
         try { _resetK4TxBuf(); } catch {}
       }
-      cat.setTransmit(state);
+      gatedSetTransmit(state);
     } else if (state) {
       console.warn('[PTT] Cannot key TX — CAT not connected');
       sendCatLog('PTT FAILED: CAT not connected (TX audio may play but radio will not transmit)');
@@ -11599,10 +11599,67 @@ let _lastTuneTime = 0;
 let _lastTuneBand = null; // for ATU auto-tune on band change
 let _modeSuppressUntil = 0; // suppress stale mode broadcasts to ECHOCAT during tune transition
 
+// --- Guest Pass enforcement gates (#43) ---
+// Single chokepoints for TX-enable + TX-power that route through the
+// PassEnforcement interceptor when a pass session is active. Idle
+// state: zero-cost passthrough. TX-off is never gated (always allowed
+// to release the rig even after pass expiry).
+function gatedSetTransmit(state) {
+  if (passEnforcement && state) {
+    const res = passEnforcement.interceptCatCommand({ type: 'tx_enable' });
+    if (!res.allowed) {
+      sendCatLog(`[pass] TX blocked: ${res.userVisible}`);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-cat-blocked', { command: 'tx_enable', reason: res.reason, userVisible: res.userVisible });
+      }
+      return false;
+    }
+  }
+  if (cat && cat.connected) cat.setTransmit(state);
+  return true;
+}
+
+function gatedSetTxPower(value, opts = {}) {
+  // value is in watts (rigctld variants pass watts here too; the
+  // /100 normalization happens AFTER the clamp so the pass max is
+  // applied in the same units the operator sees).
+  let actual = value;
+  if (passEnforcement) {
+    const res = passEnforcement.interceptCatCommand({ type: 'tx_power', watts: value });
+    if (!res.allowed) {
+      if (res.clampTo != null) {
+        actual = res.clampTo;
+        sendCatLog(`[pass] TX power clamped ${value}W → ${actual}W`);
+      } else {
+        sendCatLog(`[pass] TX power blocked: ${res.userVisible}`);
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('pass-cat-blocked', { command: 'tx_power', reason: res.reason, userVisible: res.userVisible });
+        }
+        return false;
+      }
+    }
+  }
+  if (!cat || !cat.connected) return false;
+  if (opts.rigType === 'rigctld') cat.setTxPower(actual / 100);
+  else cat.setTxPower(actual);
+  return true;
+}
+
 function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
   let freqHz = Math.round(parseFloat(freqKhz) * 1000); // kHz -> Hz
   const now = Date.now();
   if (freqHz === _lastTuneFreq && now - _lastTuneTime < 300) return;
+  // --- Guest Pass enforcement (#43): out-of-band block before any CAT write ---
+  if (passEnforcement) {
+    const res = passEnforcement.interceptCatCommand({ type: 'tune', freqHz, mode: (mode || _currentMode || 'USB') });
+    if (!res.allowed) {
+      sendCatLog(`[pass] tune blocked: ${res.userVisible}`);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-cat-blocked', { command: 'tune', reason: res.reason, userVisible: res.userVisible, freqHz, mode });
+      }
+      return;
+    }
+  }
   _lastTuneFreq = freqHz;
   _lastTuneTime = now;
 
@@ -12166,6 +12223,62 @@ app.whenReady().then(() => {
       sendCatLog('[cloud-tunnel] disable failed: ' + (err.message || err));
       return { error: err.message || String(err) };
     }
+  });
+
+  // --- POTACAT Cloud Guest Pass enforcement (#43) ---
+  // Loads a pass profile from the cloud and gates CAT commands (tune,
+  // PTT, TX power) according to the pass's privilege class + power
+  // cap. Desktop is the SOLE enforcement point — phone is courtesy UI
+  // only. Tune blocking flows through tuneRadio()'s interceptor call;
+  // PTT/power gating flows through gatedSetTransmit()/gatedSetTxPower()
+  // helpers defined below.
+  try {
+    passEnforcement = new PassEnforcement({
+      log: (msg) => sendCatLog(msg),
+      // Power readability heuristic: rigctld + most CIV/Kenwood codecs
+      // expose TX power. Conservative default: true. Refined per-rig
+      // later if needed.
+      rigPowerReadable: () => true,
+    });
+    passEnforcement.on('state-change', (state) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-enforcement-state', passEnforcement.getSessionStatus());
+      }
+    });
+    passEnforcement.on('expiring', (info) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-enforcement-expiring', info);
+      }
+      sendCatLog(`[pass] expiring in ${Math.floor(info.remainingMs / 1000)}s`);
+    });
+    passEnforcement.on('ended', (info) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-enforcement-ended', info);
+      }
+      sendCatLog(`[pass] session ended: ${info.reason}`);
+    });
+  } catch (err) {
+    sendCatLog('[pass-enforcement] init failed: ' + (err.message || err));
+  }
+
+  ipcMain.handle('pass-enforcement-get-state', () => {
+    return passEnforcement ? passEnforcement.getSessionStatus() : { state: 'idle' };
+  });
+
+  ipcMain.handle('pass-enforcement-load', async (_evt, code) => {
+    if (!passEnforcement) return { error: 'pass-enforcement not initialized' };
+    try {
+      const status = await passEnforcement.loadPass(code);
+      return { ok: true, status };
+    } catch (err) {
+      return { error: err.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('pass-enforcement-end', async (_evt, reason) => {
+    if (!passEnforcement) return { error: 'pass-enforcement not initialized' };
+    passEnforcement.endPass(reason || 'owner_override');
+    return { ok: true };
   });
 
   // --- POTA.app Profile (display-only; no CSV sync) ---
@@ -14765,11 +14878,7 @@ app.whenReady().then(() => {
         if (flexSdr()) {
           smartSdr.setTxPower(value);
         } else if (cat && cat.connected) {
-          if (rigType === 'rigctld') {
-            cat.setTxPower(value / 100);
-          } else {
-            cat.setTxPower(value);
-          }
+          gatedSetTxPower(value, { rigType });
         }
         _currentTxPower = value;
         broadcastRigState();
