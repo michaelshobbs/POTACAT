@@ -190,6 +190,8 @@ const { getModel, getModelList } = require('./lib/rig-models');
 const { autoUpdater } = require('electron-updater');
 let registerCloudIpc;
 try { registerCloudIpc = require('./lib/cloud-ipc').registerCloudIpc; } catch { registerCloudIpc = null; }
+const { CloudTunnelManager } = require('./lib/cloud-tunnel');
+const { resolveCloudflaredPath } = require('./lib/cloudflared');
 logStartupStage('top-level requires complete');
 
 // --- QRZ.com callsign lookup ---
@@ -198,6 +200,8 @@ let qrz = new QrzClient();
 // --- Cloud Sync (initialized in app.whenReady) ---
 let cloudIpc = null;
 let potaSync = null; // lib/pota-sync.js instance — created lazily on first access
+// --- POTACAT Cloud (CF tunnel) — initialized in app.whenReady, after cloudIpc ---
+let cloudTunnel = null;
 
 // --- Parks DB (activator mode) ---
 let parksArray = [];
@@ -12049,6 +12053,35 @@ app.whenReady().then(() => {
     cloudIpc.startBackgroundSync();
   }
 
+  // --- POTACAT Cloud (CF tunnel manager) ---
+  // Owns the cloudflared child process (#35), 5-min health-check (#38),
+  // and the tray indicator state (#36). Shares JWT auth with cloudIpc's
+  // CloudSyncClient — never rolls its own auth path.
+  try {
+    const { safeStorage } = require('electron');
+    cloudTunnel = new CloudTunnelManager({
+      userDataPath: app.getPath('userData'),
+      getCloudSync: () => (cloudIpc ? cloudIpc.getCloudSync() : null),
+      getCloudflaredPath: resolveCloudflaredPath,
+      log: (msg) => sendCatLog(msg),
+      safeStorage,
+    });
+    cloudTunnel.on('change', (state) => {
+      if (win && !win.isDestroyed()) win.webContents.send('cloud-tunnel-state', state);
+      // #36 tray indicator listens here too — wired below in createTray().
+    });
+    cloudTunnel.loadFromDisk();
+    if (cloudTunnel.getState().enabled) {
+      cloudTunnel.startHealthCheck();
+    }
+  } catch (err) {
+    sendCatLog('[cloud-tunnel] init failed: ' + (err.message || err));
+  }
+
+  ipcMain.handle('cloud-tunnel-get-state', () => {
+    return cloudTunnel ? cloudTunnel.getState() : { enabled: false, status: 'off' };
+  });
+
   // --- POTA.app Profile (display-only; no CSV sync) ---
   // The previous CSV-pull design depended on an IAM-authorized endpoint
   // that POTACAT's Cognito User Pool JWT can't reach. The worked-parks
@@ -15145,20 +15178,10 @@ app.whenReady().then(() => {
     const hostname = (() => { try { return os.hostname(); } catch { return 'POTACAT'; } })();
     // POTACAT Cloud (one-tap remote) — when the tunnel is provisioned and
     // enabled, surface the cloud hostname in the QR so paired phones can
-    // reach the desktop from off-LAN. File is written by the Cloud
-    // settings panel (#35); absent or `enabled:false` means LAN-only.
-    let cloudHost = '';
-    try {
-      const cfgPath = path.join(app.getPath('userData'), 'cloud-tunnel.json');
-      if (fs.existsSync(cfgPath)) {
-        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-        if (cfg && cfg.enabled && typeof cfg.cloudHost === 'string') {
-          cloudHost = cfg.cloudHost;
-        }
-      }
-    } catch (err) {
-      sendCatLog('[Pair QR] cloud-tunnel.json read failed (non-fatal): ' + (err.message || err));
-    }
+    // reach the desktop from off-LAN. Schema + state live in
+    // lib/cloud-tunnel.js (single source of truth); absent or disabled
+    // ⇒ LAN-only pairing.
+    const cloudHost = cloudTunnel ? cloudTunnel.getCloudHost() : '';
     const qrParamsObj = {
       host: wsUrl,
       token: pairingToken,
