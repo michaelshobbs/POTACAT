@@ -3866,6 +3866,239 @@ remoteRegenToken.addEventListener('click', () => {
 });
 
 // --- Mobile-app pairing (Phase 0) ---
+// ── Guest Pass UI (Phase 2 #46c) ──────────────────────────────────────
+// Owner-facing banner + Settings → ECHOCAT → Guest Pass form. Talks
+// to cloud /v1/passes via the existing CloudSyncClient JWT plumbing.
+
+function _gpFmtRemaining(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'expired';
+  const s = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(s / 86400);
+  if (days >= 1) {
+    const remH = Math.floor((s % 86400) / 3600);
+    return `in ${days}d ${remH}h`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h >= 1) return `in ${h}h ${String(m).padStart(2, '0')}m`;
+  const sec = s % 60;
+  return `in ${m}m ${String(sec).padStart(2, '0')}s`;
+}
+
+let _gpOwnerBannerTimer = null;
+let _gpOwnerBannerExpiresAtMs = 0;
+
+function _gpUpdateOwnerBanner(status) {
+  const banner = document.getElementById('gp-owner-banner');
+  if (!banner) return;
+  if (!status || status.state === 'idle' || status.state === 'ended') {
+    banner.classList.add('hidden');
+    if (_gpOwnerBannerTimer) { clearInterval(_gpOwnerBannerTimer); _gpOwnerBannerTimer = null; }
+    _gpOwnerBannerExpiresAtMs = 0;
+    return;
+  }
+  const callEl = document.getElementById('gp-owner-callsign');
+  const expEl = document.getElementById('gp-owner-expires');
+  if (callEl) callEl.textContent = (status.operatorCallsign || status.controlOperatorCallsign || 'Guest').toString().toUpperCase();
+  _gpOwnerBannerExpiresAtMs = status.expiresAt ? new Date(status.expiresAt).getTime() : 0;
+  const tick = () => {
+    if (!_gpOwnerBannerExpiresAtMs) {
+      if (expEl) expEl.textContent = 'never';
+      return;
+    }
+    const remaining = Math.floor((_gpOwnerBannerExpiresAtMs - Date.now()) / 1000);
+    if (expEl) expEl.textContent = _gpFmtRemaining(remaining);
+  };
+  tick();
+  if (_gpOwnerBannerTimer) clearInterval(_gpOwnerBannerTimer);
+  _gpOwnerBannerTimer = setInterval(tick, 1000);
+  // State-specific styling (expiring → red-ish)
+  if (status.state === 'expiring') {
+    banner.style.background = '#8a1a1a';
+    banner.style.borderBottomColor = '#c93030';
+  } else {
+    banner.style.background = '#7a3f00';
+    banner.style.borderBottomColor = '#b86a00';
+  }
+  banner.classList.remove('hidden');
+}
+
+async function _gpRevokeFromOwnerBanner() {
+  if (!window.api || !window.api.passEnforcementEnd) return;
+  const ok = confirm('End this guest\'s access to your rig?');
+  if (!ok) return;
+  try {
+    await window.api.passEnforcementEnd('owner_override');
+  } catch (err) {
+    console.error('[Guest Pass] revoke failed:', err);
+    alert('Revoke failed: ' + (err.message || err));
+  }
+}
+
+// Initialize banner + listeners as soon as the renderer is ready.
+(function _gpInitOwnerBanner() {
+  const banner = document.getElementById('gp-owner-banner');
+  if (banner) banner.addEventListener('click', _gpRevokeFromOwnerBanner);
+  if (window.api && window.api.passEnforcementGetState) {
+    window.api.passEnforcementGetState().then(_gpUpdateOwnerBanner).catch(() => {});
+  }
+  if (window.api && window.api.onPassEnforcementState) {
+    window.api.onPassEnforcementState(_gpUpdateOwnerBanner);
+  }
+  if (window.api && window.api.onPassEnforcementExpiring) {
+    window.api.onPassEnforcementExpiring(() => {
+      // Pull fresh status so we render the same shape as state-change.
+      if (window.api.passEnforcementGetState) {
+        window.api.passEnforcementGetState().then(_gpUpdateOwnerBanner).catch(() => {});
+      }
+    });
+  }
+  if (window.api && window.api.onPassEnforcementEnded) {
+    window.api.onPassEnforcementEnded(() => _gpUpdateOwnerBanner({ state: 'idle' }));
+  }
+  if (window.api && window.api.onPassCatBlocked) {
+    window.api.onPassCatBlocked((info) => {
+      // Surface every blocked command in the log so the user can tell
+      // what the guest tried (and why it was rejected).
+      console.warn('[Guest Pass] blocked:', info);
+    });
+  }
+})();
+
+// ── Settings → ECHOCAT → Guest Pass generate form ──
+
+async function _gpIssue() {
+  const status = document.getElementById('gp-status');
+  const issueBtn = document.getElementById('gp-issue-btn');
+  if (!status || !issueBtn) return;
+  const duration = parseInt(document.getElementById('gp-duration').value, 10) || 3600;
+  const cls = document.getElementById('gp-class').value;
+  const power = parseInt(document.getElementById('gp-power').value, 10) || 100;
+  const modes = Array.from(document.querySelectorAll('.gp-mode:checked')).map((el) => el.value);
+  const body = {
+    duration_seconds: duration,
+    privilege_class: cls,
+    max_power_w: power,
+    allowed_modes: modes.length ? modes : null,
+    station_callsign: document.getElementById('gp-station-call').value.trim().toUpperCase() || null,
+    operator_callsign: document.getElementById('gp-operator-call').value.trim().toUpperCase() || null,
+    control_operator_callsign: document.getElementById('gp-control-op').value.trim().toUpperCase() || null,
+  };
+  issueBtn.disabled = true;
+  status.textContent = 'Issuing…';
+  try {
+    const res = await window.api.passesIssue(body);
+    if (res && res.error) {
+      status.textContent = 'Error: ' + res.error;
+      console.error('[Guest Pass] issue failed:', res.error);
+      return;
+    }
+    status.textContent = '';
+    document.getElementById('gp-result').classList.remove('hidden');
+    document.getElementById('gp-result-code').textContent = res.code;
+    const expiresAt = res.expires_at ? new Date(res.expires_at).toLocaleString() : '?';
+    document.getElementById('gp-result-meta').textContent =
+      `${(res.privilege_class || '').toString().toUpperCase()} · ${res.max_power_w}W max · expires ${expiresAt}`;
+    document.getElementById('gp-result-url').textContent = res.share_url || '';
+    const qr = await window.api.passesQrPng(res.share_url || res.code);
+    if (qr && !qr.error) {
+      document.getElementById('gp-result-qr').src = qr;
+    }
+    await _gpRefresh();
+  } catch (err) {
+    status.textContent = 'Error: ' + (err.message || err);
+    console.error('[Guest Pass] issue exception:', err);
+  } finally {
+    issueBtn.disabled = false;
+  }
+}
+
+async function _gpRefresh() {
+  const wrap = document.getElementById('gp-list-wrap');
+  const ul = document.getElementById('gp-list');
+  if (!wrap || !ul) return;
+  try {
+    const res = await window.api.passesList();
+    if (res && res.error) {
+      wrap.classList.remove('hidden');
+      ul.innerHTML = `<li style="color:#f88;">Error: ${res.error}</li>`;
+      return;
+    }
+    const passes = (res && res.passes) || [];
+    wrap.classList.remove('hidden');
+    if (!passes.length) {
+      ul.innerHTML = '<li style="color:#888;">No passes issued yet.</li>';
+      return;
+    }
+    ul.innerHTML = '';
+    for (const p of passes) {
+      const li = document.createElement('li');
+      li.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 0;border-bottom:1px solid #222;';
+      const expires = p.expires_at ? new Date(p.expires_at).toLocaleString() : '?';
+      const statusLabel = p.status === 'active'
+        ? `<span style="color:#6e6;">active</span>`
+        : `<span style="color:#888;">${p.status}</span>`;
+      li.innerHTML = `
+        <span style="flex:0 0 110px;">${p.code}</span>
+        <span style="flex:1;color:#aaa;">${(p.privilege_class || '').toString().toUpperCase()} · ${p.max_power_w}W · ${expires}</span>
+        <span>${statusLabel}</span>
+      `;
+      if (p.status === 'active') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Revoke';
+        btn.style.cssText = 'padding:2px 8px;';
+        btn.addEventListener('click', async () => {
+          if (!confirm(`Revoke pass ${p.code}?`)) return;
+          btn.disabled = true;
+          try {
+            const r = await window.api.passesRevoke(p.code);
+            if (r && r.error) {
+              alert('Revoke failed: ' + r.error);
+              btn.disabled = false;
+              return;
+            }
+            await _gpRefresh();
+          } catch (err) {
+            alert('Revoke failed: ' + (err.message || err));
+            btn.disabled = false;
+          }
+        });
+        li.appendChild(btn);
+      }
+      ul.appendChild(li);
+    }
+  } catch (err) {
+    wrap.classList.remove('hidden');
+    ul.innerHTML = `<li style="color:#f88;">Error: ${err.message || err}</li>`;
+  }
+}
+
+(function _gpInitForm() {
+  const toggleBtn = document.getElementById('gp-toggle-btn');
+  const formWrap = document.getElementById('gp-form-wrap');
+  if (toggleBtn && formWrap) {
+    toggleBtn.addEventListener('click', () => {
+      formWrap.classList.toggle('hidden');
+      if (!formWrap.classList.contains('hidden')) _gpRefresh();
+    });
+  }
+  const issueBtn = document.getElementById('gp-issue-btn');
+  if (issueBtn) issueBtn.addEventListener('click', _gpIssue);
+  const refreshBtn = document.getElementById('gp-refresh-btn');
+  if (refreshBtn) refreshBtn.addEventListener('click', _gpRefresh);
+  const copyCodeBtn = document.getElementById('gp-result-copy-code');
+  if (copyCodeBtn) copyCodeBtn.addEventListener('click', () => {
+    const code = document.getElementById('gp-result-code').textContent;
+    navigator.clipboard.writeText(code).catch(() => {});
+  });
+  const copyUrlBtn = document.getElementById('gp-result-copy-url');
+  if (copyUrlBtn) copyUrlBtn.addEventListener('click', () => {
+    const url = document.getElementById('gp-result-url').textContent;
+    navigator.clipboard.writeText(url).catch(() => {});
+  });
+})();
+
 async function echocatRefreshPairedList() {
   if (!echocatPairedList || !window.api.echocatListPairedDevices) return;
   let list = [];

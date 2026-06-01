@@ -90,6 +90,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('pass-cat-blocked', handler);
     return () => ipcRenderer.removeListener('pass-cat-blocked', handler);
   },
+  // --- Guest Pass issue/list/revoke (desktop UI under ECHOCAT) ---
+  passesIssue: (body) => ipcRenderer.invoke('passes-issue', body),
+  passesList: () => ipcRenderer.invoke('passes-list'),
+  passesRevoke: (code) => ipcRenderer.invoke('passes-revoke', code),
+  passesQrPng: (text) => ipcRenderer.invoke('passes-qr-png', text),
   onOpenSettingsPanel: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('open-settings-panel', handler);
