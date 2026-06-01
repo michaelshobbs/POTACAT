@@ -15143,12 +15143,30 @@ app.whenReady().then(() => {
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
     const hostname = (() => { try { return os.hostname(); } catch { return 'POTACAT'; } })();
-    const qrParams = new URLSearchParams({
+    // POTACAT Cloud (one-tap remote) — when the tunnel is provisioned and
+    // enabled, surface the cloud hostname in the QR so paired phones can
+    // reach the desktop from off-LAN. File is written by the Cloud
+    // settings panel (#35); absent or `enabled:false` means LAN-only.
+    let cloudHost = '';
+    try {
+      const cfgPath = path.join(app.getPath('userData'), 'cloud-tunnel.json');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+        if (cfg && cfg.enabled && typeof cfg.cloudHost === 'string') {
+          cloudHost = cfg.cloudHost;
+        }
+      }
+    } catch (err) {
+      sendCatLog('[Pair QR] cloud-tunnel.json read failed (non-fatal): ' + (err.message || err));
+    }
+    const qrParamsObj = {
       host: wsUrl,
       token: pairingToken,
       fp: fingerprint,
       name: hostname,
-    });
+    };
+    if (cloudHost) qrParamsObj.cloudHost = cloudHost;
+    const qrParams = new URLSearchParams(qrParamsObj);
     const qrText = `potacat://pair?${qrParams.toString()}`;
     // Generate BOTH formats best-effort. The QR is a convenience: the
     // pairing data (qrText / pairingToken / fingerprint / host) is the
@@ -15176,7 +15194,7 @@ app.whenReady().then(() => {
       sendCatLog('[Pair QR] PNG render failed: ' + err.message);
       if (!qrError) qrError = err.message;
     }
-    sendCatLog(`[Pair QR] OK — host=${wsUrl} fp=${fingerprint ? fingerprint.slice(0, 16) + '…' : 'none'} svg=${svg ? 'yes' : 'no'} png=${dataUrl ? 'yes' : 'no'}${qrError && !(svg || dataUrl) ? ' qrError=' + qrError : ''}`);
+    sendCatLog(`[Pair QR] OK — host=${wsUrl}${cloudHost ? ' cloudHost=' + cloudHost : ''} fp=${fingerprint ? fingerprint.slice(0, 16) + '…' : 'none'} svg=${svg ? 'yes' : 'no'} png=${dataUrl ? 'yes' : 'no'}${qrError && !(svg || dataUrl) ? ' qrError=' + qrError : ''}`);
     return {
       qrText,
       dataUrl,
@@ -15185,6 +15203,7 @@ app.whenReady().then(() => {
       pairingToken,
       fingerprint,
       host: wsUrl,
+      cloudHost,
       hostname,
       ttlSeconds: tokenTtlMs ? Math.floor(tokenTtlMs / 1000) : 5 * 60,
       shareMode: !!opts.share,
