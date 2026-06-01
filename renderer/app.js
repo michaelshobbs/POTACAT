@@ -3866,7 +3866,7 @@ remoteRegenToken.addEventListener('click', () => {
 });
 
 // --- Mobile-app pairing (Phase 0) ---
-// ── Guest Pass UI (Phase 2 #46c) ──────────────────────────────────────
+// ── Guest Pass UI ─────────────────────────────────────────────────────
 // Owner-facing banner + Settings → ECHOCAT → Guest Pass form. Talks
 // to cloud /v1/passes via the existing CloudSyncClient JWT plumbing.
 
@@ -3893,6 +3893,7 @@ function _gpUpdateOwnerBanner(status) {
   if (!banner) return;
   if (!status || status.state === 'idle' || status.state === 'ended') {
     banner.classList.add('hidden');
+    banner.classList.remove('gp-banner-expiring');
     if (_gpOwnerBannerTimer) { clearInterval(_gpOwnerBannerTimer); _gpOwnerBannerTimer = null; }
     _gpOwnerBannerExpiresAtMs = 0;
     return;
@@ -3912,14 +3913,7 @@ function _gpUpdateOwnerBanner(status) {
   tick();
   if (_gpOwnerBannerTimer) clearInterval(_gpOwnerBannerTimer);
   _gpOwnerBannerTimer = setInterval(tick, 1000);
-  // State-specific styling (expiring → red-ish)
-  if (status.state === 'expiring') {
-    banner.style.background = '#8a1a1a';
-    banner.style.borderBottomColor = '#c93030';
-  } else {
-    banner.style.background = '#7a3f00';
-    banner.style.borderBottomColor = '#b86a00';
-  }
+  banner.classList.toggle('gp-banner-expiring', status.state === 'expiring');
   banner.classList.remove('hidden');
 }
 
@@ -3947,7 +3941,6 @@ async function _gpRevokeFromOwnerBanner() {
   }
   if (window.api && window.api.onPassEnforcementExpiring) {
     window.api.onPassEnforcementExpiring(() => {
-      // Pull fresh status so we render the same shape as state-change.
       if (window.api.passEnforcementGetState) {
         window.api.passEnforcementGetState().then(_gpUpdateOwnerBanner).catch(() => {});
       }
@@ -3967,25 +3960,154 @@ async function _gpRevokeFromOwnerBanner() {
 
 // ── Settings → ECHOCAT → Guest Pass generate form ──
 
+// datetime-local input expects YYYY-MM-DDTHH:MM in the local timezone.
+// We toggle between local and UTC display by formatting from a Date.
+function _gpFormatForInput(date, tzMode) {
+  if (tzMode === 'utc') {
+    return date.getUTCFullYear() + '-' +
+      String(date.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(date.getUTCDate()).padStart(2, '0') + 'T' +
+      String(date.getUTCHours()).padStart(2, '0') + ':' +
+      String(date.getUTCMinutes()).padStart(2, '0');
+  }
+  return date.getFullYear() + '-' +
+    String(date.getMonth() + 1).padStart(2, '0') + '-' +
+    String(date.getDate()).padStart(2, '0') + 'T' +
+    String(date.getHours()).padStart(2, '0') + ':' +
+    String(date.getMinutes()).padStart(2, '0');
+}
+
+function _gpParseFromInput(value, tzMode) {
+  if (!value) return null;
+  if (tzMode === 'utc') {
+    // value like "2026-06-02T03:45" — interpret as UTC.
+    const d = new Date(value + 'Z');
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Local-time string — Date constructor treats no-tz as local.
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function _gpCurrentTzMode() {
+  const r = document.querySelector('input[name="gp-tz"]:checked');
+  return r ? r.value : 'local';
+}
+
+function _gpSetDatetimeInputs(startDate, endDate) {
+  const tz = _gpCurrentTzMode();
+  document.getElementById('gp-start-dt').value = _gpFormatForInput(startDate, tz);
+  document.getElementById('gp-end-dt').value = _gpFormatForInput(endDate, tz);
+  _gpUpdateDurationLabel();
+}
+
+function _gpGetStartEnd() {
+  const tz = _gpCurrentTzMode();
+  const start = _gpParseFromInput(document.getElementById('gp-start-dt').value, tz);
+  const end = _gpParseFromInput(document.getElementById('gp-end-dt').value, tz);
+  return { start, end };
+}
+
+function _gpFmtDurationHuman(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'end must be after start';
+  let s = Math.floor(seconds);
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60);
+  const parts = [];
+  if (d) parts.push(d + 'd');
+  if (h) parts.push(h + 'h');
+  if (m || (!d && !h)) parts.push(m + 'm');
+  return parts.join(' ');
+}
+
+function _gpUpdateDurationLabel() {
+  const label = document.getElementById('gp-duration-label');
+  const { start, end } = _gpGetStartEnd();
+  if (!start || !end) { if (label) label.textContent = ''; return; }
+  const secs = Math.floor((end.getTime() - start.getTime()) / 1000);
+  if (label) label.textContent = '· duration: ' + _gpFmtDurationHuman(secs);
+}
+
+function _gpBumpEnd(unit, sign) {
+  const tz = _gpCurrentTzMode();
+  let end = _gpParseFromInput(document.getElementById('gp-end-dt').value, tz);
+  if (!end) end = new Date();
+  if (unit === 'day') end.setDate(end.getDate() + sign);
+  else if (unit === 'hour') end.setHours(end.getHours() + sign);
+  else if (unit === 'minute') end.setMinutes(end.getMinutes() + sign);
+  document.getElementById('gp-end-dt').value = _gpFormatForInput(end, tz);
+  _gpUpdateDurationLabel();
+}
+
+function _gpSetNow() {
+  const tz = _gpCurrentTzMode();
+  const now = new Date();
+  document.getElementById('gp-start-dt').value = _gpFormatForInput(now, tz);
+  // If end is in the past or empty, push it +1 day from start.
+  let end = _gpParseFromInput(document.getElementById('gp-end-dt').value, tz);
+  if (!end || end.getTime() <= now.getTime()) {
+    end = new Date(now.getTime() + 24 * 3600 * 1000);
+    document.getElementById('gp-end-dt').value = _gpFormatForInput(end, tz);
+  }
+  _gpUpdateDurationLabel();
+}
+
+function _gpRetimeOnTzChange() {
+  // Re-format the visible values into the new tz mode. The underlying
+  // Date instants don't change.
+  const oldTz = _gpCurrentTzMode() === 'utc' ? 'local' : 'utc'; // opposite of current
+  const start = _gpParseFromInput(document.getElementById('gp-start-dt').value, oldTz);
+  const end = _gpParseFromInput(document.getElementById('gp-end-dt').value, oldTz);
+  if (start) document.getElementById('gp-start-dt').value = _gpFormatForInput(start, _gpCurrentTzMode());
+  if (end) document.getElementById('gp-end-dt').value = _gpFormatForInput(end, _gpCurrentTzMode());
+}
+
 async function _gpIssue() {
   const status = document.getElementById('gp-status');
   const issueBtn = document.getElementById('gp-issue-btn');
   if (!status || !issueBtn) return;
-  const duration = parseInt(document.getElementById('gp-duration').value, 10) || 3600;
+  const { start, end } = _gpGetStartEnd();
+  if (!start || !end) {
+    status.textContent = 'Pick a valid start and end.';
+    return;
+  }
+  const now = Date.now();
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (endMs <= startMs) {
+    status.textContent = 'End must be after start.';
+    return;
+  }
+  if (endMs <= now) {
+    status.textContent = 'End is in the past.';
+    return;
+  }
+  // We issue passes with cloud-relative durations. start_at in the
+  // future is approximated client-side: we ask the cloud for a pass
+  // that expires at endMs, regardless of start; the pass becomes
+  // usable immediately. (A true future start would need server
+  // support.) Show a hint if the operator intended a future start.
+  const futureStart = startMs > now + 60_000; // >1m in future
+  const durationSec = Math.max(60, Math.floor((endMs - now) / 1000));
+
   const cls = document.getElementById('gp-class').value;
   const power = parseInt(document.getElementById('gp-power').value, 10) || 100;
-  const modes = Array.from(document.querySelectorAll('.gp-mode:checked')).map((el) => el.value);
+  const stationCall = document.getElementById('gp-station-call').value.trim().toUpperCase() || null;
+  const operatorCall = document.getElementById('gp-operator-call').value.trim().toUpperCase() || null;
+  const controlOp = document.getElementById('gp-control-op').value.trim().toUpperCase() || null;
+
   const body = {
-    duration_seconds: duration,
+    duration_seconds: durationSec,
     privilege_class: cls,
     max_power_w: power,
-    allowed_modes: modes.length ? modes : null,
-    station_callsign: document.getElementById('gp-station-call').value.trim().toUpperCase() || null,
-    operator_callsign: document.getElementById('gp-operator-call').value.trim().toUpperCase() || null,
-    control_operator_callsign: document.getElementById('gp-control-op').value.trim().toUpperCase() || null,
+    allowed_modes: null,
+    station_callsign: stationCall,
+    operator_callsign: operatorCall,
+    control_operator_callsign: controlOp,
   };
   issueBtn.disabled = true;
-  status.textContent = 'Issuing…';
+  status.textContent = futureStart ? 'Issuing (pass becomes usable immediately) …' : 'Issuing …';
   try {
     const res = await window.api.passesIssue(body);
     if (res && res.error) {
@@ -4021,33 +4143,38 @@ async function _gpRefresh() {
     const res = await window.api.passesList();
     if (res && res.error) {
       wrap.classList.remove('hidden');
-      ul.innerHTML = `<li style="color:#f88;">Error: ${res.error}</li>`;
+      ul.innerHTML = `<li class="gp-list-error">Error: ${res.error}</li>`;
       return;
     }
     const passes = (res && res.passes) || [];
     wrap.classList.remove('hidden');
     if (!passes.length) {
-      ul.innerHTML = '<li style="color:#888;">No passes issued yet.</li>';
+      ul.innerHTML = '<li class="gp-list-empty">No passes issued yet.</li>';
       return;
     }
     ul.innerHTML = '';
     for (const p of passes) {
       const li = document.createElement('li');
-      li.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 0;border-bottom:1px solid #222;';
+      li.className = 'gp-list-item';
       const expires = p.expires_at ? new Date(p.expires_at).toLocaleString() : '?';
-      const statusLabel = p.status === 'active'
-        ? `<span style="color:#6e6;">active</span>`
-        : `<span style="color:#888;">${p.status}</span>`;
-      li.innerHTML = `
-        <span style="flex:0 0 110px;">${p.code}</span>
-        <span style="flex:1;color:#aaa;">${(p.privilege_class || '').toString().toUpperCase()} · ${p.max_power_w}W · ${expires}</span>
-        <span>${statusLabel}</span>
-      `;
+      const statusClass = p.status === 'active' ? 'gp-list-status-active' : 'gp-list-status-other';
+      const codeSpan = document.createElement('span');
+      codeSpan.className = 'gp-list-code';
+      codeSpan.textContent = p.code;
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'gp-list-meta';
+      metaSpan.textContent = `${(p.privilege_class || '').toString().toUpperCase()} · ${p.max_power_w}W · ${expires}`;
+      const statusSpan = document.createElement('span');
+      statusSpan.className = statusClass;
+      statusSpan.textContent = p.status;
+      li.appendChild(codeSpan);
+      li.appendChild(metaSpan);
+      li.appendChild(statusSpan);
       if (p.status === 'active') {
         const btn = document.createElement('button');
         btn.type = 'button';
+        btn.className = 'btn btn-sm btn-danger';
         btn.textContent = 'Revoke';
-        btn.style.cssText = 'padding:2px 8px;';
         btn.addEventListener('click', async () => {
           if (!confirm(`Revoke pass ${p.code}?`)) return;
           btn.disabled = true;
@@ -4070,7 +4197,7 @@ async function _gpRefresh() {
     }
   } catch (err) {
     wrap.classList.remove('hidden');
-    ul.innerHTML = `<li style="color:#f88;">Error: ${err.message || err}</li>`;
+    ul.innerHTML = `<li class="gp-list-error">Error: ${err.message || err}</li>`;
   }
 }
 
@@ -4080,9 +4207,54 @@ async function _gpRefresh() {
   if (toggleBtn && formWrap) {
     toggleBtn.addEventListener('click', () => {
       formWrap.classList.toggle('hidden');
-      if (!formWrap.classList.contains('hidden')) _gpRefresh();
+      if (!formWrap.classList.contains('hidden')) {
+        _gpRefresh();
+        // Initialize start/end to now and now+1d each time form opens.
+        const now = new Date();
+        const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000);
+        _gpSetDatetimeInputs(now, tomorrow);
+        // Pre-fill station callsign from settings if available.
+        const myCall = (typeof settings === 'object' && settings && (settings.myCallsign || settings.callsign)) || '';
+        const stationEl = document.getElementById('gp-station-call');
+        if (stationEl && !stationEl.value && myCall) stationEl.value = String(myCall).toUpperCase();
+      }
     });
   }
+  // Time-zone radio: re-format displayed values in place when toggled.
+  const tzRadios = document.querySelectorAll('input[name="gp-tz"]');
+  tzRadios.forEach((r) => {
+    r.addEventListener('change', () => {
+      _gpRetimeOnTzChange();
+      _gpUpdateDurationLabel();
+    });
+  });
+  // Local TZ label reflects the user's actual local TZ for clarity.
+  try {
+    const tzLabel = document.getElementById('gp-tz-local-label');
+    if (tzLabel) {
+      const offMin = -new Date().getTimezoneOffset();
+      const sign = offMin >= 0 ? '+' : '-';
+      const oh = Math.floor(Math.abs(offMin) / 60);
+      const om = Math.abs(offMin) % 60;
+      tzLabel.textContent = `Local (UTC${sign}${oh}${om ? ':' + String(om).padStart(2, '0') : ''})`;
+    }
+  } catch {}
+  // Now button
+  const nowBtn = document.getElementById('gp-now-btn');
+  if (nowBtn) nowBtn.addEventListener('click', _gpSetNow);
+  // Bump buttons
+  document.querySelectorAll('.gp-bump').forEach((b) => {
+    b.addEventListener('click', () => {
+      const unit = b.getAttribute('data-unit');
+      const sign = parseInt(b.getAttribute('data-sign'), 10) || 0;
+      _gpBumpEnd(unit, sign);
+    });
+  });
+  // Datetime change → refresh duration label
+  ['gp-start-dt', 'gp-end-dt'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', _gpUpdateDurationLabel);
+  });
   const issueBtn = document.getElementById('gp-issue-btn');
   if (issueBtn) issueBtn.addEventListener('click', _gpIssue);
   const refreshBtn = document.getElementById('gp-refresh-btn');

@@ -6910,3 +6910,198 @@ main.banner-logger-active #event-progress-overlay {
   color: var(--text-secondary);
   font-size: 11px;
 }
+
+/* ── Guest Pass (Settings → ECHOCAT → Guest Pass) ─────────────────── */
+.gp-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-primary);
+  padding-top: 10px;
+}
+.gp-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.gp-row-header > div { flex: 1; min-width: 280px; }
+.gp-form-wrap {
+  margin-top: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.gp-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+.gp-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.gp-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.gp-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.gp-input-narrow { width: 80px; }
+.gp-input-call {
+  width: 160px;
+  font-family: 'Fira Code', monospace, monospace;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.gp-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.gp-end-row { flex-wrap: wrap; }
+.gp-bump-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.gp-bump-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: 6px;
+  margin-right: 2px;
+}
+.gp-bump {
+  min-width: 32px;
+  padding: 3px 8px !important;
+}
+.gp-tz-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.gp-disclaimer {
+  display: block;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.gp-disclaimer code {
+  background: var(--bg-input);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.gp-disclaimer a { color: var(--accent-blue); }
+.gp-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.gp-result {
+  margin-top: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 12px;
+}
+.gp-result-code {
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: var(--accent-blue);
+  word-break: break-word;
+  margin-bottom: 4px;
+}
+.gp-result-share {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.gp-result-qr {
+  width: 140px;
+  height: 140px;
+  background: #fff;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.gp-result-share-text { flex: 1; min-width: 200px; font-size: 12px; }
+.gp-result-url {
+  font-family: 'Fira Code', monospace;
+  word-break: break-all;
+  margin-top: 4px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+}
+.gp-result-buttons { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.gp-list-wrap { margin-top: 14px; }
+.gp-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+.gp-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-primary);
+  font-size: 12px;
+}
+.gp-list-item:last-child { border-bottom: none; }
+.gp-list-code {
+  flex: 1;
+  font-family: 'Fira Code', monospace;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.gp-list-meta { flex: 0 0 auto; color: var(--text-secondary); font-size: 11px; }
+.gp-list-status-active { color: var(--accent-green); font-weight: 600; }
+.gp-list-status-other { color: var(--text-tertiary); }
+.gp-list-empty { color: var(--text-tertiary); font-style: italic; }
+.gp-list-error { color: var(--accent-red); }
+
+/* Owner banner — slightly more polished than the inline block */
+#gp-owner-banner {
+  background: linear-gradient(180deg, var(--accent-blue) 0%, color-mix(in srgb, var(--accent-blue) 80%, #000) 100%);
+  border-bottom: 2px solid var(--accent-blue);
+  color: #0a0e1a;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#gp-owner-banner.gp-banner-expiring {
+  background: linear-gradient(180deg, var(--accent-red) 0%, color-mix(in srgb, var(--accent-red) 80%, #000) 100%);
+  border-bottom-color: var(--accent-red);
+  color: #fff;
+}
+#gp-owner-banner strong { color: #000; }
+#gp-owner-banner.gp-banner-expiring strong { color: #fff; }
+#gp-owner-banner .gp-revoke-link {
+  margin-left: 6px;
+  text-decoration: underline;
+}

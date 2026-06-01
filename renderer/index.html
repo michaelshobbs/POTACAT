@@ -16,18 +16,18 @@
       <button class="titlebar-btn titlebar-close" id="tb-close" title="Close">&#x2715;</button>
     </div>
   </div>
-  <!-- Owner-facing Guest Pass banner (Phase 2 #46c).
+  <!-- Owner-facing Guest Pass banner.
        Shown ONLY when a guest is currently controlling this rig via a
        redeemed pass. Reads from window.api.passEnforcementGetState()
-       on load and onPassEnforcementState/Expiring/Ended events. Tap
-       the strip to revoke immediately. -->
-  <div id="gp-owner-banner" class="hidden" style="background:#7a3f00;border-bottom:2px solid #b86a00;color:#fff;padding:8px 14px;display:flex;align-items:center;gap:12px;font-size:13px;cursor:pointer;" title="Click to revoke guest access immediately">
-    <span style="font-size:18px;">&#x1F511;</span>
+       on load and onPassEnforcementState/Expiring/Ended events. Click
+       the strip to revoke. -->
+  <div id="gp-owner-banner" class="hidden" title="Click to revoke guest access immediately">
+    <span aria-hidden="true">&#x1F511;</span>
     <div style="flex:1;line-height:1.3;">
       <strong><span id="gp-owner-callsign">&hellip;</span></strong>
       <span> is controlling this rig. Their access expires </span>
       <strong><span id="gp-owner-expires">&hellip;</span></strong><span>.</span>
-      <span style="text-decoration:underline;color:#ffd599;margin-left:6px;">Revoke access</span>
+      <span class="gp-revoke-link">Revoke access</span>
     </div>
   </div>
   <header>
@@ -2430,80 +2430,104 @@
               <button type="button" id="launcher-uninstall-btn" style="padding:4px 12px;" class="hidden">Uninstall</button>
             </div>
           </div>
-          <!-- Guest Pass (Phase 2 #46c — desktop UI for rig swap). Lets
+          <!-- Guest Pass (Phase 2 — desktop UI for rig swap). Lets
                the owner generate a time-boxed, privilege-limited access
-               pass right from the desktop, instead of being forced to
-               grab a phone every time. Issuance and revoke hit the same
-               cloud endpoints the mobile app uses. -->
-          <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-              <div style="flex:1;min-width:280px;">
-                <strong>Guest Pass <span class="help-text" style="font-weight:normal;font-size:11px;color:#888;">(Rig swap — Phase 2)</span></strong>
-                <span class="help-text" style="display:block;">Hand the rig to a friend for a fixed window, with guardrails. Out-of-band tunes blocked, TX power clamped, session auto-ends at expiry. They log to their own logbook.</span>
+               pass right from the desktop. Issuance and revoke hit the
+               same cloud endpoints the mobile app uses. -->
+          <div class="gp-section">
+            <div class="gp-row-header">
+              <div>
+                <strong>Guest Pass</strong>
+                <span class="help-text">Hand the rig to a friend for a fixed window, with guardrails. Out-of-band tunes blocked, TX power clamped, session auto-ends at expiry. They log to their own logbook.</span>
               </div>
-              <button type="button" id="gp-toggle-btn" style="padding:4px 12px;">Open Guest Pass</button>
+              <button type="button" id="gp-toggle-btn" class="btn">Open Guest Pass</button>
             </div>
-            <div id="gp-form-wrap" class="hidden" style="margin-top:10px;background:#1c2a3a;border:1px solid #2a4060;border-radius:6px;padding:10px 12px;">
-              <div style="display:grid;grid-template-columns:max-content 1fr;gap:6px 10px;font-size:13px;align-items:center;">
-                <label for="gp-duration">Duration:</label>
-                <select id="gp-duration" style="padding:4px;">
-                  <option value="3600">1 hour</option>
-                  <option value="14400">4 hours</option>
-                  <option value="28800">8 hours</option>
-                  <option value="86400" selected>1 day</option>
-                  <option value="604800">1 week</option>
-                  <option value="2592000">30 days</option>
-                </select>
-                <label for="gp-class">License class:</label>
-                <select id="gp-class" style="padding:4px;">
+            <div id="gp-form-wrap" class="gp-form-wrap hidden">
+
+              <div class="gp-grid">
+                <label class="gp-label" for="gp-start-dt">Start</label>
+                <div class="gp-input-row">
+                  <input type="datetime-local" id="gp-start-dt" class="gp-input">
+                  <button type="button" class="btn btn-sm" id="gp-now-btn">Now</button>
+                </div>
+
+                <label class="gp-label" for="gp-end-dt">End</label>
+                <div class="gp-input-row gp-end-row">
+                  <input type="datetime-local" id="gp-end-dt" class="gp-input">
+                  <div class="gp-bump-buttons">
+                    <span class="gp-bump-label">Day</span>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="day" data-sign="-1">&minus;</button>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="day" data-sign="1">+</button>
+                    <span class="gp-bump-label">Hr</span>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="hour" data-sign="-1">&minus;</button>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="hour" data-sign="1">+</button>
+                    <span class="gp-bump-label">Min</span>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="minute" data-sign="-15">&minus;15</button>
+                    <button type="button" class="btn btn-sm gp-bump" data-unit="minute" data-sign="15">+15</button>
+                  </div>
+                </div>
+
+                <label class="gp-label">Time zone</label>
+                <div class="gp-input-row">
+                  <label class="gp-tz-toggle"><input type="radio" name="gp-tz" value="local" checked> <span id="gp-tz-local-label">Local</span></label>
+                  <label class="gp-tz-toggle"><input type="radio" name="gp-tz" value="utc"> UTC</label>
+                  <span id="gp-duration-label" class="help-text"></span>
+                </div>
+
+                <label class="gp-label" for="gp-class">License class</label>
+                <select id="gp-class" class="gp-input">
                   <option value="tech">Technician</option>
                   <option value="general" selected>General</option>
                   <option value="extra">Extra</option>
                 </select>
-                <label for="gp-power">Max TX power (W):</label>
-                <input type="number" id="gp-power" min="1" max="1500" value="100" style="width:80px;padding:4px;">
-                <label>Modes (optional):</label>
-                <div style="display:flex;gap:10px;font-size:12px;">
-                  <label class="checkbox-label" style="margin:0;"><input type="checkbox" class="gp-mode" value="CW"> CW</label>
-                  <label class="checkbox-label" style="margin:0;"><input type="checkbox" class="gp-mode" value="PHONE"> Phone</label>
-                  <label class="checkbox-label" style="margin:0;"><input type="checkbox" class="gp-mode" value="DATA"> Data</label>
-                  <span class="help-text" style="font-size:11px;">(blank = all class-allowed modes)</span>
+
+                <label class="gp-label" for="gp-power">Max TX power</label>
+                <div class="gp-input-row">
+                  <input type="number" id="gp-power" min="1" max="1500" value="100" class="gp-input gp-input-narrow">
+                  <span class="help-text">watts (1&ndash;1500)</span>
                 </div>
-                <label for="gp-station-call">Station callsign:</label>
-                <input type="text" id="gp-station-call" placeholder="(yours)" style="width:140px;padding:4px;text-transform:uppercase;">
-                <label for="gp-operator-call">Operator callsign:</label>
-                <input type="text" id="gp-operator-call" placeholder="(guest's)" style="width:140px;padding:4px;text-transform:uppercase;">
-                <label for="gp-control-op">Control operator:</label>
-                <input type="text" id="gp-control-op" placeholder="(optional)" style="width:140px;padding:4px;text-transform:uppercase;">
+
+                <label class="gp-label" for="gp-station-call">Station call</label>
+                <input type="text" id="gp-station-call" class="gp-input gp-input-call" autocomplete="off" spellcheck="false">
+
+                <label class="gp-label" for="gp-operator-call">Operator call</label>
+                <input type="text" id="gp-operator-call" class="gp-input gp-input-call" placeholder="(guest's call)" autocomplete="off" spellcheck="false">
+
+                <label class="gp-label" for="gp-control-op">Control op</label>
+                <input type="text" id="gp-control-op" class="gp-input gp-input-call" placeholder="(optional)" autocomplete="off" spellcheck="false">
               </div>
-              <span class="help-text" style="display:block;margin-top:6px;font-size:11px;">
-                You decide how STATION_CALLSIGN, OPERATOR, and control-operator are filled per
-                <a href="https://www.ecfr.gov/current/title-47/chapter-I/subchapter-D/part-97/subpart-B/section-97.119" target="_blank" style="color:#4fc3f7;">§97.119</a>.
-                POTACAT just records what you set — no hard-coded legal stance.
+
+              <span class="help-text gp-disclaimer">
+                You decide how <code>STATION_CALLSIGN</code>, <code>OPERATOR</code>, and the control operator are filled per
+                <a href="https://www.ecfr.gov/current/title-47/chapter-I/subchapter-D/part-97/subpart-B/section-97.119" target="_blank">&sect;97.119</a>.
+                POTACAT records what you set &mdash; no hard-coded legal stance.
               </span>
-              <div style="margin-top:10px;display:flex;gap:8px;">
-                <button type="button" id="gp-issue-btn" style="padding:4px 14px;">Generate pass</button>
-                <button type="button" id="gp-refresh-btn" style="padding:4px 14px;">My passes</button>
-                <span id="gp-status" class="help-text" style="font-size:11px;align-self:center;"></span>
+
+              <div class="gp-actions">
+                <button type="button" id="gp-issue-btn" class="btn btn-primary">Generate pass</button>
+                <button type="button" id="gp-refresh-btn" class="btn">My passes</button>
+                <span id="gp-status" class="help-text"></span>
               </div>
-              <div id="gp-result" class="hidden" style="margin-top:10px;background:#16203a;border:1px solid #2a4060;border-radius:6px;padding:10px;">
-                <div style="font-family:monospace;font-size:18px;letter-spacing:2px;" id="gp-result-code"></div>
-                <div id="gp-result-meta" class="help-text" style="font-size:11px;margin-top:4px;"></div>
-                <div style="display:flex;gap:12px;margin-top:8px;align-items:flex-start;">
-                  <img id="gp-result-qr" style="width:140px;height:140px;background:#fff;border-radius:4px;" alt="QR">
-                  <div style="flex:1;font-size:12px;">
-                    <div><strong>Share URL</strong></div>
-                    <div id="gp-result-url" style="font-family:monospace;word-break:break-all;margin-top:2px;"></div>
-                    <div style="margin-top:8px;display:flex;gap:6px;">
-                      <button type="button" id="gp-result-copy-code" style="padding:2px 8px;">Copy code</button>
-                      <button type="button" id="gp-result-copy-url" style="padding:2px 8px;">Copy URL</button>
+
+              <div id="gp-result" class="gp-result hidden">
+                <div class="gp-result-code" id="gp-result-code"></div>
+                <div id="gp-result-meta" class="help-text"></div>
+                <div class="gp-result-share">
+                  <img id="gp-result-qr" class="gp-result-qr" alt="QR">
+                  <div class="gp-result-share-text">
+                    <div class="gp-label">Share URL</div>
+                    <div id="gp-result-url" class="gp-result-url"></div>
+                    <div class="gp-result-buttons">
+                      <button type="button" id="gp-result-copy-code" class="btn btn-sm">Copy code</button>
+                      <button type="button" id="gp-result-copy-url" class="btn btn-sm">Copy URL</button>
                     </div>
                   </div>
                 </div>
               </div>
-              <div id="gp-list-wrap" class="hidden" style="margin-top:10px;">
-                <div style="font-size:12px;color:#aaa;margin-bottom:4px;">My recent passes</div>
-                <ul id="gp-list" style="list-style:none;padding:0;margin:0;font-size:12px;font-family:monospace;"></ul>
+
+              <div id="gp-list-wrap" class="gp-list-wrap hidden">
+                <div class="gp-label">My recent passes</div>
+                <ul id="gp-list" class="gp-list"></ul>
               </div>
             </div>
           </div>
