@@ -347,6 +347,81 @@
     });
   }
 
+  // ── Forgot password (POTACAT Cloud) ──
+  // Inline mini-form. Calls public POST /v1/auth/forgot-password via
+  // cloud-ipc → CloudSyncClient. Cloud always returns success — UI
+  // shows the same "check your inbox" regardless of whether the email
+  // is registered (enumeration defense).
+  const forgotLink = document.getElementById('cloud-forgot-link');
+  const forgotSection = document.getElementById('cloud-forgot-section');
+  const forgotEmailInput = document.getElementById('cloud-forgot-email');
+  const forgotSendBtn = document.getElementById('cloud-forgot-send');
+  const forgotCancelBtn = document.getElementById('cloud-forgot-cancel');
+  const forgotStatus = document.getElementById('cloud-forgot-status');
+  function _gpForgotReset() {
+    if (forgotSection) forgotSection.classList.add('hidden');
+    if (forgotStatus) forgotStatus.textContent = '';
+    if (forgotSendBtn) forgotSendBtn.disabled = false;
+  }
+  if (forgotLink && forgotSection) {
+    forgotLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      const wasHidden = forgotSection.classList.contains('hidden');
+      forgotSection.classList.toggle('hidden');
+      if (wasHidden && forgotEmailInput) {
+        // Pre-fill from the sign-in email field if the user already typed there.
+        const signInEmail = document.getElementById('cloud-email');
+        if (signInEmail && signInEmail.value && !forgotEmailInput.value) {
+          forgotEmailInput.value = signInEmail.value;
+        }
+        try { forgotEmailInput.focus(); } catch {}
+      }
+    });
+  }
+  if (forgotCancelBtn) {
+    forgotCancelBtn.addEventListener('click', _gpForgotReset);
+  }
+  if (forgotSendBtn) {
+    forgotSendBtn.addEventListener('click', async () => {
+      const email = (forgotEmailInput && forgotEmailInput.value || '').trim();
+      if (!email) {
+        if (forgotStatus) {
+          forgotStatus.textContent = 'Enter an email first.';
+          forgotStatus.style.color = 'var(--accent-red)';
+        }
+        return;
+      }
+      forgotSendBtn.disabled = true;
+      if (forgotStatus) {
+        forgotStatus.textContent = 'Sending…';
+        forgotStatus.style.color = 'var(--text-secondary)';
+      }
+      try {
+        const res = await window.api.cloudForgotPassword(email);
+        if (res && res.error) {
+          if (forgotStatus) {
+            forgotStatus.textContent = 'Error: ' + res.error;
+            forgotStatus.style.color = 'var(--accent-red)';
+          }
+          forgotSendBtn.disabled = false;
+          return;
+        }
+        if (forgotStatus) {
+          forgotStatus.textContent = 'Check your inbox — link valid for 24h.';
+          forgotStatus.style.color = 'var(--accent-green)';
+        }
+        // Re-enable after a beat so re-tries are possible if the email never arrives.
+        setTimeout(() => { if (forgotSendBtn) forgotSendBtn.disabled = false; }, 3000);
+      } catch (err) {
+        if (forgotStatus) {
+          forgotStatus.textContent = 'Failed: ' + (err.message || err);
+          forgotStatus.style.color = 'var(--accent-red)';
+        }
+        forgotSendBtn.disabled = false;
+      }
+    });
+  }
+
   if (verifyBtn) {
     verifyBtn.addEventListener('click', async () => {
       verifyBtn.disabled = true;
