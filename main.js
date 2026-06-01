@@ -5888,11 +5888,11 @@ function connectRemote() {
       // during teardown and any race conditions from FT8 engine shutdown
       setTimeout(() => {
         if (cat && cat.connected) gatedSetTransmit(false);
-        if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
+        if (smartSdr && smartSdr.connected) gatedSmartSdrTransmit(false);
       }, 500);
       setTimeout(() => {
         if (cat && cat.connected) gatedSetTransmit(false);
-        if (smartSdr && smartSdr.connected) smartSdr.setTransmit(false);
+        if (smartSdr && smartSdr.connected) gatedSmartSdrTransmit(false);
       }, 2000);
     }, 60_000);
   });
@@ -6439,7 +6439,7 @@ function connectRemote() {
     _txPowerTimer = setTimeout(() => {
       _txPowerTimer = null;
       if (flexSdr()) {
-        smartSdr.setTxPower(value);
+        gatedSmartSdrTxPower(value);
       } else if (cat && cat.connected) {
         const rigType = detectRigType();
         gatedSetTxPower(value, { rigType });
@@ -6632,7 +6632,7 @@ function connectRemote() {
       case 'set-tx-power': {
         if (flexNeedsApi) { sendCatLog('TX Power requires SmartSDR API — not connected'); break; }
         const value = Number(data.value) || 0;
-        if (flexSdr()) smartSdr.setTxPower(value);
+        if (flexSdr()) gatedSmartSdrTxPower(value);
         else if (cat && cat.connected) {
           gatedSetTxPower(value, { rigType });
         }
@@ -7943,7 +7943,7 @@ function handleRemotePtt(state, opts = {}) {
       const sliceIndex = (settings.catTarget.port || 5002) - 5002;
       smartSdr.setActiveSlice(sliceIndex);
       smartSdr.setTxSlice(sliceIndex);
-      smartSdr.setTransmit(state);
+      gatedSmartSdrTransmit(state);
     } else if (cat && cat.connected) {
       if (state) sendCatLog('[PTT] SmartSDR API unavailable — falling back to TS-2000 TX; command (slice selection skipped)');
       gatedSetTransmit(state);
@@ -11645,6 +11645,45 @@ function gatedSetTxPower(value, opts = {}) {
   return true;
 }
 
+// SmartSDR / Flex equivalents (#46b). Flex users would otherwise bypass
+// pass enforcement entirely since the cat.setTransmit / cat.setTxPower
+// wrappers don't apply to smartSdr.*. Same gate policy, different rig.
+function gatedSmartSdrTransmit(state) {
+  if (passEnforcement && state) {
+    const res = passEnforcement.interceptCatCommand({ type: 'tx_enable' });
+    if (!res.allowed) {
+      sendCatLog(`[pass] TX blocked (Flex): ${res.userVisible}`);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pass-cat-blocked', { command: 'tx_enable', reason: res.reason, userVisible: res.userVisible });
+      }
+      return false;
+    }
+  }
+  if (smartSdr && smartSdr.connected) smartSdr.setTransmit(state);
+  return true;
+}
+
+function gatedSmartSdrTxPower(value) {
+  let actual = value;
+  if (passEnforcement) {
+    const res = passEnforcement.interceptCatCommand({ type: 'tx_power', watts: value });
+    if (!res.allowed) {
+      if (res.clampTo != null) {
+        actual = res.clampTo;
+        sendCatLog(`[pass] TX power clamped ${value}W → ${actual}W (Flex)`);
+      } else {
+        sendCatLog(`[pass] TX power blocked (Flex): ${res.userVisible}`);
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('pass-cat-blocked', { command: 'tx_power', reason: res.reason, userVisible: res.userVisible });
+        }
+        return false;
+      }
+    }
+  }
+  if (smartSdr && smartSdr.connected) smartSdr.setTxPower(actual);
+  return true;
+}
+
 function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
   let freqHz = Math.round(parseFloat(freqKhz) * 1000); // kHz -> Hz
   const now = Date.now();
@@ -14907,7 +14946,7 @@ app.whenReady().then(() => {
         if (flexNeedsApi) { _flexWarnOnce('TX Power requires SmartSDR API — not connected'); break; }
         const value = Number(data.value) || 0;
         if (flexSdr()) {
-          smartSdr.setTxPower(value);
+          gatedSmartSdrTxPower(value);
         } else if (cat && cat.connected) {
           gatedSetTxPower(value, { rigType });
         }
