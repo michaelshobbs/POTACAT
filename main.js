@@ -202,6 +202,7 @@ let cloudIpc = null;
 let potaSync = null; // lib/pota-sync.js instance — created lazily on first access
 // --- POTACAT Cloud (CF tunnel) — initialized in app.whenReady, after cloudIpc ---
 let cloudTunnel = null;
+let cloudTray = null;
 
 // --- Parks DB (activator mode) ---
 let parksArray = [];
@@ -12053,6 +12054,64 @@ app.whenReady().then(() => {
     cloudIpc.startBackgroundSync();
   }
 
+  // --- POTACAT Cloud tray indicator (#36) ---
+  // Renders a small system-tray icon with a single Cloud status row.
+  // Click on the row (or the icon) opens the main window + asks the
+  // renderer to show the POTACAT Cloud settings panel (#35).
+  function createCloudTray(initialState) {
+    if (cloudTray) return; // idempotent
+    try {
+      const { Tray, Menu, nativeImage } = require('electron');
+      let trayIcon;
+      if (process.platform === 'win32') {
+        trayIcon = path.join(__dirname, 'assets', 'icon.ico');
+      } else {
+        const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-256.png'));
+        trayIcon = img.resize({ width: 16, height: 16 });
+      }
+      cloudTray = new Tray(trayIcon);
+      cloudTray._Menu = Menu; // stash for refresh
+      cloudTray.on('click', () => focusMainWindowAndOpenCloudPanel());
+      refreshCloudTray(initialState);
+    } catch (err) {
+      sendCatLog('[cloud-tray] create failed: ' + (err.message || err));
+    }
+  }
+
+  function refreshCloudTray(state) {
+    if (!cloudTray || cloudTray.isDestroyed?.()) return;
+    const Menu = cloudTray._Menu;
+    let label;
+    if (!state || !state.enabled) {
+      label = '🌐 LAN only';
+    } else if (state.status === 'live') {
+      label = `🌐 Cloud · ${state.cloudHost || '(unknown host)'}`;
+    } else {
+      label = '🌐 Cloud · reconnecting…';
+    }
+    cloudTray.setToolTip(`POTACAT — ${label}`);
+    try {
+      cloudTray.setContextMenu(Menu.buildFromTemplate([
+        { label, click: () => focusMainWindowAndOpenCloudPanel() },
+        { type: 'separator' },
+        { label: 'Open POTACAT', click: () => focusMainWindowAndOpenCloudPanel(false) },
+        { label: 'Quit', click: () => app.quit() },
+      ]));
+    } catch (err) {
+      sendCatLog('[cloud-tray] refresh failed: ' + (err.message || err));
+    }
+  }
+
+  function focusMainWindowAndOpenCloudPanel(openPanel = true) {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    if (openPanel) {
+      try { win.webContents.send('open-settings-panel', { panel: 'cloud-tunnel' }); } catch {}
+    }
+  }
+
   // --- POTACAT Cloud (CF tunnel manager) ---
   // Owns the cloudflared child process (#35), 5-min health-check (#38),
   // and the tray indicator state (#36). Shares JWT auth with cloudIpc's
@@ -12068,12 +12127,13 @@ app.whenReady().then(() => {
     });
     cloudTunnel.on('change', (state) => {
       if (win && !win.isDestroyed()) win.webContents.send('cloud-tunnel-state', state);
-      // #36 tray indicator listens here too — wired below in createTray().
+      refreshCloudTray(state);
     });
     cloudTunnel.loadFromDisk();
     if (cloudTunnel.getState().enabled) {
       cloudTunnel.startHealthCheck();
     }
+    createCloudTray(cloudTunnel.getState());
   } catch (err) {
     sendCatLog('[cloud-tunnel] init failed: ' + (err.message || err));
   }
