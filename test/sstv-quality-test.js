@@ -274,6 +274,91 @@ for (const cell of BASELINES) {
   }
 }
 
+// =====================================================================
+// Non-SSTV audio false-emit guard
+// =====================================================================
+//
+// Background: commit bd7c629 (2026-05-28) fixed a ~3-week regression
+// where the SmartSDR Direct VITA-49 audio path delivered band noise
+// that false-locked the leader detector. The decoder would lock a
+// bogus mode and grind through a 1–3 min decode while real SSTV
+// headers passed by. Root cause was downstream of just the leader
+// detector (multi-gate chain); the specific fix added std-and-mean
+// frequency-purity tests to the leader gate.
+//
+// This guard feeds two synthesized non-SSTV inputs and asserts the
+// decoder NEVER emits an rx-image event. It catches the broader
+// class of "decoder false-emits from non-SSTV audio" — that's the
+// user-visible symptom, regardless of which gate (leader, VIS, or
+// decode-quality) is the line of defense in any future version.
+//
+// It does NOT specifically reproduce the exact SmartSDR Direct
+// noise spectrum that caused the original bug — that would require
+// a fixture WAV recording of real radio band noise. Hard to ship in
+// a unit test. The downstream filters (VIS bit pattern, sync≥50%
+// gate) catch the synthesized inputs below even if the leader gate
+// is widened — so this guard tests the SYSTEM property, not the
+// specific gate. Don't relax it to make it pass without thinking.
+console.log('\nNon-SSTV audio false-emit guard:');
+{
+  const checks = [
+    {
+      name: 'pure white Gaussian noise (rms 0.5, 30 s, seed=1)',
+      generate: () => {
+        const N = SAMPLE_RATE * 30;
+        const noise = new Float32Array(N);
+        let s = 1 >>> 0;
+        for (let i = 0; i < N; i += 2) {
+          s = (s * 1664525 + 1013904223) >>> 0;
+          const u1 = Math.max(1e-12, s / 4294967296);
+          s = (s * 1664525 + 1013904223) >>> 0;
+          const u2 = s / 4294967296;
+          const mag = Math.sqrt(-2 * Math.log(u1)) * 0.5;
+          noise[i] = mag * Math.cos(2 * Math.PI * u2);
+          if (i + 1 < N) noise[i + 1] = mag * Math.sin(2 * Math.PI * u2);
+        }
+        return noise;
+      },
+    },
+    {
+      name: 'jittered 1900 Hz pseudo-leader (±500 Hz, 30 s)',
+      generate: () => {
+        const N = SAMPLE_RATE * 30;
+        const out = new Float32Array(N);
+        let s = 1 >>> 0;
+        let phase = 0;
+        for (let i = 0; i < N; i++) {
+          s = (s * 1664525 + 1013904223) >>> 0;
+          const jitter = ((s / 2147483648) - 1) * 500;
+          phase += 2 * Math.PI * (1900 + jitter) / SAMPLE_RATE;
+          out[i] = 0.5 * Math.sin(phase);
+        }
+        return out;
+      },
+    },
+  ];
+  for (const check of checks) {
+    const samples = check.generate();
+    const dec = new SstvDecoder();
+    const images = [];
+    for (let i = 0; i < samples.length; i += CHUNK) {
+      const out = dec.processSamples(new Float32Array(samples.subarray(i, Math.min(i + CHUNK, samples.length))));
+      for (const r of out) if (r.type === 'rx-image') images.push(r);
+    }
+    if (images.length === 0) {
+      pass++;
+      console.log(`  ✓ ${check.name} → 0 rx-image events`);
+    } else {
+      fail++;
+      regressions.push({
+        cell: { mode: 'noise-false-emit', drift: 0, baseline: 0 },
+        actual: images.length,
+      });
+      console.log(`  ✗ FALSE-EMIT REGRESSION: ${check.name} → ${images.length} bogus rx-image event(s)`);
+    }
+  }
+}
+
 console.log('\n' + '='.repeat(60));
 console.log(`Results: ${pass} passed, ${fail} regressions`);
 if (fail > 0) {
