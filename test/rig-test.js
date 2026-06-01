@@ -704,6 +704,206 @@ test('Kenwood attenuator on -> RA1;', () => {
 });
 
 // =========================================================================
+// FTX-1 Field + Optima — model-specific behavior validated against real
+// hardware by Hitman90210 (KF4YHC) in PR #39, integrated here.
+// =========================================================================
+console.log('\n=== Yaesu FTX-1 ===');
+
+const FTX1_FIELD_MODEL = {
+  brand: 'Yaesu', protocol: 'kenwood',
+  caps: {
+    nb: true, atu: true, filter: true, filterType: 'indexed', rfgain: true,
+    txpower: true, vfo: true, comp: true, nr: true, anf: true, vox: true,
+    agc: true, rit: true, mon: true, monLevel: true, micGain: true,
+    clarRx: true, clarTx: true, clarOffset: true, breakIn: true,
+    breakInDelay: true, ftx1Clar: true,
+  },
+  cw: { text: 'ky1', textChunk: 50, speed: 'ks', paddleKey: 'txrx', kyMode: 'km' },
+  atuCmd: 'standard', minPower: 5, maxPower: 100, maxNbLevel: 10,
+  pcPrefix: 1, rmSwr: 6, rmAlc: 4,
+};
+const FTX1_OPTIMA_MODEL = Object.assign({}, FTX1_FIELD_MODEL, {
+  atuCmd: 'ac103', pcPrefix: 2,
+});
+
+// Power: model-prefixed PC parsing (PC1xxx Field, PC2xxx Optima).
+test('FTX-1 Field: PC1100 reply parses as 100 W (prefix stripped)', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let captured = null;
+  codec.on('power', (w) => { captured = w; });
+  codec.onData(Buffer.from('PC1100;'));
+  assert.strictEqual(captured, 100);
+});
+
+test('FTX-1 Optima: PC2100 reply parses as 100 W (prefix stripped)', () => {
+  const codec = new KenwoodCodec(FTX1_OPTIMA_MODEL, () => {});
+  let captured = null;
+  codec.on('power', (w) => { captured = w; });
+  codec.onData(Buffer.from('PC2100;'));
+  assert.strictEqual(captured, 100);
+});
+
+test('FTX-1 Optima: PC1100 (wrong prefix) parses as 1100 (no strip)', () => {
+  // Sanity check: stripping only happens when the leading byte matches the
+  // model's prefix. A mismatched prefix should NOT be silently dropped.
+  const codec = new KenwoodCodec(FTX1_OPTIMA_MODEL, () => {});
+  let captured = null;
+  codec.on('power', (w) => { captured = w; });
+  codec.onData(Buffer.from('PC1100;'));
+  assert.strictEqual(captured, 1100);
+});
+
+// Meter channel routing (FTX-1 = RM6 SWR, RM4 ALC).
+test('FTX-1 getSwr writes RM6;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.getSwr();
+  assert.strictEqual(writes[0], 'RM6;');
+});
+
+test('FTX-1 getAlc writes RM4;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.getAlc();
+  assert.strictEqual(writes[0], 'RM4;');
+});
+
+test('FTX-1 RM6 reply routes to swr', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let swr = null, alc = null;
+  codec.on('swr', (v) => { swr = v; });
+  codec.on('alc', (v) => { alc = v; });
+  codec.onData(Buffer.from('RM6055;'));
+  assert.strictEqual(swr, 55);
+  assert.strictEqual(alc, null);
+});
+
+test('FTX-1 RM4 reply routes to alc', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let swr = null, alc = null;
+  codec.on('swr', (v) => { swr = v; });
+  codec.on('alc', (v) => { alc = v; });
+  codec.onData(Buffer.from('RM4042;'));
+  assert.strictEqual(alc, 42);
+  assert.strictEqual(swr, null);
+});
+
+// Physical PTT polling (TX;) — added to YAESU_DEFAULTS so all Yaesu rigs
+// get it, not just FTX-1.
+test('FTX-1 getPtt writes TX;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.getPtt();
+  assert.strictEqual(writes[0], 'TX;');
+});
+
+test('FTX-1 TX1 reply emits ptt=true', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let ptt = null;
+  codec.on('ptt', (v) => { ptt = v; });
+  codec.onData(Buffer.from('TX1;'));
+  assert.strictEqual(ptt, true);
+});
+
+test('FTX-1 TX0 reply emits ptt=false', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let ptt = null;
+  codec.on('ptt', (v) => { ptt = v; });
+  codec.onData(Buffer.from('TX0;'));
+  assert.strictEqual(ptt, false);
+});
+
+// Monitor: channel 0 carries enable bit, channel 1 carries level.
+test('FTX-1 setMonitor(true) writes ML0001;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setMonitor(true);
+  assert.strictEqual(writes[0], 'ML0001;');
+});
+
+test('FTX-1 setMonitor(false) writes ML0000;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setMonitor(false);
+  assert.strictEqual(writes[0], 'ML0000;');
+});
+
+test('FTX-1 setMonLevel(50) writes ML1050; (channel 1)', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setMonLevel(50);
+  assert.strictEqual(writes[0], 'ML1050;');
+});
+
+// Clarifier: setting-mode 0 toggles RX/TX enable together; setting-mode 1
+// writes the shared offset.
+test('FTX-1 setClarRx(true) writes CF000 with RX bit set', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setClarRx(true);
+  assert.strictEqual(writes[0], 'CF00010000;');
+});
+
+test('FTX-1 setClarTx(true) preserves prior RX state', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setClarRx(true);
+  codec.setClarTx(true);
+  assert.strictEqual(writes[0], 'CF00010000;');
+  assert.strictEqual(writes[1], 'CF00011000;');
+});
+
+test('FTX-1 setClarOffset(+500) writes CF001+0500;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setClarOffset(500);
+  assert.strictEqual(writes[0], 'CF001+0500;');
+});
+
+test('FTX-1 setClarOffset(-250) writes CF001-0250;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FTX1_FIELD_MODEL);
+  codec.setClarOffset(-250);
+  assert.strictEqual(writes[0], 'CF001-0250;');
+});
+
+test('FTX-1 CF000 reply parses RX/TX enable bits', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let rit = null, txClar = null;
+  codec.on('rit', (v) => { rit = v; });
+  codec.on('txClar', (v) => { txClar = v; });
+  codec.onData(Buffer.from('CF00011000;'));
+  assert.strictEqual(rit, true);
+  assert.strictEqual(txClar, true);
+});
+
+test('FTX-1 CF001 reply parses signed offset', () => {
+  const codec = new KenwoodCodec(FTX1_FIELD_MODEL, () => {});
+  let freq = null;
+  codec.on('clarFreq', (v) => { freq = v; });
+  codec.onData(Buffer.from('CF001-0123;'));
+  assert.strictEqual(freq, -123);
+});
+
+// =========================================================================
+// Non-FTX-1 Yaesu regression guards — these are the controls PR #39's first
+// pass accidentally broke. Lock them down so the next FTX-1-style refactor
+// can't silently kill RIT/NR/ANF on FT-991/FTDX10/FT-710 etc.
+// =========================================================================
+console.log('\n=== Yaesu non-FTX-1 regression guards ===');
+
+test('Non-FTX-1 Yaesu setRit writes RT1;/RT0; (FT-891 fixture)', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FT891_MODEL);
+  codec.setRit(true);
+  codec.setRit(false);
+  assert.deepStrictEqual(writes, ['RT1;', 'RT0;']);
+});
+
+test('Non-FTX-1 Yaesu setNoiseReduction writes NR01;/NR00;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FT891_MODEL);
+  codec.setNoiseReduction(true);
+  codec.setNoiseReduction(false);
+  assert.deepStrictEqual(writes, ['NR01;', 'NR00;']);
+});
+
+test('Non-FTX-1 Yaesu setAutoNotch writes BC01;/BC00;', () => {
+  const { codec, writes } = captureWrites(KenwoodCodec, FT891_MODEL);
+  codec.setAutoNotch(true);
+  codec.setAutoNotch(false);
+  assert.deepStrictEqual(writes, ['BC01;', 'BC00;']);
+});
+
+// =========================================================================
 // Summary
 console.log(`\n${'='.repeat(50)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
