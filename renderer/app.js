@@ -3818,46 +3818,22 @@ setRemoteRequireToken.addEventListener('change', () => {
   remoteTokenRow.classList.toggle('hidden', !setRemoteRequireToken.checked);
 });
 
-// --- Remote Launcher ---
-const setEnableLauncher = document.getElementById('set-enable-launcher');
-const launcherConfig = document.getElementById('launcher-config');
-const launcherUrlDisplay = document.getElementById('launcher-url-display');
-const launcherStatus = document.getElementById('launcher-status');
-
-if (setEnableLauncher) {
-  setEnableLauncher.addEventListener('change', async () => {
-    if (launcherConfig) launcherConfig.classList.toggle('hidden', !setEnableLauncher.checked);
-    if (setEnableLauncher.checked) {
-      if (launcherStatus) launcherStatus.textContent = 'Installing...';
-      const result = await window.api.installLauncher();
-      if (launcherStatus) {
-        if (result.ok) {
-          launcherStatus.textContent = 'Installed. Will auto-start at next login.';
-          launcherStatus.style.color = '#4ecca3';
-        } else {
-          launcherStatus.textContent = 'Install failed: ' + (result.error || 'unknown');
-          launcherStatus.style.color = '#e94560';
-        }
-      }
-      // Show URL
-      try {
-        const ips = await window.api.getLocalIPs();
-        const tsIp = ips.find(ip => ip.tailscale);
-        const lanIp = ips.find(ip => !ip.tailscale);
-        const ip = tsIp || lanIp;
-        if (launcherUrlDisplay) launcherUrlDisplay.textContent = ip ? 'https://' + ip.address + ':7301/' : 'https://YOUR_IP:7301/';
-      } catch { if (launcherUrlDisplay) launcherUrlDisplay.textContent = 'https://YOUR_IP:7301/'; }
-    } else {
-      if (launcherStatus) launcherStatus.textContent = 'Removing...';
-      const result = await window.api.uninstallLauncher();
-      if (launcherStatus) {
-        launcherStatus.textContent = result.ok ? 'Removed.' : 'Error: ' + (result.error || 'unknown');
-        launcherStatus.style.color = result.ok ? '#aaa' : '#e94560';
-      }
-      if (launcherUrlDisplay) launcherUrlDisplay.textContent = '';
-    }
-  });
-}
+// Remote Launcher controls live in the Sharing block of the ECHOCAT tab:
+// see #launcher-install-btn / #launcher-uninstall-btn / #launcher-status-pill
+// below. The legacy checkbox/IPC handler that used #set-enable-launcher was
+// removed when the duplicate UI was consolidated.
+//
+// openSettingsDialog() and saveSettings() still reference the old element
+// names in a few dead-code spots (commit 7561106 cleanup missed them).
+// Null-stubs make those references resolve without ReferenceError on
+// strict-mode lookup; the existing `if (setEnableLauncher)` guards then
+// short-circuit cleanly. Casey 2026-06-02: "Open Settings" stopped
+// opening because openSettingsDialog threw on line 10471 — the call
+// chain bailed before reaching settingsDialog.showModal().
+const setEnableLauncher = null;
+const launcherConfig = null;
+const launcherUrlDisplay = null;
+const launcherStatus = null;
 
 remoteRegenToken.addEventListener('click', () => {
   const arr = new Uint8Array(3);
@@ -14264,12 +14240,10 @@ function showTuneBlockedToast(msg) {
 }
 
 // CW keyer status
-const cwTextDisplay = document.getElementById('cw-text-display');
 window.api.onCwKeyerStatus(({ enabled, cwAuth, winkeyer, version }) => {
   cwKeyerStatusEl.classList.toggle('hidden', !enabled);
-  cwTextDisplay.classList.toggle('hidden', !enabled);
   updateCwMacroBar();
-  if (!enabled) { cwTextDisplay.textContent = ''; closeCwPopover(); }
+  if (!enabled) { closeCwPopover(); }
   if (winkeyer) {
     cwKeyerStatusEl.textContent = 'WK';
     cwKeyerStatusEl.title = `WinKeyer v${version || '?'} connected`;
@@ -14286,17 +14260,6 @@ window.api.onCwKeyerStatus(({ enabled, cwAuth, winkeyer, version }) => {
     cwKeyerStatusEl.style.background = '#b8860b';
   }
 });
-// WinKeyer echo — show sent characters in CW text display
-window.api.onCwEcho(({ char }) => {
-  if (cwTextDisplay) {
-    cwTextDisplay.textContent += char;
-    // Keep display from growing too long
-    if (cwTextDisplay.textContent.length > 60) {
-      cwTextDisplay.textContent = cwTextDisplay.textContent.substring(cwTextDisplay.textContent.length - 40);
-    }
-  }
-});
-
 // --- Floating CW Macro Box (draggable, like meter box) ---
 const cwMacroBar = document.getElementById('cw-macro-bar');
 const cwMacroBtns = document.getElementById('cw-macro-btns');
@@ -14465,7 +14428,6 @@ if (cwMacroCancelBtn) {
   cwMacroCancelBtn.addEventListener('click', () => {
     window.api.cwCancel();
     cwMacroInput.value = '';
-    if (cwTextDisplay) cwTextDisplay.textContent = '';
   });
 }
 if (cwMacroInput) {
@@ -15167,13 +15129,10 @@ cwPopoverWpm.addEventListener('change', () => {
 // Close CW popover when clicking outside
 document.addEventListener('click', () => { if (cwPopoverOpen) closeCwPopover(); });
 
-// CW decoded text display in status bar
-window.api.onCwText(({ total }) => {
-  // Show last ~40 characters of sent text, right-aligned so newest is visible
-  const display = total.length > 40 ? total.slice(-40) : total;
-  cwTextDisplay.textContent = display;
-  cwTextDisplay.classList.remove('hidden');
-});
+// CW decoded text display in status bar — element removed from
+// the top bar (was a recent-CW echo strip between Rig and CW pills).
+// onCwText is intentionally ignored; the CW pill itself still reflects
+// keyer state via onCwKeyerStatus above.
 
 // Unlock AudioContext on first user interaction (Chromium autoplay policy)
 document.addEventListener('click', function unlockAudio() {
