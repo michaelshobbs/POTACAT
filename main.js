@@ -7865,6 +7865,13 @@ function connectRemote() {
     // iOS trusts Tailscale certs natively, no pinning needed.
     userCertPath: settings.echocatTlsCertPath || null,
     userKeyPath: settings.echocatTlsKeyPath || null,
+    // POTACAT Cloud Tunnel: when this server is being published on
+    // the public internet via <callsign>.potacat.com, the local-trust
+    // auto-auth policy is unsafe. Pass the current cloudTunnel state
+    // in at start so the listener accepts no connection before the
+    // flag is set. Runtime toggles are propagated by the
+    // cloudTunnel.on('change') handler further down.
+    tunnelExposed: !!(cloudTunnel && cloudTunnel.getState().enabled),
   });
 
   // KiwiSDR bridge — must be inside connectRemote() so listeners survive reconnect
@@ -12342,6 +12349,14 @@ app.whenReady().then(() => {
     cloudTunnel.on('change', (state) => {
       if (win && !win.isDestroyed()) win.webContents.send('cloud-tunnel-state', state);
       refreshCloudTray(state);
+      // Mirror the public-exposure state into the WS auth layer.
+      // Using `enabled` (not `status === 'live'`) deliberately: even
+      // during reconnect/health-check flaps the operator's intent is
+      // "tunnel on", and we'd rather not flicker auth policy on every
+      // status transition. K3SBP 2026-06-02.
+      if (remoteServer && typeof remoteServer.setTunnelExposed === 'function') {
+        try { remoteServer.setTunnelExposed(!!state.enabled); } catch {}
+      }
     });
     cloudTunnel.loadFromDisk();
     if (cloudTunnel.getState().enabled) {
