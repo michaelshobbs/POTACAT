@@ -767,7 +767,10 @@ const connRbn = document.getElementById('conn-rbn');
 const connPskr = document.getElementById('conn-pskr');
 const connRemote = document.getElementById('conn-remote');
 let clusterConnected = false;
-let enableRemote = false;
+// ECHOCAT server is now always-on (the toggle that used to gate it
+// was deleted 2026-06-02). Kept as a const-style variable rather than
+// inlining `true` because 2-3 visibility checks downstream read it.
+let enableRemote = true;
 let remoteConnected = false;
 let clusterNodeStatuses = []; // [{id, name, host, connected}, ...]
 let currentClusterNodes = []; // live node list for settings UI
@@ -1054,8 +1057,11 @@ const cwSidetoneVolumeLabel = document.getElementById('cw-sidetone-volume-label'
 const cwKeyerStatusEl = document.getElementById('cw-keyer-status');
 const cwMacroEditorEl = document.getElementById('cw-macro-editor');
 // ECHOCAT
-const setEnableRemote = document.getElementById('set-enable-remote');
-const remoteConfig = document.getElementById('remote-config');
+// setEnableRemote (#set-enable-remote checkbox) and the show/hide
+// wrapper around the rest of the ECHOCAT settings were removed
+// 2026-06-02 — server is always on, config is always visible.
+const setEnableRemote = null;
+const remoteConfig = null;
 const setRemotePort = document.getElementById('set-remote-port');
 const setRemoteRequireToken = document.getElementById('set-remote-require-token');
 const remoteTokenRow = document.getElementById('remote-token-row');
@@ -3806,13 +3812,9 @@ setSotaUpload.addEventListener('change', () => {
   sotaUploadConfig.classList.toggle('hidden', !setSotaUpload.checked);
 });
 
-// ECHOCAT checkbox toggles config visibility
-setEnableRemote.addEventListener('change', async () => {
-  remoteConfig.classList.toggle('hidden', !setEnableRemote.checked);
-  if (setEnableRemote.checked) {
-    await populateRemoteURLs();
-  }
-});
+// (Legacy: a #set-enable-remote checkbox toggled #remote-config
+// visibility here. Both were removed 2026-06-02 — server is
+// always-on, config is always visible.)
 
 setRemoteRequireToken.addEventListener('change', () => {
   remoteTokenRow.classList.toggle('hidden', !setRemoteRequireToken.checked);
@@ -9869,7 +9871,8 @@ openSettingsBtn.addEventListener('click', () => {
 });
 
 // ECHOCAT quick toggle
-const quickEchoCat = document.getElementById('quick-echo-cat');
+// Quick toggle removed 2026-06-02 — ECHOCAT is always-on.
+const quickEchoCat = null;
 const echoCatInfo = document.getElementById('echo-cat-info');
 const echoCatUrl = document.getElementById('echo-cat-url');
 const echoCatToken = document.getElementById('echo-cat-token');
@@ -9880,10 +9883,11 @@ const quickAudioOutput = document.getElementById('quick-audio-output');
 
 async function refreshEchoCatInfo() {
   const s = await window.api.getSettings();
-  const on = s.enableRemote === true;
-  quickEchoCat.checked = on;
-  echoCatInfo.classList.toggle('hidden', !on);
-  if (on) {
+  // ECHOCAT is always-on as of 2026-06-02. The quick toggle was
+  // removed; this function now just populates the URL / token / audio
+  // info that lives in the quick dropdown.
+  echoCatInfo.classList.remove('hidden');
+  {
     const port = s.remotePort || 7300;
     const token = s.remoteToken || '';
     const ips = await window.api.getLocalIPs();
@@ -9958,19 +9962,9 @@ quickAudioOutput.addEventListener('change', async () => {
   }
 });
 
-quickEchoCat.addEventListener('change', async () => {
-  const on = quickEchoCat.checked;
-  enableRemote = on;
-  setEnableRemote.checked = on;
-  remoteConfig.classList.toggle('hidden', !on);
-  echoCatInfo.classList.toggle('hidden', !on);
-  await window.api.saveSettings({ enableRemote: on });
-  if (on) {
-    await populateRemoteURLs();
-    await refreshEchoCatInfo();
-  }
-  updateSettingsConnBar();
-});
+// (Legacy: a quick-echo-cat toggle in the dropdown duplicated the
+// Settings → ECHOCAT enable checkbox. Both were removed 2026-06-02 —
+// server is always-on.)
 
 // Copy just the URL
 const echoCatCopyUrl = document.getElementById('echo-cat-copy-url');
@@ -10102,6 +10096,26 @@ if (settingsSearch) {
       }
       return s.toLowerCase();
     }
+    // "Header text" = the container's own text + the text of its
+    // non-container children (headings, labels, help spans). If the
+    // match lives here, we treat the container as a section whose
+    // heading matched — show its body without further filtering.
+    // This is what makes "Macros → CW Macros" surface the whole CW
+    // macro editor when you search "CW".
+    function headerText(el) {
+      let s = '';
+      for (const node of el.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          s += node.nodeValue;
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          if (INVISIBLE_TEXT_TAGS.has(node.tagName)) continue;
+          if (isAppHidden(node)) continue;
+          if (CONTAINER_TAGS.has(node.tagName)) continue;
+          s += visibleText(node);
+        }
+      }
+      return s.toLowerCase();
+    }
     function visit(el) {
       // Never touch app-hidden elements — leave their existing hidden
       // state alone, and don't include them in match counts.
@@ -10116,7 +10130,11 @@ if (settingsSearch) {
         return false;
       }
       if (CONTAINER_TAGS.has(el.tagName)) {
-        for (const child of Array.from(el.children)) visit(child);
+        // If the match is in the container's own heading area, show the
+        // whole body. Otherwise recurse to filter children individually.
+        if (!headerText(el).includes(q)) {
+          for (const child of Array.from(el.children)) visit(child);
+        }
       }
       return true;
     }
@@ -10510,10 +10528,9 @@ async function openSettingsDialog(tab) {
       });
     }
   }
-  // ECHOCAT
-  enableRemote = s.enableRemote === true;
-  setEnableRemote.checked = enableRemote;
-  remoteConfig.classList.toggle('hidden', !enableRemote);
+  // ECHOCAT — toggle removed; server is always-on. Just sync the
+  // local visibility flag (true) and populate the per-tab fields.
+  enableRemote = true;
   setRemotePort.value = s.remotePort || 7300;
   const requireToken = s.remoteRequireToken !== false; // default true for existing users
   setRemoteRequireToken.checked = requireToken;
@@ -10979,8 +10996,9 @@ settingsSave.addEventListener('click', async () => {
   const tciHostVal = setTciHost.value.trim() || '127.0.0.1';
   const tciPortVal = parseInt(setTciPort.value, 10) || 50001;
   const tciMaxAgeVal = parseInt(setTciMaxAge.value, 10) || 0;
-  // ECHOCAT
-  const remoteEnabled = setEnableRemote.checked;
+  // ECHOCAT — always-on; always save enableRemote: true to keep
+  // legacy server-side checks happy even when the toggle UI is gone.
+  const remoteEnabled = true;
   const remotePortVal = parseInt(setRemotePort.value, 10) || 7300;
   const remoteRequireTokenVal = setRemoteRequireToken.checked;
   const remoteTokenVal = setRemoteToken.value;
