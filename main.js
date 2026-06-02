@@ -12438,9 +12438,33 @@ app.whenReady().then(() => {
     // Auth callback: triggers PassEnforcement.loadPass() if idle,
     // accepts same-pass re-attach, rejects mismatch.
     if (remoteServer) {
-      remoteServer.setPassValidator(async (code) => {
+      remoteServer.setPassValidator(async (code, sessionToken) => {
+        // Phase 3 (cloud mig 009): every WS pass-auth attempt is
+        // validated against the high-entropy session_token returned
+        // by /redeem, not just the publicly-visible pass code. This
+        // closes the "leaked pass code → direct WSS bypass" gap that
+        // mig 008's single-use claim couldn't fix on its own.
+        //
+        // sessionToken must be a 64-char lower-hex string (256 bits)
+        // — anything else (missing, integer-from-pre-009 mobile,
+        // attacker-crafted) gets refused locally without calling
+        // the cloud. The cloud-side validator does the same shape
+        // check but burning a network round-trip on obviously bad
+        // shapes wastes our rate-limit budget against legitimate
+        // traffic on this droplet.
+        if (typeof sessionToken !== 'string' || !/^[a-f0-9]{64}$/.test(sessionToken)) {
+          sendCatLog('[pass] validator: refusing — missing or malformed session token (legacy pre-mig-009 client?)');
+          return null;
+        }
         try {
-          const res = await fetch(`https://api.potacat.com/v1/passes/${encodeURIComponent(code)}`);
+          const res = await fetch(
+            `https://api.potacat.com/v1/passes/${encodeURIComponent(code)}/validate-session`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: sessionToken }),
+            }
+          );
           if (!res.ok) return null;
           return await res.json();
         } catch (err) {
