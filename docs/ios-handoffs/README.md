@@ -17,6 +17,7 @@ This directory holds open requests for the iOS POTACAT app (React Native, repo `
 - [spot-filters-not-applied.md](spot-filters-not-applied.md) — "Hide Worked" / "New Parks Only" spot filters do nothing in the native app (work in the web client). Filter at render time against the `worked-qsos` / `worked-parks` pushes. *(Discord triage 2026-05-21.)*
 - [custom-rig-commands-in-app.md](custom-rig-commands-in-app.md) — User-defined custom rig CAT commands work in the web client but aren't surfaced in the native iOS Rig screen. *(Discord triage 2026-05-21.)*
 - [cellular-connect-latency.md](cellular-connect-latency.md) — CAT/Link take minutes to connect on cellular data (prompt on WiFi); investigate WS retry/backoff + Tailscale path negotiation. *(Discord triage 2026-05-21.)*
+- [wwbota-spot-source.md](wwbota-spot-source.md) — Add WWBOTA (Worldwide Bunkers on the Air) as a first-class spot source: filter chip, slate-gray badge, n-fer ref display, log + re-spot. Desktop side shipped 2026-06-01; mobile just needs to consume the new `source: 'wwbota'` shape. ([Issue #34](https://github.com/Waffleslop/POTACAT/issues/34).)
 
 ## Shipped
 

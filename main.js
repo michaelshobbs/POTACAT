@@ -178,6 +178,7 @@ const { createAuditLogger } = require('./lib/club-audit');
 const { fetchSpots: fetchWwffSpots } = require('./lib/wwff');
 const { fetchSpots: fetchTilesSpots, parseFreqKhz: parseTilesFreqKhz } = require('./lib/tiles');
 const { fetchSpots: fetchLlotaSpots } = require('./lib/llota');
+const { fetchSpots: fetchWwbotaSpots, postSpot: postWwbotaSpot } = require('./lib/wwbota');
 const { postWwffRespot } = require('./lib/wwff-respot');
 const { fetchNets: fetchDirectoryNets, fetchSwl: fetchDirectorySwl } = require('./lib/directory');
 const { QrzClient } = require('./lib/qrz');
@@ -2650,7 +2651,7 @@ async function saveQsoRecord(qsoData) {
 
   // Track QSO in telemetry (fire-and-forget)
   const qsoSource = (qsoData.sig || '').toLowerCase();
-  trackQso(['pota', 'sota', 'wwff', 'llota'].includes(qsoSource) ? qsoSource : null);
+  trackQso(['pota', 'sota', 'wwff', 'llota', 'wwbota'].includes(qsoSource) ? qsoSource : null);
 
   // Check if QSO matches any active event and auto-mark progress
   checkEventQso(qsoData);
@@ -2869,6 +2870,34 @@ async function saveQsoRecord(qsoData) {
       } catch (respotErr) {
         console.error('LLOTA re-spot failed:', respotErr.message);
         return { success: true, llotaRespotError: respotErr.message };
+      }
+    }
+  }
+
+  // Re-spot on WWBOTA if requested — bunker references are B/<scheme>-####
+  // (e.g. B/G-2392, B/HB-3477). WWBOTA's POST /spots/ requires the comment
+  // to embed the reference, so we prepend it if missing.
+  if (qsoData.wwbotaRespot && qsoData.wwbotaReference && settings.myCallsign) {
+    if (!/^B\/[A-Z0-9]+-\d{1,5}$/i.test(qsoData.wwbotaReference)) {
+      console.warn('WWBOTA re-spot skipped: reference does not match B/xx-#### format:', qsoData.wwbotaReference);
+    } else {
+      try {
+        const ref = qsoData.wwbotaReference.toUpperCase();
+        const baseComment = qsoData.respotComment || '';
+        const comment = baseComment.toUpperCase().includes(ref) ? baseComment : (baseComment ? `${ref} ${baseComment}` : ref);
+        // POTACAT stores frequency in kHz; WWBOTA expects MHz.
+        const freqMHz = Number(qsoData.frequency) / 1000;
+        await postWwbotaSpot({
+          spotter: settings.myCallsign.toUpperCase(),
+          call: qsoData.callsign,
+          freq: freqMHz,
+          mode: qsoData.mode,
+          comment,
+        });
+        trackRespot('wwbota');
+      } catch (respotErr) {
+        console.error('WWBOTA re-spot failed:', respotErr.message);
+        return { success: true, wwbotaRespotError: respotErr.message };
       }
     }
   }
@@ -4432,6 +4461,7 @@ function panadapterAllowsSource(source) {
       case 'sota':    return settings.enableSota === true;
       case 'wwff':    return settings.enableWwff === true;
       case 'llota':   return settings.enableLlota === true;
+      case 'wwbota':  return settings.enableWwbota !== false; // default true
       case 'tiles':   return settings.enableTiles !== false; // default true
       case 'dxc':     return settings.enableCluster === true;
       case 'rbn':     return settings.enableRbn === true;
@@ -4448,6 +4478,7 @@ function panadapterAllowsSource(source) {
     case 'sota':    return settings.panadapterSota === true;
     case 'wwff':    return settings.panadapterWwff === true;
     case 'llota':   return settings.panadapterLlota === true;
+    case 'wwbota':  return settings.panadapterWwbota === true;
     case 'dxc':     return settings.panadapterCluster === true;
     case 'rbn':     return settings.panadapterRbn === true;
     case 'cwspots': return settings.panadapterCwSpots === true;
@@ -4472,6 +4503,7 @@ function panadapterWantsSource(source) {
     case 'sota':    return settings.panadapterSota === true;
     case 'wwff':    return settings.panadapterWwff === true;
     case 'llota':   return settings.panadapterLlota === true;
+    case 'wwbota':  return settings.panadapterWwbota === true;
     case 'dxc':     return settings.panadapterCluster === true;
     case 'rbn':     return settings.panadapterRbn === true;
     case 'cwspots': return settings.panadapterCwSpots === true;
@@ -5752,6 +5784,7 @@ function connectRemote() {
       sota: settings.enableSota === true,
       wwff: settings.enableWwff === true,
       llota: settings.enableLlota === true,
+      wwbota: settings.enableWwbota !== false,
       tiles: settings.enableTiles !== false,
       cluster: settings.enableCluster === true,
     });
@@ -6258,7 +6291,7 @@ function connectRemote() {
 
   remoteServer.on('set-sources', (sources) => {
     if (!sources) return;
-    const map = { pota: 'enablePota', sota: 'enableSota', wwff: 'enableWwff', llota: 'enableLlota', tiles: 'enableTiles', cluster: 'enableCluster' };
+    const map = { pota: 'enablePota', sota: 'enableSota', wwff: 'enableWwff', llota: 'enableLlota', wwbota: 'enableWwbota', tiles: 'enableTiles', cluster: 'enableCluster' };
     const newSettings = {};
     for (const [key, settingKey] of Object.entries(map)) {
       if (key in sources) newSettings[settingKey] = !!sources[key];
@@ -8956,7 +8989,87 @@ function processLlotaSpots(raw) {
   return [...seen.values()];
 }
 
-let lastPotaSotaSpots = []; // cache of last fetched POTA+SOTA+WWFF+LLOTA spots
+// WWBOTA — Worldwide Bunkers on the Air. Each spot carries an array of
+// `references` (multiple bunkers per activation is common — n-fer is
+// the norm here, not the exception). We keep the first reference as
+// `reference` and stash any extras in `wwbotaSecondaryRefs` for display.
+// QRT is signalled via `type: "QRT"`; we surface it as a comment so the
+// existing "Hide QRT spots" filter in the renderer catches it.
+function processWwbotaSpots(raw) {
+  const myPos = gridToLatLon(settings.grid);
+  const all = raw.map((s) => {
+    const refs = Array.isArray(s.references) ? s.references : [];
+    const primary = refs[0] || {};
+    const freqMHz = Number(s.freq) || 0;
+    const freqKhz = Math.round(freqMHz * 1000);
+
+    const callsign = (s.call || '').toUpperCase();
+    const lat = primary.lat != null ? Number(primary.lat) : null;
+    const lon = primary.long != null ? Number(primary.long) : null;
+
+    let distance = null, spotBearing = null;
+    if (myPos && lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
+      distance = Math.round(haversineDistanceMiles(myPos.lat, myPos.lon, lat, lon));
+      spotBearing = Math.round(bearing(myPos.lat, myPos.lon, lat, lon));
+    }
+
+    // Continent / fallback location string from cty.dat. WWBOTA's
+    // `references[].dxcc` is a numeric DXCC id — we don't have a direct
+    // lookup, so use the resolved cty.dat entity for the callsign instead.
+    let continent = '', ctyName = '';
+    if (ctyDb && callsign) {
+      const entity = resolveCallsign(callsign, ctyDb);
+      if (entity) {
+        continent = entity.continent || '';
+        ctyName = entity.name || '';
+      }
+    }
+
+    const typeStr = String(s.type || 'Live');
+    // Append QRT marker so the existing renderer-side "Hide QRT spots"
+    // filter (which scans `comments` for "qrt") catches WWBOTA QRTs.
+    let comments = String(s.comment || '');
+    if (typeStr.toUpperCase() === 'QRT' && !/qrt/i.test(comments)) {
+      comments = comments ? `${comments} [QRT]` : 'QRT';
+    }
+
+    // Build a compact "[B/G-1234] + 2 more" location label when n-fer.
+    const refsLabel = refs.length > 1
+      ? `${primary.reference || ''} +${refs.length - 1} more`
+      : (primary.reference || '');
+
+    return {
+      source: 'wwbota',
+      callsign,
+      frequency: String(freqKhz),
+      freqMHz,
+      mode: String(s.mode || '').toUpperCase(),
+      reference: primary.reference || '',
+      parkName: primary.name || '',
+      locationDesc: ctyName,
+      distance,
+      bearing: spotBearing,
+      lat,
+      lon,
+      band: freqToBand(freqMHz),
+      spotTime: s.time || '',
+      continent,
+      comments,
+      spotter: (s.spotter || '').toUpperCase(),
+      // WWBOTA-specific extras
+      wwbotaScheme: primary.scheme || '',
+      wwbotaSecondaryRefs: refs.slice(1).map(r => r.reference).filter(Boolean),
+      wwbotaRefsLabel: refsLabel,
+    };
+  });
+  // Dedupe per callsign+band (same as other programs — multi-band activations
+  // remain distinct, but rapid re-spots collapse to the latest).
+  const seen = new Map();
+  for (const s of all) { seen.set(s.callsign + '_' + s.band, s); }
+  return [...seen.values()];
+}
+
+let lastPotaSotaSpots = []; // cache of last fetched POTA+SOTA+WWFF+LLOTA+WWBOTA spots
 
 // --- Net Reminder helpers ---
 
@@ -9199,6 +9312,9 @@ async function refreshSpots() {
     const enableSota = settings.enableSota === true   || panadapterWantsSource('sota');
     const enableWwff = settings.enableWwff === true   || panadapterWantsSource('wwff');
     const enableLlota = settings.enableLlota === true || panadapterWantsSource('llota');
+    // WWBOTA defaults ON (Casey 2026-06-01) — matches POTA. Users who don't
+    // care about bunker spots can untick in Settings → Spots.
+    const enableWwbota = settings.enableWwbota !== false || panadapterWantsSource('wwbota');
     const enableTiles = settings.enableTiles !== false || panadapterWantsSource('tiles');
 
     const fetches = [];
@@ -9206,6 +9322,7 @@ async function refreshSpots() {
     if (enableSota) fetches.push(fetchSotaSpots().then(processSotaSpots));
     if (enableWwff) fetches.push(fetchWwffSpots().then(processWwffSpots));
     if (enableLlota) fetches.push(fetchLlotaSpots().then(processLlotaSpots));
+    if (enableWwbota) fetches.push(fetchWwbotaSpots().then(processWwbotaSpots));
     if (enableTiles) {
       // Rate-limit Tiles to TILES_POLL_MS regardless of how often refreshSpots
       // runs; reuse the cached snapshot in between so the UI still shows them.
@@ -9238,12 +9355,13 @@ async function refreshSpots() {
     // Priority order is "what the operator most likely cares about
     // logging first": POTA > SOTA > WWFF > LLOTA > Tiles. Adjust here
     // if community usage shifts. (Casey 2026-05-04.)
-    const PROGRAM_PRIORITY = ['pota', 'sota', 'wwff', 'llota', 'tiles'];
+    const PROGRAM_PRIORITY = ['pota', 'sota', 'wwff', 'llota', 'wwbota', 'tiles'];
     const SECONDARY_FIELDS = {
       pota: { ref: 'potaReference', name: 'potaParkName' },
       sota: { ref: 'sotaReference', name: 'sotaParkName' },
       wwff: { ref: 'wwffReference', name: 'wwffParkName' },
       llota: { ref: 'llotaReference', name: 'llotaParkName' },
+      wwbota: { ref: 'wwbotaReference', name: 'wwbotaParkName' },
       tiles: { ref: 'tilesReference', name: 'tilesParkName' },
     };
     const programSpots = allSpots.filter(s => PROGRAM_PRIORITY.includes(s.source));
@@ -16927,6 +17045,25 @@ app.whenReady().then(() => {
           });
           trackRespot('llota');
         } catch (err) { errors.push('LLOTA: ' + err.message); }
+      }
+      if (data.wwbotaRespot && data.wwbotaReference && settings.myCallsign) {
+        if (!/^B\/[A-Z0-9]+-\d{1,5}$/i.test(data.wwbotaReference)) {
+          errors.push('WWBOTA: reference does not match B/xx-#### format: ' + data.wwbotaReference);
+        } else {
+          try {
+            const ref = data.wwbotaReference.toUpperCase();
+            const baseComment = data.comment || '';
+            const comment = baseComment.toUpperCase().includes(ref) ? baseComment : (baseComment ? `${ref} ${baseComment}` : ref);
+            await postWwbotaSpot({
+              spotter: settings.myCallsign.toUpperCase(),
+              call: data.callsign,
+              freq: Number(data.frequency) / 1000, // kHz → MHz
+              mode: data.mode,
+              comment,
+            });
+            trackRespot('wwbota');
+          } catch (err) { errors.push('WWBOTA: ' + err.message); }
+        }
       }
       if (data.dxcRespot) {
         let sent = 0;
