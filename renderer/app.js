@@ -4494,12 +4494,10 @@ async function echocatRefreshTailscaleStatus() {
     echocatTsStatus.textContent = 'Tailscale: status check failed.';
     return;
   }
-  // Setup checklist visibility: show whenever there's still a step
-  // the user can take (Tailscale missing / signed out / MagicDNS off
-  // / cert not yet issued). Hide once the cert is cached and
-  // pairing is one-click.
-  const setupBlock = document.getElementById('echocat-pair-setup');
-  if (setupBlock) setupBlock.style.display = s.certCached ? 'none' : '';
+  // (Legacy: echocat-pair-setup checklist was lifted into the
+  // <details> "Use Tailscale instead" disclosure inside the pair
+  // section. Element no longer exists; status copy below remains
+  // the source of truth for the Tailscale state.)
   // Each branch points the user at exactly the next thing to fix.
   // Deep links go straight to the correct admin page so users
   // don't have to hunt through Tailscale's docs.
@@ -4531,15 +4529,170 @@ async function echocatRefreshTailscaleStatus() {
 }
 echocatRefreshTailscaleStatus();
 // Refresh whenever the user opens the Settings dialog so a state
-// change (just signed in, just enabled MagicDNS) is reflected
-// without a POTACAT restart.
+// change (just signed in, just enabled MagicDNS, just upgraded to
+// POTACAT Cloud) is reflected without a POTACAT restart.
 if (typeof settingsDialog !== 'undefined' && settingsDialog) {
   const origShow = settingsDialog.showModal.bind(settingsDialog);
   settingsDialog.showModal = function() {
     echocatRefreshTailscaleStatus();
+    if (typeof _pairRefreshCloudStatus === 'function') _pairRefreshCloudStatus();
     return origShow();
   };
 }
+
+// ── POTACAT Cloud Tunnel pair state machine ─────────────────────────
+// Renders the Settings → ECHOCAT → Pair Mobile App state panel based
+// on cloud auth + entitlement + tunnel state. Determines whether the
+// pair button should request a cloud-only QR (no LAN) or the legacy
+// LAN+cloud combo. Tailscale path stays available via the <details>
+// disclosure but is no longer the default suggestion.
+
+let _pairCurrentMode = 'lan'; // 'cloud' | 'lan' — what the pair button will request
+let _pairLastTunnelState = null;
+let _pairLastCloudStatus = null;
+
+function _pairIsCloudEntitled(sub) {
+  if (!sub) return false;
+  if (sub.status === 'active') return true;
+  if (sub.status === 'trial') return true;
+  if (sub.trialActive === true) return true;
+  return false;
+}
+
+function _pairEscape(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function _pairRenderState() {
+  const panel = document.getElementById('pair-state-display');
+  if (!panel) return;
+  const pairBtn = document.getElementById('echocat-pair-btn');
+
+  const cs = _pairLastCloudStatus;
+  const tunnel = _pairLastTunnelState;
+  const loggedIn = !!(cs && cs.loggedIn);
+  const sub = cs && cs.subscription;
+  const entitled = loggedIn && _pairIsCloudEntitled(sub);
+  const tunnelLive = !!(tunnel && tunnel.status === 'live' && tunnel.cloudHost);
+
+  const bmacUrl = 'https://buymeacoffee.com/potacat/membership';
+  const remoteInstructionsUrl = 'https://potacat.com/remote-instructions';
+
+  if (entitled && tunnelLive) {
+    _pairCurrentMode = 'cloud';
+    panel.className = 'pair-state-display pair-state-ready';
+    panel.innerHTML =
+      '<span class="pair-state-title">&#x2713; POTACAT Cloud Tunnel ready</span>' +
+      '<span class="pair-state-body">Phone connects directly via your cloud hostname. No Tailscale, no port forwarding, works from anywhere.</span>' +
+      '<div class="pair-host-pill">' + _pairEscape(tunnel.cloudHost) + '</div>';
+    if (pairBtn) pairBtn.textContent = 'Open pairing QR';
+    return;
+  }
+
+  if (entitled && !tunnelLive) {
+    _pairCurrentMode = 'cloud';
+    panel.className = 'pair-state-display';
+    const statusText = tunnel
+      ? (tunnel.status === 'off' ? 'POTACAT Cloud Tunnel is off.' :
+         tunnel.status === 'provisioning' ? 'Provisioning POTACAT Cloud Tunnel&hellip;' :
+         tunnel.status === 'connecting' ? 'Connecting POTACAT Cloud Tunnel&hellip;' :
+         tunnel.status === 'reconnecting' ? 'Reconnecting POTACAT Cloud Tunnel&hellip;' :
+         tunnel.status === 'error' ? ('POTACAT Cloud Tunnel error: ' + _pairEscape(tunnel.lastError || 'unknown')) :
+         'POTACAT Cloud Tunnel is off.')
+      : 'POTACAT Cloud Tunnel is off.';
+    panel.innerHTML =
+      '<span class="pair-state-title">POTACAT Cloud Tunnel</span>' +
+      '<span class="pair-state-body">' + statusText + ' Enable it for one-tap remote pairing.</span>' +
+      '<div class="pair-state-actions">' +
+        '<button type="button" id="pair-enable-tunnel-btn" class="btn btn-primary btn-sm">Enable POTACAT Cloud Tunnel</button>' +
+      '</div>';
+    const enableBtn = document.getElementById('pair-enable-tunnel-btn');
+    if (enableBtn) {
+      enableBtn.addEventListener('click', async () => {
+        enableBtn.disabled = true;
+        enableBtn.textContent = 'Enabling…';
+        try {
+          const r = await window.api.cloudTunnelEnable();
+          if (r && r.error) {
+            enableBtn.textContent = 'Failed: ' + r.error;
+            enableBtn.disabled = false;
+          }
+          // The tunnel manager will emit 'change' events that re-render automatically.
+        } catch (err) {
+          enableBtn.textContent = 'Failed: ' + (err.message || err);
+          enableBtn.disabled = false;
+        }
+      });
+    }
+    if (pairBtn) pairBtn.textContent = 'Open pairing QR (LAN/Tailscale)';
+    return;
+  }
+
+  // Not entitled — either signed in but free tier, or signed out.
+  _pairCurrentMode = 'lan';
+  panel.className = 'pair-state-display';
+  if (pairBtn) pairBtn.textContent = 'Open pairing QR (Tailscale)';
+  let title, body, primaryLabel;
+  if (loggedIn) {
+    title = 'Join POTACAT Cloud to instantly and securely connect to your radio while remote';
+    body = 'Start a free 30-day trial — no credit card needed. Alternatively, enable Tailscale on your shack computer and mobile device (turn on MagicDNS and HTTPS Certificates).';
+    primaryLabel = 'Start free trial';
+  } else {
+    title = 'Join POTACAT Cloud to instantly and securely connect to your radio while remote';
+    body = 'Sign in to POTACAT Cloud and start a free trial. Alternatively, enable Tailscale on your shack computer and mobile device (turn on MagicDNS and HTTPS Certificates).';
+    primaryLabel = 'Sign in to POTACAT Cloud';
+  }
+  panel.innerHTML =
+    '<span class="pair-state-title">' + title + '</span>' +
+    '<span class="pair-state-body">' + body + '</span>' +
+    '<div class="pair-state-actions">' +
+      (loggedIn
+        ? '<a href="' + bmacUrl + '" target="_blank" class="btn btn-primary btn-sm">' + primaryLabel + '</a>'
+        : '<button type="button" id="pair-signin-btn" class="btn btn-primary btn-sm">' + primaryLabel + '</button>') +
+      '<a href="' + remoteInstructionsUrl + '" target="_blank" class="btn btn-sm">Remote-access guide</a>' +
+    '</div>';
+  const signinBtn = document.getElementById('pair-signin-btn');
+  if (signinBtn) {
+    signinBtn.addEventListener('click', () => {
+      // Jump the Settings dialog to the Cloud tab so the user can sign in.
+      const cloudTab = document.querySelector('.settings-tab[data-tab="cloud"]');
+      if (cloudTab) cloudTab.click();
+    });
+  }
+}
+
+async function _pairRefreshCloudStatus() {
+  try {
+    if (window.api && window.api.cloudGetStatus) {
+      _pairLastCloudStatus = await window.api.cloudGetStatus();
+    }
+  } catch {
+    _pairLastCloudStatus = null;
+  }
+  _pairRenderState();
+}
+
+(function _pairInit() {
+  if (window.api && window.api.cloudTunnelGetState) {
+    window.api.cloudTunnelGetState().then((s) => {
+      _pairLastTunnelState = s;
+      _pairRenderState();
+    }).catch(() => {});
+  }
+  _pairRefreshCloudStatus();
+  if (window.api && window.api.onCloudTunnelState) {
+    window.api.onCloudTunnelState((s) => {
+      _pairLastTunnelState = s;
+      _pairRenderState();
+    });
+  }
+})();
+
+// Returns 'cloud' or 'lan' so the pair-QR popout knows which payload
+// shape to request when the user opens it.
+window.potacatPairMode = function () { return _pairCurrentMode; };
 
 // Club Station Mode event handlers
 setClubMode.addEventListener('change', () => {

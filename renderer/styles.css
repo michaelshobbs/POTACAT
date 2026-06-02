@@ -6911,6 +6911,97 @@ main.banner-logger-active #event-progress-overlay {
   font-size: 11px;
 }
 
+/* ── Pair Mobile App (Settings → ECHOCAT → Pair Mobile App) ───────── */
+.pair-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-primary);
+  padding-top: 10px;
+}
+.pair-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pair-header > div { flex: 1; min-width: 280px; }
+.pair-state-display {
+  margin-top: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pair-state-display.pair-state-ready {
+  border-color: var(--accent-green);
+  background: color-mix(in srgb, var(--accent-green) 6%, var(--bg-panel));
+}
+.pair-state-display .pair-state-title {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+.pair-state-display .pair-state-body {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.pair-state-display .pair-state-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pair-state-display a { color: var(--accent-blue); }
+.pair-state-display .pair-host-pill {
+  display: inline-block;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  background: var(--bg-input);
+  color: var(--accent-blue);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary);
+  margin-top: 4px;
+  word-break: break-all;
+}
+.pair-tailscale-details {
+  margin-top: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 0 12px;
+}
+.pair-tailscale-details summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.pair-tailscale-details[open] summary {
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 8px;
+}
+.pair-tailscale-body { padding: 4px 0 10px; font-size: 12px; line-height: 1.5; }
+.pair-tailscale-steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+}
+.pair-tailscale-steps li { margin-bottom: 4px; }
+.pair-tailscale-steps a { color: var(--accent-blue); }
+.pair-tailscale-status {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-primary);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: 'Fira Code', monospace;
+}
+
 /* ── Guest Pass (Settings → ECHOCAT → Guest Pass) ─────────────────── */
 .gp-section {
   margin-top: 12px;

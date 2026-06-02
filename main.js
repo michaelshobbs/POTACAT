@@ -15441,19 +15441,26 @@ app.whenReady().then(() => {
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
     const hostname = (() => { try { return os.hostname(); } catch { return 'POTACAT'; } })();
-    // POTACAT Cloud (one-tap remote) — when the tunnel is provisioned and
-    // enabled, surface the cloud hostname in the QR so paired phones can
-    // reach the desktop from off-LAN. Schema + state live in
-    // lib/cloud-tunnel.js (single source of truth); absent or disabled
-    // ⇒ LAN-only pairing.
+    // POTACAT Cloud Tunnel — when the tunnel is provisioned + live,
+    // default to a CLOUD-ONLY QR (no host, no fingerprint). The phone
+    // connects directly via the cloud hostname — no Tailscale needed.
+    // Phase 1 #40 LAN-first fallback only kicks in when both are
+    // present, which we no longer want for entitled users (Tailscale
+    // setup is the whole friction we built CF Tunnel to skip).
+    // Free / signed-out users see only the LAN+Tailscale fields in
+    // the QR — they don't have a cloud hostname.
+    // Opt-in override: opts.mode = 'lan' forces the legacy LAN+cloud
+    // combo even when the tunnel is up (useful for testing on home WiFi).
     const cloudHost = cloudTunnel ? cloudTunnel.getCloudHost() : '';
-    const qrParamsObj = {
-      host: wsUrl,
-      token: pairingToken,
-      fp: fingerprint,
-      name: hostname,
-    };
-    if (cloudHost) qrParamsObj.cloudHost = cloudHost;
+    const effectiveMode = (opts.mode === 'lan') ? 'lan' : (cloudHost ? 'cloud' : 'lan');
+    const qrParamsObj = { token: pairingToken, name: hostname };
+    if (effectiveMode === 'cloud') {
+      qrParamsObj.cloudHost = cloudHost;
+    } else {
+      qrParamsObj.host = wsUrl;
+      qrParamsObj.fp = fingerprint;
+      if (cloudHost) qrParamsObj.cloudHost = cloudHost;
+    }
     const qrParams = new URLSearchParams(qrParamsObj);
     const qrText = `potacat://pair?${qrParams.toString()}`;
     // Generate BOTH formats best-effort. The QR is a convenience: the
