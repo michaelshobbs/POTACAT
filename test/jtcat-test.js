@@ -340,6 +340,31 @@ section('CQ mode — happy path');
     assertEq(r.q.phase, 'done', 'second cycle → done');
     assertEq(eng._txEnabled, false, 'TX disabled');
   }
+
+  // Compressed reply (no Step-2 grid) — partner sends `<MY> <THEM> <±NN>`.
+  // We ack with R+report and jump straight to cq-rr73 + log. Matches the
+  // KB2ELA-style decode that previously sat ignored for entire cycles
+  // because the grid-only matcher couldn't see it. K3SBP 2026-06-01.
+  {
+    const eng = makeEngine();
+    const r = drive(baseQ(), [decode('K3SBP A1BCD -12', { db: -6, df: 1234 })], eng);
+    assertEq(r.q.phase, 'cq-rr73', 'cq → cq-rr73 on compressed (no-grid) reply');
+    assertEq(r.q.call, 'A1BCD', 'captured their call from compressed reply');
+    assertEq(r.q.grid, '', 'grid is empty — they skipped Step 2');
+    assertEq(r.q.report, '-12', 'captured their report of us');
+    assertEq(r.q.sentReport, '-06', 'computed our SNR report');
+    assertEq(r.lastTx, 'A1BCD K3SBP R-06', 'TX is R+our-report, NOT plain report or RR73');
+    assertEq(r.doneCount, 1, 'logged immediately on compressed-reply advance');
+    assertEq(eng._lastRxFreq, 1234, 'RX freq tracked to their offset');
+  }
+
+  // R+report should NOT be misclassified as a compressed reply — must
+  // stay in the cq phase if there was no prior grid match. The R-prefix
+  // means we are mid-Step-3 of the standard flow, not Step-2-skip.
+  {
+    const r = drive(baseQ(), [decode('K3SBP A1BCD R-12')], makeEngine());
+    assertEq(r.q.phase, 'cq', 'cq stays — R-prefixed report is not a compressed Step 2');
+  }
 }
 
 section('CQ mode — no advance paths');

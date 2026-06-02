@@ -1432,35 +1432,26 @@
 
   // --- SmartSDR Direct: synthetic audio stream for the pop-out waterfall ---
   // On "SmartSDR Direct" the pop-out's audio is VITA-49 dax_rx frames
-  // forwarded by main, not a Windows DAX device. Schedule them into a
-  // MediaStreamAudioDestinationNode and hand its .stream to
-  // startPopoutAudio() where getUserMedia's stream would go — the rest
-  // of the pipeline (gain, analyser, waterfall, worklet) is unchanged.
-  // Mirrors the main-window fix in app.js. K3SBP 2026-05-14.
+  // forwarded by main, not a Windows DAX device. A single source
+  // AudioWorkletNode owns a ring buffer + linear-interp resampler; the
+  // frame handler port.postMessages PCM at it. The MediaStreamDestination
+  // it feeds is plugged into startPopoutAudio() the same place
+  // getUserMedia's stream would go, so the rest of the pipeline (gain,
+  // analyser, waterfall, worklet) is unchanged. K3SBP 2026-06-02 —
+  // replaces the per-frame createBuffer+createBufferSource churn that
+  // drove the renderer-backpressure log.
   var popoutVita49Ctx = null;
   var popoutVita49Dest = null;
-  var popoutVita49NextPlay = 0;
+  var popoutVita49Node = null;
 
   if (window.api.onJtcatVita49Audio) {
     window.api.onJtcatVita49Audio(function (frame) {
       // Return false so the preload acks immediately when this window
-      // isn't the live consumer — see preload-jtcat-popout.js. K3SBP
-      // 2026-05-30.
-      if (!popoutVita49Ctx || !popoutVita49Dest || !frame || !frame.pcm || !frame.pcm.length) return false;
-      if (popoutVita49Ctx.state === 'suspended') popoutVita49Ctx.resume().catch(function () {});
-      var sr = frame.sampleRate || 24000;
-      var pcm = new Float32Array(frame.pcm);
-      var buf = popoutVita49Ctx.createBuffer(1, pcm.length, sr);
-      buf.getChannelData(0).set(pcm);
-      var src = popoutVita49Ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(popoutVita49Dest);
-      var now = popoutVita49Ctx.currentTime;
-      if (popoutVita49NextPlay < now || popoutVita49NextPlay > now + 0.5) {
-        popoutVita49NextPlay = now;
-      }
-      src.start(popoutVita49NextPlay);
-      popoutVita49NextPlay += pcm.length / sr;
+      // isn't the live consumer — see preload-jtcat-popout.js.
+      if (!popoutVita49Node || !frame || !frame.pcm || !frame.pcm.length) return false;
+      if (popoutVita49Ctx && popoutVita49Ctx.state === 'suspended') popoutVita49Ctx.resume().catch(function () {});
+      var pcm = (frame.pcm instanceof Float32Array) ? frame.pcm : new Float32Array(frame.pcm);
+      popoutVita49Node.port.postMessage(pcm);
       return true;
     });
   }
@@ -1512,10 +1503,13 @@
     if (popoutAudioCtx) { popoutAudioCtx.close().catch(function() {}); popoutAudioCtx = null; }
     if (popoutAudioStream) { popoutAudioStream.getTracks().forEach(function(t) { t.stop(); }); popoutAudioStream = null; }
     // SmartSDR Direct synthetic-stream context — the frame handler no-ops
-    // once popoutVita49Ctx is null, cleanly stopping the synthetic feed.
+    // once popoutVita49Node is null, cleanly stopping the synthetic feed.
+    if (popoutVita49Node) {
+      try { popoutVita49Node.disconnect(); } catch (e) { /* already gone */ }
+      popoutVita49Node = null;
+    }
     if (popoutVita49Ctx) { popoutVita49Ctx.close().catch(function() {}); popoutVita49Ctx = null; }
     popoutVita49Dest = null;
-    popoutVita49NextPlay = 0;
   }
 
   async function startPopoutAudio(deviceId, audioSource) {
@@ -1525,17 +1519,31 @@
     try {
       if (audioSource === 'smartsdr') {
         // SmartSDR Direct: audio is the VITA-49 dax_rx stream that main
-        // forwards as 'jtcat-vita49-audio' frames. Build a synthetic
-        // MediaStream from those frames so everything below is unchanged
-        // from the getUserMedia path — only the source object differs.
+        // forwards as 'jtcat-vita49-audio' frames. A single AudioWorkletNode
+        // owns the ring buffer + linear-interp resampler and feeds a
+        // MediaStreamDestination; downstream is identical to the
+        // getUserMedia path. K3SBP 2026-06-02 — eliminates per-frame
+        // BufferSource churn.
         popoutVita49Ctx = new AudioContext();
         if (popoutVita49Ctx.state === 'suspended') {
           try { await popoutVita49Ctx.resume(); } catch (e) { /* logged below if it bites */ }
         }
+        try {
+          await popoutVita49Ctx.audioWorklet.addModule('jtcat-vita49-source-worklet.js');
+        } catch (e) {
+          console.error('[JTCAT popout] failed to load VITA-49 source worklet:', e);
+          throw e;
+        }
+        popoutVita49Node = new AudioWorkletNode(popoutVita49Ctx, 'jtcat-vita49-source', {
+          numberOfInputs: 0,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+          processorOptions: { sourceRate: 24000 },
+        });
         popoutVita49Dest = popoutVita49Ctx.createMediaStreamDestination();
-        popoutVita49NextPlay = 0;
+        popoutVita49Node.connect(popoutVita49Dest);
         popoutAudioStream = popoutVita49Dest.stream;
-        console.log('[JTCAT popout] Audio source: SmartSDR Direct (VITA-49 dax_rx)');
+        console.log('[JTCAT popout] Audio source: SmartSDR Direct (VITA-49 dax_rx via AudioWorklet)');
       } else {
         var constraints = {
           channelCount: 1,
