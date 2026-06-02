@@ -227,7 +227,6 @@
       <span id="jtcat-tx-indicator" class="status hidden" style="background:#e94560;color:#fff;font-weight:bold;animation:tx-blink 1s ease-in-out infinite;">JTCAT TX</span>
       <span id="wsjtx-status" class="status disconnected hidden">WSJT-X</span>
       <span id="cw-keyer-status" class="status hidden" style="background:#b8860b;color:#fff;cursor:pointer;">CW</span>
-      <span id="cw-text-display" class="hidden" style="font-family:monospace;font-size:11px;color:#4fc3f7;margin-left:4px;max-width:300px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;direction:rtl;text-align:left;"></span>
       <div id="cw-popover" class="cw-popover hidden">
         <div class="cw-popover-row">
           <label>Sidetone Vol</label>
@@ -2332,56 +2331,38 @@
       </div>
     </fieldset>
     <!-- 10. ECHOCAT -->
+    <!-- Section order: Cloud Tunnel banner → Pair Mobile App →
+         Tailscale → Remote CW Keyer → Connection / Audio & PTT /
+         Sharing → Advanced. The Cloud Tunnel banner mirrors state
+         from the canonical control panel on the Cloud tab. -->
     <fieldset class="source-toggles" data-settings-tab="network">
       <legend>ECHOCAT</legend>
-      <label class="checkbox-label"><input type="checkbox" id="set-enable-remote"> Enable ECHOCAT (Remote Radio over VPN)</label>
-      <div id="remote-config" class="radio-sub hidden" style="margin-top:6px;margin-left:12px;">
-        <label>Port:
-          <input type="number" id="set-remote-port" placeholder="7300" min="1024" max="65535" value="7300" style="width:80px;">
-        </label>
-        <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" id="set-remote-require-token"> Require access token</label>
-        <div id="remote-token-row" class="hidden" style="margin-top:6px;display:flex;align-items:center;gap:8px;">
-          <label>Token:
-            <input type="text" id="set-remote-token" style="width:120px;font-family:monospace;letter-spacing:1px;text-transform:uppercase;" placeholder="e.g. K3SBP" autocomplete="off" spellcheck="false">
-          </label>
-          <button type="button" id="remote-regen-token" style="padding:2px 8px;">Random</button>
-        </div>
-        <span class="help-text">Your VPN may be plenty secure. Add a remote log-in token if you want added security.</span>
-        <div id="remote-audio-display" style="margin-top:8px;font-size:12px;color:#aaa;">
-          Audio: <span id="remote-audio-summary">not configured</span>
-          <a href="#" id="remote-audio-edit-link" style="margin-left:8px;font-size:11px;color:#4fc3f7;cursor:pointer;">Edit in Radio tab</a>
-        </div>
-        <div style="margin-top:4px;">
-          <label>PTT Safety Timeout (seconds):
-            <input type="number" id="set-remote-ptt-timeout" min="30" max="600" value="180" style="width:70px;">
-          </label>
-        </div>
-        <div style="margin-top:4px;">
-          <label class="checkbox-label"><input type="checkbox" id="set-ssb-over-data"> SSB-over-DATA (prevent local mic bleed)</label>
-          <span class="help-text" style="margin-left:12px;display:block;">Switches radio to DATA-USB/DATA-LSB during PTT <b>when audio is being sent through the rig's USB CODEC</b> &mdash; i.e. ECHOCAT phone audio bridge active, voice macros playing, or FreeDV running. <b>Naked PTT (mic-in-hand or hardware footswitch) leaves the mode alone</b>, so the rig's own mic still works. Recommended on for remote operation, harmless for everyone else.<br>
-          <b>Yaesu (FT-991/710/DX10/etc.):</b> set the rig menu <code>DATA MODE = Others</code> (or DATA-STD). The default <code>PSK</code> setting makes DIGL/DIGU shift the TX carrier ~1500 Hz below the dial and your transmission will land off-frequency.</span>
-        </div>
-        <div>
-          <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" id="set-remote-cw-enabled"> Enable Remote CW Keyer</label>
-          <span class="help-text" style="margin-left:12px;display:block;">Send CW via paddle from phone (TinyMIDI / keyboard). FlexRadio users need no extra setup — CW keys via SmartSDR automatically.</span>
-          <div style="margin-top:6px;margin-left:12px;">
-            <label>CW Key Port — optional (DTR keying):
-              <input list="cw-key-port-list" id="set-cw-key-port" style="width:220px;background:var(--bg-input);border:1px solid var(--border-primary);color:var(--text-primary);padding:4px 6px;border-radius:4px;font-size:13px;" placeholder="None, or type COM port">
-              <datalist id="cw-key-port-list"></datalist>
-            </label>
-            <span class="help-text" style="display:block;">Only needed for non-Flex rigs (QMX, etc). Uses a separate USB-serial adapter to key CW via the DTR pin. Leave as "none" for FlexRadio.</span>
+
+      <!-- (1) POTACAT Cloud Tunnel — primary remote path. Canonical
+           controls live on the Cloud tab; this banner reflects state
+           and links there. Sits OUTSIDE #remote-config so it shows
+           even when ECHOCAT is disabled. -->
+      <div id="echocat-cloud-banner" class="echocat-cloud-banner">
+        <div class="echocat-cloud-banner-head">
+          <div class="echocat-cloud-banner-text">
+            <div>
+              <strong>POTACAT Cloud Tunnel</strong>
+              <span id="echocat-cloud-banner-pill" class="status disconnected" style="margin-left:8px;">LAN only</span>
+            </div>
+            <span class="help-text" style="display:block;margin-top:3px;">One-tap remote &mdash; reach your rig from anywhere, no Tailscale or port forwarding.</span>
           </div>
+          <button type="button" id="echocat-cloud-banner-manage" class="btn">Manage in Cloud tab</button>
         </div>
-        <div>
-          <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" id="set-remote-stun"> Enable STUN (audio without VPN)</label>
-          <span class="help-text" style="margin-left:12px;display:block;">Uses Google's public STUN server to discover your public IP, enabling WebRTC audio across the internet without a VPN. Only needed if you can't use Tailscale or both devices aren't on the same network.</span>
-        </div>
-        <div id="remote-url-display" style="margin-top:8px;font-family:monospace;font-size:12px;"></div>
-        <!-- Mobile-app pairing — POTACAT Cloud Tunnel preferred,
-             Tailscale fallback. The state-machine block below is
-             populated by JS based on cloud account + entitlement +
-             tunnel state. -->
-        <div class="pair-section">
+        <div id="echocat-cloud-banner-host" style="font-family:monospace;font-size:12px;color:var(--accent-blue);margin-top:6px;word-break:break-all;"></div>
+      </div>
+
+      <label class="checkbox-label" style="margin-top:14px;"><input type="checkbox" id="set-enable-remote"> Enable ECHOCAT (Remote Radio over VPN)</label>
+      <div id="remote-config" class="radio-sub hidden" style="margin-top:6px;margin-left:12px;">
+
+        <!-- (2) Pair Mobile App — the primary call-to-action once
+             ECHOCAT is enabled. State display is populated by JS
+             from cloud auth + entitlement + tunnel state. -->
+        <div class="pair-section" style="margin-top:0;border-top:none;padding-top:0;">
           <div class="pair-header">
             <div>
               <strong>Pair Mobile App</strong>
@@ -2389,27 +2370,89 @@
             </div>
             <button type="button" id="echocat-pair-btn" class="btn">Open pairing QR</button>
           </div>
-
-          <!-- State machine display: filled by JS based on cloud auth +
-               entitlement + POTACAT Cloud Tunnel state. -->
           <div id="pair-state-display" class="pair-state-display"></div>
+          <div id="remote-url-display" style="margin-top:8px;font-family:monospace;font-size:12px;"></div>
+          <div style="margin-top:10px;">
+            <strong style="font-size:12px;">Paired devices:</strong>
+            <ul id="echocat-paired-list" style="list-style:none;padding:0;margin:6px 0 0;font-size:12px;">
+              <li style="color:#888;">No devices paired yet.</li>
+            </ul>
+          </div>
+        </div>
 
-          <!-- Tailscale fallback. Collapsible so it doesn't dominate
-               the UI for the common (POTACAT Cloud) path. -->
-          <details id="pair-tailscale-details" class="pair-tailscale-details">
-            <summary>Use Tailscale instead</summary>
-            <div class="pair-tailscale-body">
-              <ol class="pair-tailscale-steps">
-                <li>Install <a href="https://tailscale.com/download" target="_blank">Tailscale</a> on this computer and your phone, sign both in to the same tailnet.</li>
-                <li>Open <a href="https://login.tailscale.com/admin/dns" target="_blank">login.tailscale.com/admin/dns</a> and turn on <strong>MagicDNS</strong> AND <strong>HTTPS Certificates</strong>.</li>
-                <li>Click <em>Open pairing QR</em> above. POTACAT will issue a TLS cert and show the QR.</li>
-              </ol>
-              <div class="pair-tailscale-status">
-                <strong>Tailscale status: </strong>
-                <span id="echocat-ts-status">Checking&hellip;</span>
-              </div>
-            </div>
-          </details>
+        <!-- (3) Tailscale — own section, no longer collapsible.
+             Recommended when POTACAT Cloud isn't an option. -->
+        <div class="pair-section">
+          <strong>Tailscale (alternative VPN)</strong>
+          <span class="help-text" style="display:block;margin-top:2px;">Use Tailscale (free) on both your computer and phone if POTACAT Cloud isn't an option. Audio, tuning, and PTT are encrypted over the VPN tunnel.</span>
+          <ol class="pair-tailscale-steps" style="margin-top:8px;">
+            <li>Install <a href="https://tailscale.com/download" target="_blank">Tailscale</a> on this computer and your phone; sign both in to the same tailnet.</li>
+            <li>Open <a href="https://login.tailscale.com/admin/dns" target="_blank">login.tailscale.com/admin/dns</a> and turn on <strong>MagicDNS</strong> AND <strong>HTTPS Certificates</strong>.</li>
+            <li>Click <em>Open pairing QR</em> above. POTACAT will issue a TLS cert and show the QR.</li>
+          </ol>
+          <div class="pair-tailscale-status">
+            <strong>Tailscale status: </strong>
+            <span id="echocat-ts-status">Checking&hellip;</span>
+          </div>
+        </div>
+
+        <!-- (4) Remote CW Keyer — promoted to its own section. -->
+        <div class="pair-section">
+          <strong>Remote CW Keyer</strong>
+          <div style="margin-top:6px;">
+            <label class="checkbox-label"><input type="checkbox" id="set-remote-cw-enabled"> Enable Remote CW Keyer</label>
+            <span class="help-text" style="margin-left:12px;display:block;">Send CW via paddle from phone (TinyMIDI / keyboard). FlexRadio users need no extra setup &mdash; CW keys via SmartSDR automatically.</span>
+          </div>
+          <div style="margin-top:6px;margin-left:12px;">
+            <label>CW Key Port &mdash; optional (DTR keying):
+              <input list="cw-key-port-list" id="set-cw-key-port" style="width:220px;background:var(--bg-input);border:1px solid var(--border-primary);color:var(--text-primary);padding:4px 6px;border-radius:4px;font-size:13px;" placeholder="None, or type COM port">
+              <datalist id="cw-key-port-list"></datalist>
+            </label>
+            <span class="help-text" style="display:block;">Only needed for non-Flex rigs (QMX, etc). Uses a separate USB-serial adapter to key CW via the DTR pin. Leave as "none" for FlexRadio.</span>
+          </div>
+        </div>
+
+        <!-- (5) Connection — port, token, STUN. -->
+        <div class="pair-section">
+          <strong>Connection</strong>
+          <div style="margin-top:6px;">
+            <label>Port:
+              <input type="number" id="set-remote-port" placeholder="7300" min="1024" max="65535" value="7300" style="width:80px;">
+            </label>
+          </div>
+          <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" id="set-remote-require-token"> Require access token</label>
+          <div id="remote-token-row" class="hidden" style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+            <label>Token:
+              <input type="text" id="set-remote-token" style="width:120px;font-family:monospace;letter-spacing:1px;text-transform:uppercase;" placeholder="e.g. K3SBP" autocomplete="off" spellcheck="false">
+            </label>
+            <button type="button" id="remote-regen-token" style="padding:2px 8px;">Random</button>
+          </div>
+          <span class="help-text" style="display:block;margin-top:4px;">Your VPN may be plenty secure. Add a remote log-in token if you want added security.</span>
+          <div style="margin-top:10px;">
+            <label class="checkbox-label"><input type="checkbox" id="set-remote-stun"> Enable STUN (audio without VPN)</label>
+            <span class="help-text" style="margin-left:12px;display:block;">Uses Google's public STUN server to discover your public IP, enabling WebRTC audio across the internet without a VPN. Only needed if you can't use Tailscale or both devices aren't on the same network.</span>
+          </div>
+        </div>
+
+        <!-- (6) Audio & PTT — everything that touches the audio
+             bridge or transmit path. -->
+        <div class="pair-section">
+          <strong>Audio &amp; PTT</strong>
+          <div id="remote-audio-display" style="margin-top:6px;font-size:12px;color:#aaa;">
+            Audio: <span id="remote-audio-summary">not configured</span>
+            <a href="#" id="remote-audio-edit-link" style="margin-left:8px;font-size:11px;color:#4fc3f7;cursor:pointer;">Edit in Radio tab</a>
+          </div>
+          <span class="help-text" style="display:block;margin-top:2px;">Audio source (DAX vs. SmartSDR Direct) is set per-rig under Settings &rarr; Radio &rarr; your Flex rig.</span>
+          <div style="margin-top:8px;">
+            <label>PTT Safety Timeout (seconds):
+              <input type="number" id="set-remote-ptt-timeout" min="30" max="600" value="180" style="width:70px;">
+            </label>
+          </div>
+          <div style="margin-top:8px;">
+            <label class="checkbox-label"><input type="checkbox" id="set-ssb-over-data"> SSB-over-DATA (prevent local mic bleed)</label>
+            <span class="help-text" style="margin-left:12px;display:block;">Switches radio to DATA-USB/DATA-LSB during PTT <b>when audio is being sent through the rig's USB CODEC</b> &mdash; i.e. ECHOCAT phone audio bridge active, voice macros playing, or FreeDV running. <b>Naked PTT (mic-in-hand or hardware footswitch) leaves the mode alone</b>, so the rig's own mic still works. Recommended on for remote operation, harmless for everyone else.<br>
+            <b>Yaesu (FT-991/710/DX10/etc.):</b> set the rig menu <code>DATA MODE = Others</code> (or DATA-STD). The default <code>PSK</code> setting makes DIGL/DIGU shift the TX carrier ~1500 Hz below the dial and your transmission will land off-frequency.</span>
+          </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;">
             <div>
               <strong>Restart audio</strong>
@@ -2418,14 +2461,42 @@
             </div>
             <button type="button" id="echocat-restart-audio-btn" style="padding:4px 12px;">Restart audio</button>
           </div>
-          <span class="help-text" style="display:block;margin-top:10px;">Audio source (DAX vs. SmartSDR Direct) is set per-rig under Settings &rarr; Radio &rarr; your Flex rig.</span>
-
-          <!-- Remote Launcher — separate process that lets the phone restart
-               POTACAT after a crash / hang. Lives outside POTACAT itself so
-               it survives POTACAT dying. -->
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;border-top:1px solid #333;padding-top:10px;">
+          <!-- TX EQ + Compressor (Phase 1). Only applies to the
+               direct audio paths (SmartSDR Direct + K4 network) where
+               we have Web Audio in the chain — the legacy DAX-device
+               path goes straight to a sink element with no place to
+               splice DSP. Off by default. -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;">
             <div style="flex:1;min-width:280px;">
-              <strong>Remote Launcher <span id="launcher-status-pill" class="help-text" style="font-weight:normal;margin-left:6px;color:#888;">checking…</span></strong>
+              <strong>TX EQ + Compression <span style="color:#888;font-weight:normal;font-size:11px;">(SmartSDR Direct &amp; K4 network)</span></strong>
+              <span class="help-text" style="display:block;">Compensates for radios that disable internal EQ + compression in DATA mode (IC-7300 and similar). Applied to mic audio before it reaches the rig.</span>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="set-tx-eq-enabled">
+              <span>Enable</span>
+            </label>
+          </div>
+          <div id="set-tx-eq-preset-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;padding-left:6px;">
+            <span style="font-size:12px;color:#aaa;">Preset</span>
+            <select id="set-tx-eq-preset" style="padding:4px;min-width:150px;">
+              <option value="ragchew">Ragchew &mdash; flat, light comp</option>
+              <option value="pileup">Pileup &mdash; +6 dB @ 2 kHz, 4:1 comp</option>
+              <option value="dx">DX &mdash; +9 dB @ 2 kHz, 6:1 comp</option>
+              <option value="custom">Custom (configure in VFO popout)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- (7) Sharing — Remote Launcher (canonical), Guest Pass, Club Mode. -->
+        <div class="pair-section">
+          <strong>Sharing &amp; Recovery</strong>
+
+          <!-- Remote Launcher — separate process that lets the phone
+               restart POTACAT after a crash / hang. Lives outside
+               POTACAT itself so it survives POTACAT dying. -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <div style="flex:1;min-width:280px;">
+              <strong>Remote Launcher <span id="launcher-status-pill" class="help-text" style="font-weight:normal;margin-left:6px;color:#888;">checking&hellip;</span></strong>
               <span class="help-text" style="display:block;">Starts a tiny background server (port 7301) so the phone app can start/restart POTACAT when it crashes or you close it accidentally. Auto-launches at login.</span>
               <span id="launcher-status-detail" class="help-text" style="display:block;color:#888;font-size:11px;"></span>
             </div>
@@ -2434,6 +2505,7 @@
               <button type="button" id="launcher-uninstall-btn" style="padding:4px 12px;" class="hidden">Uninstall</button>
             </div>
           </div>
+
           <!-- Guest Pass (Phase 2 — desktop UI for rig swap). Lets
                the owner generate a time-boxed, privilege-limited access
                pass right from the desktop. Issuance and revoke hit the
@@ -2535,42 +2607,30 @@
               </div>
             </div>
           </div>
-          <!-- TX EQ + Compressor (Phase 1). Only applies to the
-               direct audio paths (SmartSDR Direct + K4 network) where
-               we have Web Audio in the chain — the legacy DAX-device
-               path goes straight to a sink element with no place to
-               splice DSP. Off by default. -->
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;">
-            <div style="flex:1;min-width:280px;">
-              <strong>TX EQ + Compression <span style="color:#888;font-weight:normal;font-size:11px;">(SmartSDR Direct &amp; K4 network)</span></strong>
-              <span class="help-text" style="display:block;">Compensates for radios that disable internal EQ + compression in DATA mode (IC-7300 and similar). Applied to mic audio before it reaches the rig.</span>
+
+          <!-- Club Station Mode -->
+          <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
+            <label class="checkbox-label"><input type="checkbox" id="set-club-mode"> Club Station Mode</label>
+            <span class="help-text" style="margin-left:12px;display:block;">Members log in with callsign + password. Band enforcement by license class. Audit logging.</span>
+            <div id="club-config" class="hidden" style="margin-top:8px;margin-left:12px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <label>Members CSV:
+                  <input type="text" id="set-club-csv-path" readonly placeholder="Choose file..." style="width:200px;cursor:pointer;">
+                </label>
+                <button type="button" id="club-csv-browse" style="padding:2px 8px;">Browse</button>
+                <button type="button" id="club-csv-create" style="padding:2px 8px;">Create New</button>
+              </div>
+              <button type="button" id="club-hash-passwords" style="padding:2px 10px;margin-bottom:8px;">Hash Passwords</button>
+              <span id="club-hash-status" style="font-size:11px;color:#aaa;margin-left:8px;"></span>
+              <div id="club-preview" style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:11px;"></div>
+              <div id="club-schedule" style="margin-top:10px;"></div>
             </div>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-              <input type="checkbox" id="set-tx-eq-enabled">
-              <span>Enable</span>
-            </label>
-          </div>
-          <div id="set-tx-eq-preset-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;padding-left:6px;">
-            <span style="font-size:12px;color:#aaa;">Preset</span>
-            <select id="set-tx-eq-preset" style="padding:4px;min-width:150px;">
-              <option value="ragchew">Ragchew &mdash; flat, light comp</option>
-              <option value="pileup">Pileup &mdash; +6 dB @ 2 kHz, 4:1 comp</option>
-              <option value="dx">DX &mdash; +9 dB @ 2 kHz, 6:1 comp</option>
-              <option value="custom">Custom (configure in VFO popout)</option>
-            </select>
-          </div>
-          <div style="margin-top:10px;">
-            <strong style="font-size:12px;">Paired devices:</strong>
-            <ul id="echocat-paired-list" style="list-style:none;padding:0;margin:6px 0 0;font-size:12px;">
-              <li style="color:#888;">No devices paired yet.</li>
-            </ul>
           </div>
         </div>
-        <span class="help-text">To use ECHOCAT securely outside your home network, install a VPN such as <a href="https://tailscale.com" target="_blank" style="color:#4fc3f7;">Tailscale</a> (free) on both your shack computer and phone. Audio, tuning, and PTT are all encrypted over the VPN tunnel.</span>
 
-        <!-- Advanced ECHOCAT settings — for users with non-default
-             network or TLS setups. Hidden behind a disclosure so the
-             default panel stays uncluttered. -->
+        <!-- (8) Advanced — for users with non-default network or
+             TLS setups. Hidden behind a disclosure so the default
+             panel stays uncluttered. -->
         <details style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
           <summary style="cursor:pointer;font-size:13px;color:#aaa;outline:none;user-select:none;">Advanced ECHOCAT settings</summary>
           <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;">
@@ -2600,33 +2660,6 @@
             </div>
           </div>
         </details>
-        <!-- Remote Launcher -->
-        <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
-          <label class="checkbox-label"><input type="checkbox" id="set-enable-launcher"> Remote Launcher (start POTACAT from your phone)</label>
-          <span class="help-text" style="margin-left:12px;display:block;">Runs a tiny web server at startup so you can start, stop, or restart POTACAT from your phone when you're away from the shack. Uses your callsign as the passphrase.</span>
-          <div id="launcher-config" class="hidden" style="margin-top:6px;margin-left:12px;">
-            <div id="launcher-url-display" style="font-family:monospace;font-size:12px;margin-bottom:6px;word-break:break-all;"></div>
-            <span id="launcher-status" style="font-size:11px;color:#aaa;"></span>
-          </div>
-        </div>
-        <!-- Club Station Mode -->
-        <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
-          <label class="checkbox-label"><input type="checkbox" id="set-club-mode"> Club Station Mode</label>
-          <span class="help-text" style="margin-left:12px;display:block;">Members log in with callsign + password. Band enforcement by license class. Audit logging.</span>
-          <div id="club-config" class="hidden" style="margin-top:8px;margin-left:12px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <label>Members CSV:
-                <input type="text" id="set-club-csv-path" readonly placeholder="Choose file..." style="width:200px;cursor:pointer;">
-              </label>
-              <button type="button" id="club-csv-browse" style="padding:2px 8px;">Browse</button>
-              <button type="button" id="club-csv-create" style="padding:2px 8px;">Create New</button>
-            </div>
-            <button type="button" id="club-hash-passwords" style="padding:2px 10px;margin-bottom:8px;">Hash Passwords</button>
-            <span id="club-hash-status" style="font-size:11px;color:#aaa;margin-left:8px;"></span>
-            <div id="club-preview" style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:11px;"></div>
-            <div id="club-schedule" style="margin-top:10px;"></div>
-          </div>
-        </div>
       </div>
     </fieldset>
     <!-- 11. About (merged Privacy + Diagnostics) -->

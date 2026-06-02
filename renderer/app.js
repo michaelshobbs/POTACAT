@@ -10034,6 +10034,16 @@ if (settingsTabBar) {
     if (!btn) return;
     settingsSearch.value = '';
     settingsTabBar.querySelectorAll('.settings-tab').forEach(b => b.classList.remove('has-match'));
+    // Clear any row-level search hiding so the picked tab renders fully.
+    settingsScrollArea.querySelectorAll('fieldset[data-settings-tab]').forEach(fs => {
+      fs.classList.remove('search-match');
+      fs.querySelectorAll('[data-search-hidden]').forEach(el => {
+        el.style.display = '';
+        delete el.dataset.searchHidden;
+      });
+    });
+    const oldMsg = settingsScrollArea.querySelector('.settings-no-results');
+    if (oldMsg) oldMsg.remove();
     switchSettingsTab(btn.dataset.tab);
   });
 }
@@ -10048,6 +10058,76 @@ if (settingsSearch) {
       }
     }
   });
+  // Row-level filter: hide subtrees whose text doesn't contain the
+  // query, so "CW" stops returning the entire Tuning fieldset just
+  // because "CW XIT Offset" lives next to "Scan Dwell" in there.
+  // <legend> and form controls are always preserved.
+  function _clearSettingsSearchHiding(scope) {
+    scope.querySelectorAll('[data-search-hidden]').forEach(el => {
+      el.style.display = '';
+      delete el.dataset.searchHidden;
+    });
+  }
+  function _applySettingsSearchFilter(fs, q) {
+    _clearSettingsSearchHiding(fs);
+    // Container-like — recurse to hide non-matching descendants.
+    // Everything else (labels, paragraphs, headings, help-text spans) is
+    // treated as an atomic row that shows or hides as a unit.
+    const CONTAINER_TAGS = new Set(['DIV', 'FIELDSET', 'DETAILS', 'SECTION', 'FORM', 'UL', 'OL']);
+    // Tags whose text never appears on screen (or whose text would
+    // bubble up misleadingly, e.g. <option> inside a closed <select>).
+    const INVISIBLE_TEXT_TAGS = new Set(['OPTION', 'DATALIST', 'SCRIPT', 'STYLE', 'TEMPLATE']);
+    // Application-hidden? Don't consider its text "visible" and don't
+    // touch it with our own display:none. .hidden has display:none !important
+    // in CSS so we never reach it visually anyway.
+    function isAppHidden(el) {
+      if (el.hidden) return true;
+      if (el.classList && el.classList.contains('hidden')) return true;
+      if (el.style && el.style.display === 'none') return true;
+      return false;
+    }
+    // Walk the subtree and collect lowercased text that the user can
+    // actually see — skipping <option> et al., and skipping any app-
+    // hidden subtree.
+    function visibleText(el) {
+      let s = '';
+      for (const node of el.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          s += node.nodeValue;
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          if (INVISIBLE_TEXT_TAGS.has(node.tagName)) continue;
+          if (isAppHidden(node)) continue;
+          s += visibleText(node);
+        }
+      }
+      return s.toLowerCase();
+    }
+    function visit(el) {
+      // Never touch app-hidden elements — leave their existing hidden
+      // state alone, and don't include them in match counts.
+      if (isAppHidden(el)) return false;
+      // <summary> always shows when its parent <details> is visible —
+      // hiding it would orphan the details block.
+      if (el.tagName === 'SUMMARY') return true;
+      const text = visibleText(el);
+      if (!text.includes(q)) {
+        el.style.display = 'none';
+        el.dataset.searchHidden = '1';
+        return false;
+      }
+      if (CONTAINER_TAGS.has(el.tagName)) {
+        for (const child of Array.from(el.children)) visit(child);
+      }
+      return true;
+    }
+    let any = false;
+    for (const child of Array.from(fs.children)) {
+      if (child.tagName === 'LEGEND') continue;
+      if (visit(child)) any = true;
+    }
+    return any;
+  }
+
   settingsSearch.addEventListener('input', () => {
     const q = settingsSearch.value.trim().toLowerCase();
     if (!q) {
@@ -10055,6 +10135,10 @@ if (settingsSearch) {
       settingsDialog.classList.remove('searching');
       const oldMsg = settingsScrollArea.querySelector('.settings-no-results');
       if (oldMsg) oldMsg.remove();
+      settingsScrollArea.querySelectorAll('fieldset[data-settings-tab]').forEach(fs => {
+        fs.classList.remove('search-match');
+        _clearSettingsSearchHiding(fs);
+      });
       const activeTab = settingsTabBar.querySelector('.settings-tab.active');
       if (activeTab) switchSettingsTab(activeTab.dataset.tab);
       settingsTabBar.querySelectorAll('.settings-tab').forEach(b => b.classList.remove('has-match'));
@@ -10065,12 +10149,12 @@ if (settingsSearch) {
     // Remove old no-results message
     const oldMsg = settingsScrollArea.querySelector('.settings-no-results');
     if (oldMsg) oldMsg.remove();
-    // Check each fieldset for matches
+    // Filter each fieldset row-by-row. A fieldset is "match" only if
+    // at least one direct child survived the filter.
     const tabMatches = {};
     let anyMatch = false;
     settingsScrollArea.querySelectorAll('fieldset[data-settings-tab]').forEach(fs => {
-      const text = fs.textContent.toLowerCase();
-      const match = text.includes(q);
+      const match = _applySettingsSearchFilter(fs, q);
       fs.classList.toggle('search-match', match);
       if (match) { tabMatches[fs.dataset.settingsTab] = true; anyMatch = true; }
     });

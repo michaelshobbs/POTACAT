@@ -663,8 +663,15 @@
   const ctDisableBtn = document.getElementById('cloud-tunnel-disable-btn');
   const ctError = document.getElementById('cloud-tunnel-error');
 
+  // ECHOCAT-tab banner mirrors the canonical Cloud-tab state. The
+  // Manage button hands off to the existing 'open-settings-panel'
+  // path so the Cloud tab is the single source of truth.
+  const ctBannerPill = document.getElementById('echocat-cloud-banner-pill');
+  const ctBannerHost = document.getElementById('echocat-cloud-banner-host');
+  const ctBannerManage = document.getElementById('echocat-cloud-banner-manage');
+
   function renderTunnelState(state) {
-    if (!ctStatusPill || !state) return;
+    if (!state) return;
     let label, pillClass;
     if (!state.enabled) {
       label = 'LAN only'; pillClass = 'status disconnected';
@@ -676,9 +683,11 @@
       label = state.status === 'provisioning' ? 'Provisioning…' : 'Reconnecting…';
       pillClass = 'status connecting';
     }
-    ctStatusPill.textContent = label;
-    ctStatusPill.className = pillClass;
-    if (ctHost) ctHost.textContent = state.enabled && state.cloudHost ? state.cloudHost : '';
+    const hostText = state.enabled && state.cloudHost ? state.cloudHost : '';
+    if (ctStatusPill) { ctStatusPill.textContent = label; ctStatusPill.className = pillClass; }
+    if (ctHost) ctHost.textContent = hostText;
+    if (ctBannerPill) { ctBannerPill.textContent = label; ctBannerPill.className = pillClass; }
+    if (ctBannerHost) ctBannerHost.textContent = hostText ? 'https://' + hostText : '';
     if (ctEnableBtn) ctEnableBtn.classList.toggle('hidden', !!state.enabled);
     if (ctDisableBtn) ctDisableBtn.classList.toggle('hidden', !state.enabled);
     if (ctError) {
@@ -689,6 +698,14 @@
         ctError.classList.add('hidden');
       }
     }
+  }
+
+  if (ctBannerManage) {
+    ctBannerManage.addEventListener('click', () => {
+      const cloudTabBtn = document.querySelector('.settings-tab[data-tab="cloud"]');
+      if (cloudTabBtn) cloudTabBtn.click();
+      if (ctFieldset) ctFieldset.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 
   async function refreshTunnelState() {

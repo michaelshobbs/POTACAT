@@ -5275,7 +5275,6 @@ body.activator-spots-on #cat-log-toggle,
 body.activator-spots-on #cat-status,
 body.activator-spots-on #wsjtx-status,
 body.activator-spots-on #cw-keyer-status,
-body.activator-spots-on #cw-text-display,
 body.activator-spots-on .solar-pill {
   display: none !important;
 }
@@ -7001,6 +7000,24 @@ main.banner-logger-active #event-progress-overlay {
   color: var(--text-secondary);
   font-family: 'Fira Code', monospace;
 }
+
+/* ── ECHOCAT Cloud Tunnel banner (Settings → ECHOCAT, top) ────────── */
+/* Visual lift so the banner reads as the primary entry point — */
+/* canonical Cloud Tunnel controls remain on the Cloud tab.     */
+.echocat-cloud-banner {
+  background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, var(--border-primary));
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.echocat-cloud-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.echocat-cloud-banner-text { flex: 1; min-width: 240px; }
 
 /* ── Guest Pass (Settings → ECHOCAT → Guest Pass) ─────────────────── */
 .gp-section {
