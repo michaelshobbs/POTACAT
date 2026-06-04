@@ -7346,7 +7346,7 @@ function connectRemote() {
         rstSent: contact.rstSent,
         rstRcvd: contact.rstRcvd,
         resposted: result.resposted || false,
-        respotError: result.respotError || result.wwffRespotError || result.llotaRespotError || result.dxcRespotError || '',
+        respotError: result.respotError || result.wwffRespotError || result.llotaRespotError || result.wwbotaRespotError || result.dxcRespotError || '',
       });
     } catch (err) {
       console.error('[Echo CAT] Log QSO error:', err.message);
@@ -18588,6 +18588,11 @@ function gracefulCleanup() {
   try { disconnectFreedvReporter(); } catch {}
   try { disconnectRemote(); } catch {}
   try { disconnectKeyer(); } catch {}
+  // Stop the DTR CW-key port too. disconnectKeyer() handles WinKeyer but
+  // not the raw DTR-keyed serial port — missing this leaves an open
+  // handle that the OS may write to after we've torn down our refs,
+  // surfacing as "WriteFileEx invalid handle" on quit.
+  try { disconnectCwKeyPort(); } catch {}
   try { stopJtcat(); } catch {}
   try { stopSstv(); } catch {}
   try { stopSstvMulti(); } catch {}
@@ -18603,6 +18608,26 @@ function gracefulCleanup() {
 app.on('before-quit', gracefulCleanup);
 process.on('SIGINT', () => { gracefulCleanup(); process.exit(0); });
 process.on('SIGTERM', () => { gracefulCleanup(); process.exit(0); });
+
+// Suppress known-benign shutdown errors. The Windows serialport binding
+// surfaces "WriteFileEx invalid handle" and similar when a write
+// reaches the kernel after Node has already closed the underlying COM
+// port — a race between our explicit close and any callback-less write
+// that was already in flight (WinKeyer PTT-off, idle ping, CW key drop).
+// Letting these propagate as uncaughtException pops Electron's
+// "uncaught exception" dialog AFTER the user already clicked quit.
+// During / after cleanup, swallow them with a log line instead.
+process.on('uncaughtException', (err) => {
+  const msg = err && err.message ? err.message : String(err);
+  const benignShutdownErr = /WriteFileEx.*invalid handle|writing to COM port.*invalid handle|Port is not open|Port is closed/i.test(msg);
+  if (cleanupDone || benignShutdownErr) {
+    console.warn('[shutdown] swallowed:', msg);
+    return;
+  }
+  // Pre-shutdown unexpected error — preserve historical behavior
+  // (Electron will show its dialog) by rethrowing.
+  throw err;
+});
 
 app.on('window-all-closed', () => {
   if (HEADLESS) return; // keep running in headless mode
