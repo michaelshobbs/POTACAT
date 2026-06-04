@@ -1071,6 +1071,7 @@ const setEnableRemote = null;
 const remoteConfig = null;
 const setRemotePort = document.getElementById('set-remote-port');
 const setRemoteRequireToken = document.getElementById('set-remote-require-token');
+const setAllowPairRequests = document.getElementById('set-allow-pair-requests');
 const remoteTokenRow = document.getElementById('remote-token-row');
 const setRemoteToken = document.getElementById('set-remote-token');
 const remoteRegenToken = document.getElementById('remote-regen-token');
@@ -11581,6 +11582,7 @@ async function openSettingsDialog(tab) {
   const requireToken = s.remoteRequireToken !== false; // default true for existing users
   setRemoteRequireToken.checked = requireToken;
   remoteTokenRow.classList.toggle('hidden', !requireToken);
+  if (setAllowPairRequests) setAllowPairRequests.checked = s.allowPairRequests !== false;
   setRemoteToken.value = s.remoteToken || '';
   setRemotePttTimeout.value = s.remotePttTimeout || 180;
   if (setEchocatPairHost) setEchocatPairHost.value = s.echocatPairHost || '';
@@ -12038,6 +12040,7 @@ settingsSave.addEventListener('click', async () => {
   const remoteEnabled = true;
   const remotePortVal = parseInt(setRemotePort.value, 10) || 7300;
   const remoteRequireTokenVal = setRemoteRequireToken.checked;
+  const allowPairRequestsVal = setAllowPairRequests ? setAllowPairRequests.checked : true;
   const remoteTokenVal = setRemoteToken.value;
   const remotePttTimeoutVal = parseInt(setRemotePttTimeout.value, 10) || 180;
   const ssbOverDataVal = setSsbOverData.checked;
@@ -12255,6 +12258,7 @@ settingsSave.addEventListener('click', async () => {
     enableRemote: remoteEnabled,
     remotePort: remotePortVal,
     remoteRequireToken: remoteRequireTokenVal,
+    allowPairRequests: allowPairRequestsVal,
     remoteToken: remoteTokenVal,
     remotePttTimeout: remotePttTimeoutVal,
     echocatPairHost: setEchocatPairHost ? setEchocatPairHost.value.trim() : '',
