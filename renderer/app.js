@@ -14712,6 +14712,10 @@ catLogClearBtn.addEventListener('click', () => {
   btn.addEventListener('click', () => {
     // Close the Quick Settings dropdown so the banner isn't hidden behind it
     if (settingsDropdown) settingsDropdown.classList.remove('open');
+    // Close the Settings dialog too — the recording banner shows on the main
+    // window, so leaving the modal up would hide it behind the dialog.
+    const dlg = document.getElementById('settings-dialog');
+    if (dlg && typeof dlg.close === 'function' && dlg.open) dlg.close();
     startBugReport();
   });
 })();
