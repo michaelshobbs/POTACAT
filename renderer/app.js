@@ -4673,6 +4673,25 @@ function refreshSummaryCard() {
   _renderSummaryCloud();
   _renderSummaryEchocat();
   _renderSummaryPota();
+  // The ECHOCAT web-access block in Quick Settings was relocated
+  // from the main-toolbar dropdown 2026-06-04. Same DOM IDs, same
+  // populator; just needs to fire on dialog open instead of on
+  // dropdown open.
+  if (typeof refreshEchoCatInfo === 'function') refreshEchoCatInfo();
+  // Sync the Summary header theme toggle to the current theme.
+  if (quickLightMode) {
+    quickLightMode.checked = document.documentElement.getAttribute('data-theme') === 'light';
+    if (typeof _updateThemeToggleLabel === 'function') _updateThemeToggleLabel();
+  }
+  // PSTRotator quick toggle: only visible when a rotor has been
+  // configured under Settings → Tuning. quickRotorLabel was
+  // gated on this in the old dropdown's open path.
+  if (quickRotorLabel) quickRotorLabel.classList.toggle('hidden', !rotorConfigured);
+  if (quickRotorDivider) quickRotorDivider.classList.toggle('hidden', !rotorConfigured);
+  // Sync Hide Worked Parks mirror with live state. (Activator mode
+  // is now a click-to-enter button in the More dropdown, no checked
+  // state to sync.)
+  if (quickHideWorkedParks) quickHideWorkedParks.checked = hideWorkedParks;
 }
 
 async function _renderSummaryOperator() {
@@ -10778,40 +10797,45 @@ document.querySelectorAll('thead th[data-sort]').forEach((th) => {
 // Logbook button
 logbookBtn.addEventListener('click', () => window.api.qsoPopoutOpen());
 
-// --- Settings quick-access dropdown ---
-const settingsDropdown = document.getElementById('settings-dropdown');
+// --- Settings button + quick-access input refs ---
+// The old "Settings dropdown" panel was retired 2026-06-04. Inputs
+// got rehomed: theme toggle to Summary header, ECHOCAT URL/audio
+// + Display toggles to Summary > Quick Settings, Activator mode to
+// the More dropdown. IDs preserved so each input's change handler
+// below still fires from its new home.
+// Stub so legacy `settingsDropdown.classList.toggle('open')` callsites
+// scattered through closeAllPopovers / activator UI silently no-op
+// after the dropdown panel was removed. Cheaper than auditing every
+// caller; the dropdown will never be re-introduced under this name.
+const _noopClassList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
+const settingsDropdown = {
+  classList: _noopClassList,
+  querySelector: () => null,
+  appendChild: () => {},
+};
 const quickLightMode = document.getElementById('quick-light-mode');
 const quickActivatorMode = document.getElementById('quick-activator-mode');
 const quickHideWorkedParks = document.getElementById('quick-hide-worked-parks');
-const openSettingsBtn = document.getElementById('open-settings-btn');
-
-settingsDropdown.querySelector('.settings-dropdown-panel').addEventListener('click', (e) => {
-  e.stopPropagation();
-});
 
 settingsBtn.addEventListener('click', (e) => {
   e.stopPropagation();
-  document.querySelectorAll('.multi-dropdown.open').forEach((d) => {
-    if (d !== settingsDropdown) d.classList.remove('open');
-  });
-  const opening = !settingsDropdown.classList.contains('open');
-  settingsDropdown.classList.toggle('open');
-  if (opening) {
-    // Sync switches to current state
-    quickLightMode.checked = document.documentElement.getAttribute('data-theme') === 'light';
-    quickActivatorMode.checked = appMode === 'activator';
-    quickHideWorkedParks.checked = hideWorkedParks;
-    // Show rotor toggle only when PSTRotator is configured in Settings
-    quickRotorLabel.classList.toggle('hidden', !rotorConfigured);
-    quickRotorDivider.classList.toggle('hidden', !rotorConfigured);
-    refreshEchoCatInfo();
-  }
+  openSettingsDialog();
 });
+
+// Reused by both the change handler below AND refreshSummaryCard
+// (which fires on dialog open) so the label always reflects current
+// theme state without waiting for a click.
+function _updateThemeToggleLabel() {
+  const label = document.getElementById('quick-light-mode-label');
+  if (!label) return;
+  label.textContent = quickLightMode && quickLightMode.checked ? 'Light Mode' : 'Dark Mode';
+}
 
 quickLightMode.addEventListener('change', async () => {
   const light = quickLightMode.checked;
   applyTheme(light);
   setLightMode.checked = light;
+  _updateThemeToggleLabel();
   if (popoutOpen) window.api.sendPopoutTheme(light ? 'light' : 'dark');
   if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(light ? 'light' : 'dark');
   window.api.logPopoutTheme(light ? 'light' : 'dark');
@@ -10827,12 +10851,20 @@ quickLightMode.addEventListener('change', async () => {
   await window.api.saveSettings({ lightMode: light });
 });
 
-quickActivatorMode.addEventListener('change', async () => {
-  const mode = quickActivatorMode.checked ? 'activator' : 'hunter';
-  setAppMode(mode);
-  settingsDropdown.classList.remove('open');
-  closeActivatorSettingsPanel();
-  await window.api.saveSettings({ appMode: mode });
+// More dropdown → "Activator mode" entry. Behaves like the other
+// view-menu-item buttons: one click enters Activator mode. Exiting
+// is via the "Back to Hunter" button inside the Activator UI
+// (activatorBackBtn) — same way SSTV / JTCAT have their own
+// in-view exit affordances rather than a second menu entry.
+quickActivatorMode.addEventListener('click', async () => {
+  if (appMode === 'activator') {
+    // Already there — close the dropdown and bail.
+    document.getElementById('views-dropdown')?.classList.remove('open');
+    return;
+  }
+  setAppMode('activator');
+  document.getElementById('views-dropdown')?.classList.remove('open');
+  await window.api.saveSettings({ appMode: 'activator' });
 });
 
 quickHideWorkedParks.addEventListener('change', async () => {
@@ -10902,11 +10934,9 @@ quickRotor.addEventListener('change', async () => {
   await window.api.saveSettings({ rotorActive: quickRotor.checked });
 });
 
-openSettingsBtn.addEventListener('click', () => {
-  settingsDropdown.classList.remove('open');
-  closeActivatorSettingsPanel();
-  openSettingsDialog();
-});
+// openSettingsBtn — was inside the (now-removed) Settings dropdown
+// panel. Settings button on the main toolbar opens the dialog
+// directly now; this handler is intentionally gone.
 
 // ECHOCAT quick toggle
 // Quick toggle removed 2026-06-02 — ECHOCAT is always-on.
@@ -11070,6 +11100,9 @@ if (settingsTabBar) {
   settingsTabBar.addEventListener('click', (e) => {
     const btn = e.target.closest('.settings-tab');
     if (!btn) return;
+    // Report a Bug is styled like a tab but acts as an action — its
+    // own #report-bug-btn handler fires; don't try to switch tabs.
+    if (btn.classList.contains('settings-tab-action')) return;
     settingsSearch.value = '';
     settingsTabBar.querySelectorAll('.settings-tab').forEach(b => b.classList.remove('has-match'));
     // Clear any row-level search hiding so the picked tab renders fully.
@@ -17905,46 +17938,17 @@ document.getElementById('activator-logbook-btn').addEventListener('click', () =>
   window.api.qsoPopoutOpen();
 });
 
-const activatorSettingsPanel = settingsDropdown.querySelector('.settings-dropdown-panel');
-
+// Activator-mode Settings button: opens the Settings dialog directly
+// (used to borrow the now-removed main-toolbar Settings dropdown
+// panel and float it over the activator UI). closeActivatorSettingsPanel
+// kept as a no-op for legacy call sites.
 function closeActivatorSettingsPanel() {
-  if (!activatorSettingsPanelOpen) return;
   activatorSettingsPanelOpen = false;
-  // Move panel back into its original parent and reset styles
-  settingsDropdown.appendChild(activatorSettingsPanel);
-  activatorSettingsPanel.style.display = '';
-  activatorSettingsPanel.style.position = '';
-  activatorSettingsPanel.style.top = '';
-  activatorSettingsPanel.style.right = '';
 }
 
 document.getElementById('activator-settings-btn').addEventListener('click', (e) => {
   e.stopPropagation();
-  // Close other open dropdowns
-  document.querySelectorAll('.multi-dropdown.open').forEach((d) => d.classList.remove('open'));
-
-  if (activatorSettingsPanelOpen) {
-    closeActivatorSettingsPanel();
-    return;
-  }
-
-  // Sync switches to current state
-  quickLightMode.checked = document.documentElement.getAttribute('data-theme') === 'light';
-  quickActivatorMode.checked = appMode === 'activator';
-
-  // Move panel to body so it's not blocked by hidden header ancestor
-  document.body.appendChild(activatorSettingsPanel);
-  const btnRect = e.currentTarget.getBoundingClientRect();
-  activatorSettingsPanel.style.display = 'block';
-  activatorSettingsPanel.style.position = 'fixed';
-  activatorSettingsPanel.style.top = (btnRect.bottom + 4) + 'px';
-  activatorSettingsPanel.style.right = (window.innerWidth - btnRect.right) + 'px';
-  activatorSettingsPanelOpen = true;
-});
-
-// Prevent clicks inside the settings panel from closing it via document click handler
-activatorSettingsPanel.addEventListener('click', (e) => {
-  if (activatorSettingsPanelOpen) e.stopPropagation();
+  openSettingsDialog();
 });
 
 activatorCatStatusEl.addEventListener('click', (e) => {

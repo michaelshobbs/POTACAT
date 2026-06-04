@@ -13281,14 +13281,12 @@ app.whenReady().then(() => {
 
   if (remoteServer) {
     remoteServer.on('pair-request', (req) => _openPairRequestPopout(req));
-    remoteServer.on('pair-request-cancelled', ({ requestId }) => {
-      if (pairRequestPopoutWin && !pairRequestPopoutWin.isDestroyed()) {
-        pairRequestPopoutWin.webContents.send('pair-request-expired', 'cancelled');
-        setTimeout(() => {
-          if (pairRequestPopoutWin && !pairRequestPopoutWin.isDestroyed()) pairRequestPopoutWin.close();
-        }, 1500);
-      }
-    });
+    // Note: pair-request-cancelled listener was here. Removed
+    // 2026-06-04 — the popout now stays open for the full 60-s
+    // window regardless of the phone-socket state so iOS's
+    // aggressive socket teardown doesn't close the operator's
+    // approval window before they can click. See remote-server.js
+    // `req.on('close')` comment for the full rationale.
     remoteServer.on('pair-request-resolved', ({ requestId, approved, reason }) => {
       if (pairRequestPopoutWin && !pairRequestPopoutWin.isDestroyed()) {
         // 60-second timeout auto-resolved without the popout buttons

@@ -140,60 +140,7 @@
         </div>
       </div>
       <button id="scan-btn" title="Scan through spots">Scan</button>
-      <div class="multi-dropdown" id="settings-dropdown">
-        <button class="multi-dropdown-btn" type="button" id="settings-btn" title="Settings">Settings</button>
-        <div class="settings-dropdown-panel">
-          <label class="switch-label compact">
-            <span>Dark</span>
-            <div class="switch"><input type="checkbox" id="quick-light-mode"><span class="switch-slider"></span></div>
-            <span>Light</span>
-          </label>
-          <div class="spots-panel-divider"></div>
-          <label class="switch-label compact">
-            <span>Hunter</span>
-            <div class="switch"><input type="checkbox" id="quick-activator-mode"><span class="switch-slider"></span></div>
-            <span>Activator</span>
-          </label>
-          <div class="spots-panel-divider"></div>
-          <div class="echo-cat-quick">
-            <div class="echo-cat-quick-title">ECHOCAT</div>
-            <div id="echo-cat-info" class="echo-cat-info">
-              <div class="echo-cat-url-row">
-                <div class="echo-cat-url" id="echo-cat-url"></div>
-                <button type="button" id="echo-cat-copy-url" class="echo-cat-copy-icon" title="Copy URL">&#x1F4CB;</button>
-              </div>
-              <div class="echo-cat-https-note">You must use https:// — http:// will not work</div>
-              <div class="echo-cat-token-row">
-                <span class="echo-cat-token-label">Token:</span>
-                <span class="echo-cat-token-value" id="echo-cat-token"></span>
-                <button type="button" id="echo-cat-copy" class="echo-cat-copy-btn" title="Copy connection info">Copy All</button>
-              </div>
-              <div class="echo-cat-audio-section">
-                <div class="echo-cat-audio-label">Audio</div>
-                <div class="echo-cat-audio-row">
-                  <span class="echo-cat-audio-icon" title="Radio RX to phone">&#x1F50A;</span>
-                  <select id="quick-audio-input" class="echo-cat-audio-select"><option value="">System Default</option></select>
-                </div>
-                <div class="echo-cat-audio-row">
-                  <span class="echo-cat-audio-icon" title="Phone to radio TX">&#x1F3A4;</span>
-                  <select id="quick-audio-output" class="echo-cat-audio-select"><option value="">System Default</option></select>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="spots-panel-divider"></div>
-          <label class="spots-toggle compact"><input type="checkbox" id="quick-hide-worked-parks"> Hide Worked Parks</label>
-          <button type="button" id="quick-import-logs-btn" class="settings-dropdown-link" style="font-size:11px;padding:4px 6px;margin:2px 0 4px;color:var(--text-secondary);" title="Import ADIF/SQLite logs from N3FJP, HRD, HAMRS, Log4OM, etc. — populates the Worked Parks filter">Import existing logs…</button>
-          <label class="spots-toggle compact"><input type="checkbox" id="quick-show-meter" checked> S-Meter / SWR</label>
-          <label class="spots-toggle compact"><input type="checkbox" id="quick-show-cw-macros"> CW Macros</label>
-          <label class="spots-toggle compact"><input type="checkbox" id="quick-show-voice-macros"> Voice Macros</label>
-          <div id="quick-rotor-divider" class="spots-panel-divider hidden"></div>
-          <label id="quick-rotor-label" class="spots-toggle compact hidden"><input type="checkbox" id="quick-rotor"> PSTRotator</label>
-          <div class="spots-panel-divider"></div>
-          <button type="button" id="report-bug-btn" class="settings-dropdown-link" style="color:#c24150;" title="Captures a verbose log and builds a bug report for Discord #bug-report">🐞 Report a Bug</button>
-          <button type="button" id="open-settings-btn" class="settings-dropdown-link">Open Settings...</button>
-        </div>
-      </div>
+      <button type="button" id="settings-btn" title="Settings">Settings</button>
       <button id="logbook-btn" title="View/Edit Logbook (F2)">Logbook</button>
       <div class="view-toggle">
         <button id="view-table-btn" class="view-btn active" title="Table view">Table</button>
@@ -210,6 +157,8 @@
             <button class="view-menu-item" id="cluster-terminal-btn">Terminal</button>
             <button class="view-menu-item" id="view-directory-btn">SWL/HF Net Directory</button>
             <button class="view-menu-item" id="view-conditions-btn" title="Open Solar &amp; Propagation Conditions in a new window">Conditions &#x2197;</button>
+            <div class="view-menu-divider"></div>
+            <button class="view-menu-item" id="quick-activator-mode" title="Switch to Activator mode (rapid logging for park activations). Return via the Back to Hunter button in the Activator UI.">Activator mode</button>
           </div>
         </div>
         <button id="vfo-popout-btn" class="view-btn" title="VFO — Frequency dial, keypad, modes, profiles">VFO</button>
@@ -1119,6 +1068,18 @@
         <button type="button" class="settings-tab" data-tab="network">ECHOCAT</button>
         <button type="button" class="settings-tab" data-tab="display">Display</button>
         <button type="button" class="settings-tab" data-tab="cloud">Cloud</button>
+        <!-- Theme switch — sticks to the bottom-section of the
+             sidebar above Report a Bug. Labeled "Light Mode" when on,
+             "Dark Mode" when off so the current state is obvious
+             without having to flip and see what changes. -->
+        <label class="settings-tab-theme-toggle" title="Toggle dark / light theme">
+          <span class="switch"><input type="checkbox" id="quick-light-mode"><span class="switch-slider"></span></span>
+          <span class="settings-tab-theme-label" id="quick-light-mode-label">Dark Mode</span>
+        </label>
+        <!-- Action button styled like a tab, sits at the bottom of
+             the sidebar nav. Doesn't switch tabs — fires the
+             existing report-bug-btn click handler (Discord template). -->
+        <button type="button" class="settings-tab settings-tab-action" id="report-bug-btn" title="Captures a verbose log and builds a bug report for Discord #bug-report">🐞 Report a Bug</button>
       </div>
       <input type="text" id="settings-search" class="settings-search" placeholder="Search settings...">
     </div>
@@ -1212,6 +1173,82 @@
                 </label>
               </div>
               <div class="summary-help">Full keyer options (mode, paddles, MIDI/WinKeyer setup) live under Settings &rarr; Station &rarr; CW Keyer.</div>
+            </div>
+          </details>
+
+          <!-- Display — surfaced/hidden panels operators flip mid-session.
+               These were in the (now-removed) main-toolbar Settings
+               dropdown. IDs preserved so the existing event handlers
+               keep firing without any wire-up change. -->
+          <details class="summary-quick-section">
+            <summary class="summary-quick-summary">
+              <span>Display</span>
+              <span class="summary-quick-state" id="quick-display-state"></span>
+            </summary>
+            <div class="summary-quick-body">
+              <label class="summary-quick-row">
+                <input type="checkbox" id="quick-show-meter" checked>
+                <span>S-Meter / SWR</span>
+              </label>
+              <label class="summary-quick-row">
+                <input type="checkbox" id="quick-show-cw-macros">
+                <span>CW Macros</span>
+              </label>
+              <label class="summary-quick-row">
+                <input type="checkbox" id="quick-show-voice-macros">
+                <span>Voice Macros</span>
+              </label>
+              <label class="summary-quick-row">
+                <input type="checkbox" id="quick-hide-worked-parks">
+                <span>Hide Worked Parks</span>
+              </label>
+              <!-- PSTRotator: hidden until configured under Settings &rarr;
+                   Tuning. quickRotorLabel.classList.toggle('hidden', !rotorConfigured)
+                   in app.js continues to drive visibility. -->
+              <label class="summary-quick-row hidden" id="quick-rotor-label">
+                <input type="checkbox" id="quick-rotor">
+                <span>PSTRotator</span>
+              </label>
+              <!-- Vestigial divider element preserved for any code that
+                   toggles it alongside the rotor label. -->
+              <div id="quick-rotor-divider" class="hidden"></div>
+            </div>
+          </details>
+
+          <!-- ECHOCAT web access — relocated from the main-toolbar Settings
+               dropdown. Same IDs, same JS handlers. -->
+          <details class="summary-quick-section">
+            <summary class="summary-quick-summary">
+              <span>ECHOCAT web access</span>
+              <span class="summary-quick-state" id="quick-echocat-state"></span>
+            </summary>
+            <div class="summary-quick-body">
+              <div class="echo-cat-quick">
+                <div id="echo-cat-info" class="echo-cat-info">
+                  <div class="echo-cat-url-row">
+                    <div class="echo-cat-url" id="echo-cat-url"></div>
+                    <button type="button" id="echo-cat-copy-url" class="echo-cat-copy-icon" title="Copy URL">&#x1F4CB;</button>
+                  </div>
+                  <div class="echo-cat-https-note">You must use https:// — http:// will not work</div>
+                  <div class="echo-cat-token-row">
+                    <span class="echo-cat-token-label">Token:</span>
+                    <span class="echo-cat-token-value" id="echo-cat-token"></span>
+                    <button type="button" id="echo-cat-copy" class="echo-cat-copy-btn" title="Copy connection info">Copy All</button>
+                  </div>
+                  <div class="echo-cat-audio-section">
+                    <div class="echo-cat-audio-label">Audio</div>
+                    <div class="echo-cat-audio-row">
+                      <span class="echo-cat-audio-icon" title="Radio RX to phone">&#x1F50A;</span>
+                      <select id="quick-audio-input" class="echo-cat-audio-select"><option value="">System Default</option></select>
+                    </div>
+                    <div class="echo-cat-audio-row">
+                      <span class="echo-cat-audio-icon" title="Phone to radio TX">&#x1F3A4;</span>
+                      <select id="quick-audio-output" class="echo-cat-audio-select"><option value="">System Default</option></select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="summary-help">Browser-based ECHOCAT (no phone app). Use the URL + token on a phone/tablet on your LAN. The mobile app uses the Pair flow instead.</div>
             </div>
           </details>
         </div>
