@@ -3068,6 +3068,70 @@ dialog {
 .remote-radios-empty { padding: 20px 12px !important; text-align: center; color: var(--text-tertiary); font-size: 12px; font-style: italic; }
 .remote-radios-empty b { color: var(--text-secondary); font-style: normal; }
 
+/* Architecture B (v1.9) log-error modal. Shown when the host
+   couldn't deliver a forwarded QSO. Loud, dismiss-by-user only.
+   Per Casey 2026-06-05: a guest's QSO never falls back to the
+   owner's logbook — the operator must see this modal and write
+   the QSO down by hand. */
+.log-error-dialog {
+  max-width: 480px;
+  width: 92%;
+  border: 2px solid var(--accent-red);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 18px 22px;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.log-error-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+.log-error-heading {
+  margin: 0 0 12px;
+  color: var(--accent-red);
+  font-size: 18px;
+  font-weight: 700;
+}
+.log-error-body {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.log-error-body b { color: var(--text-primary); font-weight: 700; }
+.log-error-action {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+.log-error-action b { color: var(--accent-red); }
+.log-error-meta {
+  margin: 0 0 14px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: monospace;
+}
+.log-error-dialog .dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.log-error-dialog .dialog-buttons button.primary {
+  background: var(--accent-blue);
+  color: #fff;
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.log-error-dialog .dialog-buttons button.primary:hover {
+  background: color-mix(in srgb, var(--accent-blue) 80%, #fff);
+}
+
 /* Displacement banner — shown at the top of the main window when our
    connection got kicked by another client. Replaces the generic
    disconnect with explicit "Casey's iPhone took over." */

@@ -75,6 +75,16 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('remote-client-displaced', handler);
     return () => ipcRenderer.removeListener('remote-client-displaced', handler);
   },
+  // Architecture B (v1.9): the host couldn't deliver a forwarded QSO
+  // (no capability, ws dropped, etc). Renderer must show a loud,
+  // dismiss-by-user modal with the full QSO details so the operator
+  // can write the contact down by hand. Casey's hard rule (2026-06-05):
+  // a guest's QSO never falls back to the owner's logbook.
+  onLogError: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('log-error', handler);
+    return () => ipcRenderer.removeListener('log-error', handler);
+  },
   onConnectionTargetsUpdated: (cb) => {
     const handler = (_e, list) => cb(list);
     ipcRenderer.on('connection-targets-updated', handler);

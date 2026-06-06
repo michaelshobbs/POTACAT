@@ -5720,6 +5720,80 @@ async function _remoteRadiosRemove(id) {
 // a friendly explainer with a Reconnect button. Replaces the
 // otherwise-mystery "rig disconnected" experience that today's iOS +
 // browser users get. Phase 1, single-client model — see plan §4.
+// ─── Architecture B: log-error modal (Brief C §2g / Brief B §3) ──────
+//
+// Loud, dismiss-by-user modal that appears when the host couldn't
+// deliver an auto-logged QSO (no capability, sendToClient threw, WS
+// dropped). Casey's hard rule (2026-06-05): a guest's QSO never
+// falls back to the host's logbook — instead the operator gets the
+// full QSO details rendered loudly so they can write it down by hand.
+//
+// Modal, NOT a toast. Stays open until user dismisses. Copy is the
+// verbatim wording Casey wrote — do not "improve."
+function _showLogErrorModal(payload) {
+  const qso = (payload && payload.qso) || {};
+  const reason = (payload && payload.reason) || 'unknown';
+  const messageOverride = (payload && payload.message) || '';
+
+  // Pull QSO details defensively — any field may be missing.
+  const callsign = (qso.callsign || '').toUpperCase() || '(unknown)';
+  // timeOn is 'HHMM' on the wire; format 'HH:MM UTC'
+  const timeRaw = String(qso.timeOn || '').replace(/[^0-9]/g, '');
+  const timeUtc = timeRaw.length >= 4
+    ? (timeRaw.slice(0, 2) + ':' + timeRaw.slice(2, 4) + ' UTC')
+    : '(unknown time)';
+  // frequency is kHz string → MHz with 3 dp for display
+  const freqKhz = parseFloat(qso.frequency || '0');
+  const freqMHz = Number.isFinite(freqKhz) && freqKhz > 0
+    ? (freqKhz / 1000).toFixed(3) + ' MHz'
+    : '(unknown freq)';
+  const mode = qso.mode || '(unknown mode)';
+  const rstSent = qso.rstSent || '---';
+  const rstRcvd = qso.rstRcvd || '---';
+
+  // n-fer ref clause — list every program ref that's set. Mirror Brief B §3.
+  const refParts = [];
+  if (qso.potaRef) refParts.push('POTA ' + String(qso.potaRef).toUpperCase());
+  if (qso.sotaRef) refParts.push('SOTA ' + String(qso.sotaRef).toUpperCase());
+  if (qso.wwffRef) refParts.push('WWFF ' + String(qso.wwffRef).toUpperCase());
+  if (qso.llotaRef) refParts.push('LLOTA ' + String(qso.llotaRef).toUpperCase());
+  if (qso.wwbotaRef) refParts.push('WWBOTA ' + String(qso.wwbotaRef).toUpperCase());
+  if (refParts.length === 0 && qso.sig && qso.sigInfo) {
+    refParts.push(String(qso.sig).toUpperCase() + ' ' + String(qso.sigInfo).toUpperCase());
+  }
+  const refClause = refParts.length > 0 ? ' (at ' + refParts.join(' + ') + ')' : '';
+
+  // Compose modal DOM. Use existing <dialog> if present, else create.
+  let dlg = document.getElementById('log-error-dialog');
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'log-error-dialog';
+    dlg.className = 'log-error-dialog';
+    document.body.appendChild(dlg);
+  }
+  const heading = messageOverride || 'Logging Error.';
+  dlg.innerHTML =
+    '<h3 class="log-error-heading">' + _esc(heading) + '</h3>' +
+    '<p class="log-error-body">' +
+      'QSO with <b>' + _esc(callsign) + '</b> at <b>' + _esc(timeUtc) + '</b> on <b>' +
+      _esc(freqMHz) + ' ' + _esc(mode) + '</b> with RST Rcvd <b>' + _esc(rstRcvd) +
+      '</b> and RST Sent <b>' + _esc(rstSent) + '</b>' + _esc(refClause) +
+      ' failed to save.' +
+    '</p>' +
+    '<p class="log-error-action"><b>Write it down and manually add to your logbook.</b></p>' +
+    '<p class="log-error-meta">Reason: ' + _esc(reason) + '</p>' +
+    '<div class="dialog-buttons">' +
+      '<button type="button" id="log-error-dismiss" class="primary">I wrote it down</button>' +
+    '</div>';
+  const dismissBtn = dlg.querySelector('#log-error-dismiss');
+  if (dismissBtn) dismissBtn.addEventListener('click', () => dlg.close(), { once: true });
+  if (typeof dlg.showModal === 'function' && !dlg.open) dlg.showModal();
+}
+
+if (window.api && window.api.onLogError) {
+  window.api.onLogError(_showLogErrorModal);
+}
+
 function _displacedBannerShow(info) {
   let banner = document.getElementById('displaced-banner');
   if (!banner) {

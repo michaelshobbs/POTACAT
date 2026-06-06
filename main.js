@@ -1612,6 +1612,34 @@ function ensureRemoteClient() {
     if (cloudHost) target.cloudHost = cloudHost;
     saveSettings(settings);
   });
+  // Architecture B (v1.9): host forwarded an auto-logged QSO to us
+  // (qso-attributed). Pre-stamp stationCallsign from our cached host
+  // call so the §97.119 ADIF row is correct, then run saveQsoRecord
+  // with origin:'forwarded-from-host' so the top-of-function guard
+  // skips re-forwarding and the QSO actually lands locally.
+  remoteClient.on('qso-attributed', (qso) => {
+    const enriched = Object.assign({}, qso);
+    if (target.stationCallsign && !enriched.stationCallsign) {
+      enriched.stationCallsign = target.stationCallsign;
+    }
+    saveQsoRecord(enriched, { origin: 'forwarded-from-host' })
+      .then(r => {
+        if (r && r.success) sendCatLog(`[architecture-b] forwarded-from-host QSO saved: ${enriched.callsign || '?'}`);
+        else sendCatLog(`[architecture-b] forwarded-from-host save failed: ${r && r.error || 'unknown'}`);
+      })
+      .catch(err => sendCatLog(`[architecture-b] forwarded-from-host save threw: ${err && err.message || err}`));
+  });
+  // Architecture B: host couldn't deliver a QSO we triggered. Push
+  // the verbose payload to the renderer so it can render the loud,
+  // dismiss-by-user modal with the QSO details. Casey's hard rule:
+  // never fall back to host-side logging — the operator must see
+  // the modal so they can write the QSO down by hand.
+  remoteClient.on('log-error', (payload) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('log-error', payload);
+    }
+    sendCatLog(`[architecture-b] log-error from host: reason=${payload.reason} call=${payload.qso && payload.qso.callsign || '?'}`);
+  });
   remoteClient.connect();
 }
 
@@ -3032,7 +3060,53 @@ function cleanQrzName(raw) {
   return joined.toLowerCase().replace(/(^|[\s\-'])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
 }
 
-async function saveQsoRecord(qsoData) {
+// Architecture B (v1.9, Brief C): forward client-driven QSOs to the
+// active client iff the client is a Guest Pass session or a paired
+// POTACAT desktop. Mobile-paired-no-pass keeps existing behavior
+// (logs to host's ADIF + cloud journal under the host's account).
+function shouldForwardClientDriven() {
+  if (!remoteServer || typeof remoteServer.activeClientContext !== 'function') return false;
+  const ctx = remoteServer.activeClientContext();
+  if (!ctx) return false;
+  if (ctx.passSession) return true;
+  if (typeof ctx.platform === 'string' && ctx.platform.startsWith('desktop-')) return true;
+  return false;
+}
+
+async function saveQsoRecord(qsoData, opts) {
+  opts = opts || {};
+  const origin = opts.origin || 'local-manual';
+
+  // ─── Architecture B host-forward branch (gap #10, Brief C §2d) ──
+  // Client-driven origins (ws-log-qso, jtcat-engine) get evaluated
+  // for forwarding. Host-local origins (local-manual, wsjtx-bridge)
+  // and the 'forwarded-from-host' echo path always fall through to
+  // local logging. Casey's hard rule (2026-06-05): if forwarding
+  // can't deliver, the QSO is dropped from the host's perspective
+  // and log-error is sent so the operator can write it down by hand.
+  // Never fall back to writing the guest's QSO in the host's ADIF.
+  const isClientDriven = origin === 'ws-log-qso' || origin === 'jtcat-engine';
+  if (isClientDriven && shouldForwardClientDriven()) {
+    const ctx = remoteServer.activeClientContext();
+    const caps = (ctx && ctx.capabilities) || [];
+    const canReceive = caps.includes('qso-attributed');
+    if (!canReceive) {
+      remoteServer.sendLogError(qsoData, { reason: 'no-capability' });
+      sendCatLog(`[architecture-b] dropping QSO from ${origin}: client lacks qso-attributed capability (${qsoData.callsign || '?'})`);
+      return { success: false, error: 'client_capability_missing' };
+    }
+    try {
+      remoteServer.sendToClient({ type: 'qso-attributed', qso: qsoData });
+      sendCatLog(`[architecture-b] forwarded ${origin} QSO to client (${qsoData.callsign || '?'})`);
+      return { success: true, forwarded: true };
+    } catch (err) {
+      // Best-effort surface the loss; never fall back to local logging.
+      try { remoteServer.sendLogError(qsoData, { reason: 'forward-failed' }); } catch {}
+      sendCatLog(`[architecture-b] forward THREW from ${origin} — QSO dropped: ${err && err.message || err}`);
+      return { success: false, error: 'forward_failed' };
+    }
+  }
+
   // Duplicate-save guard — see _qsoSaveHistory comment above.
   const dedupKey = _qsoDedupKey(qsoData);
   const now = Date.now();
@@ -3533,7 +3607,7 @@ function connectWsjtx() {
         for (let i = 0; i < parkRefs.length; i++) {
           const parkQso = { ...qsoData, mySig: 'POTA', mySigInfo: parkRefs[i].ref, myGridsquare: settings.grid || '' };
           allQsoData.push(parkQso);
-          await saveQsoRecord(parkQso);
+          await saveQsoRecord(parkQso, { origin: 'wsjtx-bridge' });
         }
         // Cross-program references (WWFF, LLOTA for same park)
         const crossRefs = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
@@ -3543,7 +3617,7 @@ function connectWsjtx() {
           else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
           else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
           allQsoData.push(xrQso);
-          await saveQsoRecord(xrQso);
+          await saveQsoRecord(xrQso, { origin: 'wsjtx-bridge' });
         }
         // Notify renderer so activator view gets the contact
         if (win && !win.isDestroyed()) {
@@ -3566,7 +3640,7 @@ function connectWsjtx() {
           });
         }
       } else {
-        await saveQsoRecord(qsoData);
+        await saveQsoRecord(qsoData, { origin: 'wsjtx-bridge' });
       }
     } catch (err) {
       console.error('Failed to log WSJT-X QSO:', err.message);
@@ -3813,7 +3887,7 @@ async function jtcatAutoLog(qso) {
       sendCatLog(`[JTCAT] Activation mode — logging to ${parkRefs.map(p => p.ref).join(', ')}`);
       for (let i = 0; i < parkRefs.length; i++) {
         const parkQso = { ...qsoData, mySig: 'POTA', mySigInfo: parkRefs[i].ref, myGridsquare: settings.grid || '' };
-        await saveQsoRecord(parkQso);
+        await saveQsoRecord(parkQso, { origin: 'jtcat-engine' });
       }
       // Cross-program refs (WWFF, LLOTA)
       const crossRefs = (settings.activatorCrossRefs || []).filter(xr => xr && xr.ref);
@@ -3822,10 +3896,10 @@ async function jtcatAutoLog(qso) {
         if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
         else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
         else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
-        await saveQsoRecord(xrQso);
+        await saveQsoRecord(xrQso, { origin: 'jtcat-engine' });
       }
     } else {
-      await saveQsoRecord(qsoData);
+      await saveQsoRecord(qsoData, { origin: 'jtcat-engine' });
     }
 
     console.log('[JTCAT] Auto-logged QSO:', q.call, 'OK');
@@ -7636,14 +7710,14 @@ function connectRemote() {
           for (let i = 0; i < parkRefs.length; i++) {
             const parkQso = { ...qsoData, mySig: 'POTA', mySigInfo: parkRefs[i].ref, myGridsquare: myGrid };
             if (i > 0) parkQso.skipLogbookForward = true;
-            const r = await saveQsoRecord(parkQso);
+            const r = await saveQsoRecord(parkQso, { origin: 'ws-log-qso' });
             if (r) Object.assign(result, r);
           }
         } else {
           qsoData.mySig = mySig;
           qsoData.mySigInfo = mySigInfo;
           qsoData.myGridsquare = myGrid;
-          const r = await saveQsoRecord(qsoData);
+          const r = await saveQsoRecord(qsoData, { origin: 'ws-log-qso' });
           if (r) Object.assign(result, r);
         }
         // Cross-program references (WWFF, LLOTA for same park)
@@ -7653,7 +7727,7 @@ function connectRemote() {
           if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
           else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
           else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
-          await saveQsoRecord(xrQso);
+          await saveQsoRecord(xrQso, { origin: 'ws-log-qso' });
         }
       } else if (settings.appMode === 'activator') {
         // Desktop is in activator mode but phone didn't send mySig — use desktop park refs
@@ -7662,7 +7736,7 @@ function connectRemote() {
           for (let i = 0; i < parkRefs.length; i++) {
             const parkQso = { ...qsoData, mySig: 'POTA', mySigInfo: parkRefs[i].ref, myGridsquare: myGrid };
             if (i > 0) parkQso.skipLogbookForward = true;
-            const r = await saveQsoRecord(parkQso);
+            const r = await saveQsoRecord(parkQso, { origin: 'ws-log-qso' });
             if (r) Object.assign(result, r);
           }
           // Cross-program references (WWFF, LLOTA for same park)
@@ -7672,14 +7746,14 @@ function connectRemote() {
             if (xr.program === 'SOTA') xrQso.mySotaRef = xr.ref;
             else if (xr.program === 'WWFF') xrQso.myWwffRef = xr.ref;
             else if (xr.program === 'LLOTA') xrQso.myLlotaRef = xr.ref;
-            await saveQsoRecord(xrQso);
+            await saveQsoRecord(xrQso, { origin: 'ws-log-qso' });
           }
         } else {
-          const r = await saveQsoRecord(qsoData);
+          const r = await saveQsoRecord(qsoData, { origin: 'ws-log-qso' });
           if (r) Object.assign(result, r);
         }
       } else {
-        const r = await saveQsoRecord(qsoData);
+        const r = await saveQsoRecord(qsoData, { origin: 'ws-log-qso' });
         if (r) Object.assign(result, r);
       }
 
@@ -7689,7 +7763,7 @@ function connectRemote() {
         if (!addlRef) continue;
         const addlQso = { ...qsoData, sigInfo: addlRef, respot: false, wwffRespot: false,
           llotaRespot: false, dxcRespot: false, respotComment: '', skipLogbookForward: true };
-        await saveQsoRecord(addlQso);
+        await saveQsoRecord(addlQso, { origin: 'ws-log-qso' });
       }
 
       // Track session contact and send enhanced log-ok
@@ -8310,7 +8384,7 @@ function connectRemote() {
         comment: 'JTCAT FT8',
       };
 
-      const result = await saveQsoRecord(qsoData);
+      const result = await saveQsoRecord(qsoData, { origin: 'jtcat-engine' });
       console.log('[JTCAT Remote] QSO logged:', q.call, result.success ? 'OK' : result.error);
 
       // Broadcast updated worked QSOs so the phone's spot list updates
@@ -18609,7 +18683,15 @@ app.whenReady().then(() => {
   ipcMain.handle('save-qso', async (_e, qsoData) => {
     markUserActive();
     try {
-      return await saveQsoRecord(qsoData);
+      // Architecture-B-correct as-is: when this desktop is in
+      // remote-client mode operating another shack's rig, manual
+      // banner-logger QSOs land in THIS desktop's adifLogPath + cloud
+      // journal via saveQsoRecord — which is exactly the desired
+      // attribution (gap #11 / investigation Q8.2). Don't add
+      // pass-context branching here; it would break the established
+      // behavior. Tagged 'local-manual' so the forwarding guard at
+      // the top of saveQsoRecord explicitly skips this path.
+      return await saveQsoRecord(qsoData, { origin: 'local-manual' });
     } catch (err) {
       return { success: false, error: err.message };
     }
