@@ -3061,6 +3061,18 @@ async function saveQsoRecord(qsoData) {
   if (settings.myCallsign && !qsoData.operator) {
     qsoData.operator = settings.myCallsign.toUpperCase();
   }
+  // Inject station callsign from settings (ADIF STATION_CALLSIGN,
+  // §97.119 station ID). The field was silently blank in every row
+  // until 2026-06-05; LOTW + contest log validation both want it
+  // populated. Manual save path: stamp from settings.myCallsign.
+  // Host-forward path (Architecture B): the client's inbound
+  // 'qso-attributed' handler pre-stamps stationCallsign from its
+  // cached host fingerprint BEFORE calling saveQsoRecord, so this
+  // guard preserves that value via the !qsoData.stationCallsign
+  // check.
+  if (settings.myCallsign && !qsoData.stationCallsign) {
+    qsoData.stationCallsign = settings.myCallsign.toUpperCase();
+  }
 
   // Auto-fill TX power from the live CAT reading (matches the TX Power slider)
   // when the caller didn't supply one — typical for the Logbook pop-out's
