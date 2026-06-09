@@ -104,6 +104,7 @@ contextBridge.exposeInMainWorld('api', {
   launcherInstall: () => ipcRenderer.invoke('launcher-install'),
   launcherUninstall: () => ipcRenderer.invoke('launcher-uninstall'),
   launcherStatus: () => ipcRenderer.invoke('launcher-status'),
+  launcherStart: () => ipcRenderer.invoke('launcher-start'),
   // --- ALSA bridge (Linux-only; resolves false / [] on Win+Mac) ----------
   // Exposed for Linux SDR users who need to pick raw hw:/plughw: subdevices
   // that Chromium's enumerateDevices hides. The capture flow is opt-in: the

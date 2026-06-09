@@ -6123,15 +6123,73 @@ function _writeAutostartLinux(desktopPath, exe, useElectron, launcherScript) {
   fs.writeFileSync(desktopPath, entry);
 }
 
+// Spawn the launcher subprocess. Idempotent — if a launcher is already
+// bound to port 7301, the new spawn fails to bind and exits, leaving
+// the existing one in place. Used by both _installLauncher (after
+// extracting the script + writing autostart) and _startLauncher (when
+// the autostart entry exists but no process is currently running).
+//
+// stdout/stderr are appended to launcher.log in the launcher config
+// dir so when the spawn dies immediately (missing settings, port
+// collision with stale process, TLS cert mismatch, etc.), the error
+// message survives instead of vanishing into stdio:'ignore'. Casey
+// 2026-06-09 spent the better part of an hour staring at "spawned PID
+// X" with no clue why each PID was dying — that's exactly what this
+// log file is for.
+function _spawnLauncherProc(launcherDest) {
+  const { exe, useElectron } = _resolveNodeExe();
+  const { spawn } = require('child_process');
+  const env = { ...process.env };
+  if (useElectron) env.ELECTRON_RUN_AS_NODE = '1';
+  // Open the log fd before spawn so the child inherits it. Append mode
+  // keeps history across spawns (you can see all the failed attempts
+  // back to back).
+  const { launcherCfgDir } = _launcherPaths();
+  let logFd = 'ignore';
+  try {
+    fs.mkdirSync(launcherCfgDir, { recursive: true });
+    const logPath = path.join(launcherCfgDir, 'launcher.log');
+    logFd = fs.openSync(logPath, 'a');
+    fs.writeSync(logFd, `\n--- spawn @ ${new Date().toISOString()} pid-parent=${process.pid} ---\n`);
+  } catch (e) {
+    // If we can't open the log, fall back to ignored stdio — spawning
+    // is more important than logging.
+    logFd = 'ignore';
+  }
+  const child = spawn(exe, [launcherDest], {
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    env, windowsHide: true,
+  });
+  child.unref();
+  // Close our parent-side fd reference; the child kept its own copy via
+  // dup2 at spawn time.
+  if (typeof logFd === 'number') {
+    try { fs.closeSync(logFd); } catch {}
+  }
+  return { pid: child.pid, useElectron };
+}
+
+// Extract launcher.js from the bundled source (app.asar in packaged
+// installs, the source tree in dev) to its on-disk destination.
+// Factored out of _installLauncher so _startLauncher can auto-recover
+// when the script has gone missing between sessions (POTACAT upgrade
+// wiped appdata, user manually cleaned, etc.) without making the user
+// do a manual Uninstall + Install round-trip.
+function _extractLauncherScript(launcherDest) {
+  const srcLauncher = path.join(__dirname, 'scripts', 'launcher.js');
+  const srcContent = fs.readFileSync(srcLauncher, 'utf8');
+  fs.mkdirSync(path.dirname(launcherDest), { recursive: true });
+  fs.writeFileSync(launcherDest, srcContent);
+}
+
 async function _installLauncher() {
   try {
     const { launcherDest, autostartPath, launcherCfgDir, platform } = _launcherPaths();
     // Extract launcher.js to a stable on-disk path (works for packaged
-    // installs where the source is inside app.asar). fs.readFileSync via
-    // Electron's Node honors asar transparently.
-    const srcLauncher = path.join(__dirname, 'scripts', 'launcher.js');
-    const srcContent = fs.readFileSync(srcLauncher, 'utf8');
-    fs.writeFileSync(launcherDest, srcContent);
+    // installs where the source is inside app.asar — Electron's fs
+    // honors asar transparently).
+    _extractLauncherScript(launcherDest);
 
     // Pre-seed launcher-config.json (port 7301 + HTTP; matches what the
     // mobile LauncherService expects by default).
@@ -6141,29 +6199,61 @@ async function _installLauncher() {
       fs.writeFileSync(cfgPath, JSON.stringify({ port: 7301, potacatPath: 'auto', https: false }, null, 2));
     }
 
-    const { exe, useElectron } = _resolveNodeExe();
     if (platform === 'win32') {
+      const { exe, useElectron } = _resolveNodeExe();
       _writeAutostartWindows(autostartPath, exe, useElectron, launcherDest);
     } else if (platform === 'darwin') {
+      const { exe, useElectron } = _resolveNodeExe();
       _writeAutostartMac(autostartPath, exe, useElectron, launcherDest, launcherCfgDir);
     } else {
+      const { exe, useElectron } = _resolveNodeExe();
       _writeAutostartLinux(autostartPath, exe, useElectron, launcherDest);
     }
 
     // Spawn the launcher now so the user doesn't have to log out and back
-    // in. Idempotent — if a launcher is already on port 7301, the new
-    // process fails to bind and exits, leaving the existing one in place.
-    const { spawn } = require('child_process');
-    const env = { ...process.env };
-    if (useElectron) env.ELECTRON_RUN_AS_NODE = '1';
-    const child = spawn(exe, [launcherDest], {
-      detached: true, stdio: 'ignore', env, windowsHide: true,
-    });
-    child.unref();
-    sendCatLog(`[Launcher] Installed at ${autostartPath} (using ${useElectron ? 'Electron' : 'node'} → spawned PID ${child.pid})`);
-    return { ok: true, autostartPath, launcherDest, pid: child.pid, useElectron };
+    // in. _spawnLauncherProc is idempotent.
+    const { pid, useElectron } = _spawnLauncherProc(launcherDest);
+    sendCatLog(`[Launcher] Installed at ${autostartPath} (using ${useElectron ? 'Electron' : 'node'} → spawned PID ${pid})`);
+    return { ok: true, autostartPath, launcherDest, pid, useElectron };
   } catch (err) {
     sendCatLog(`[Launcher] Install failed: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+// Start the launcher without touching the autostart entry. Used by the
+// "Start now" button when state is "installed, not running" — the user
+// has an autostart entry but no process is bound to 7301 (machine
+// hasn't logged out/in since install, the launcher crashed, or the
+// script went missing from appdata between sessions). Auto-re-extracts
+// launcher.js if it's missing so the user doesn't have to do a manual
+// Uninstall + Install round-trip — Casey 2026-06-09 hit exactly that
+// when an autostart entry survived from a prior install but the script
+// file had been wiped.
+async function _startLauncher() {
+  try {
+    const { launcherDest } = _launcherPaths();
+    let reExtracted = false;
+    if (!fs.existsSync(launcherDest)) {
+      try {
+        _extractLauncherScript(launcherDest);
+        reExtracted = true;
+        sendCatLog(`[Launcher] launcher.js was missing at ${launcherDest} — re-extracted from bundled source`);
+      } catch (extractErr) {
+        // Only fails when scripts/launcher.js isn't in the bundle —
+        // typically a packaged install built before scripts/launcher.js
+        // was added to the electron-builder files allowlist. Surface
+        // the path so the user knows what's missing.
+        const msg = `Could not re-extract launcher script: ${extractErr.message}. Try updating POTACAT to the latest release.`;
+        sendCatLog(`[Launcher] Start failed: ${msg}`);
+        return { ok: false, error: msg };
+      }
+    }
+    const { pid, useElectron } = _spawnLauncherProc(launcherDest);
+    sendCatLog(`[Launcher] Start now → spawned PID ${pid} (using ${useElectron ? 'Electron' : 'node'})${reExtracted ? ' [re-extracted script]' : ''}`);
+    return { ok: true, pid, useElectron, reExtracted };
+  } catch (err) {
+    sendCatLog(`[Launcher] Start failed: ${err.message}`);
     return { ok: false, error: err.message };
   }
 }
@@ -6193,16 +6283,30 @@ async function _uninstallLauncher() {
 async function _launcherStatus() {
   const { autostartPath, launcherDest } = _launcherPaths();
   const installed = fs.existsSync(autostartPath);
-  // Probe 127.0.0.1:7301 — any HTTP response (incl. 401 unauthorized)
-  // means the server is alive. ECONNREFUSED / timeout = down.
-  const running = await new Promise((resolve) => {
-    const req = require('http').request({
-      host: '127.0.0.1', port: 7301, path: '/status', method: 'GET', timeout: 1000,
-    }, (res) => { res.resume(); resolve(true); });
+  // Probe 127.0.0.1:7301 — the launcher may be serving plain HTTP OR
+  // HTTPS depending on whether it found a Tailscale cert at startup
+  // (scripts/launcher.js:loadTailscaleCert). We probe BOTH in parallel
+  // and treat any response as "alive." Pre-2026-06-09 this only probed
+  // HTTP, which misreported as "not running" whenever the launcher
+  // switched to HTTPS — exactly what Casey hit when his cached
+  // Tailscale cert made the launcher pick HTTPS while status kept
+  // asking over HTTP. Any HTTP code (incl. 401) means a server bound
+  // the port; an actual ECONNREFUSED / timeout / TLS error from BOTH
+  // legs means nothing is listening.
+  const probe = (mod, opts) => new Promise((resolve) => {
+    const req = mod.request(opts, (res) => { res.resume(); resolve(true); });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });
     req.end();
   });
+  const baseOpts = { host: '127.0.0.1', port: 7301, path: '/status', method: 'GET', timeout: 1000 };
+  // HTTPS leg accepts self-signed (the launcher's TLS cert is local,
+  // not trusted by the system CA store).
+  const [httpAlive, httpsAlive] = await Promise.all([
+    probe(require('http'), baseOpts),
+    probe(require('https'), { ...baseOpts, rejectUnauthorized: false }),
+  ]);
+  const running = httpAlive || httpsAlive;
   return { installed, running, autostartPath, launcherDest };
 }
 
@@ -17406,6 +17510,7 @@ app.whenReady().then(() => {
   ipcMain.handle('launcher-install', async () => _installLauncher());
   ipcMain.handle('launcher-uninstall', async () => _uninstallLauncher());
   ipcMain.handle('launcher-status', async () => _launcherStatus());
+  ipcMain.handle('launcher-start', async () => _startLauncher());
 
   // TX EQ live update — push from app.js settings UI to the audio bridge
   // without tearing down WebRTC. The bridge maintains an active filter

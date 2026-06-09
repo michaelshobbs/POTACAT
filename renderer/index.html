@@ -2630,6 +2630,12 @@
           </div>
           <div style="display:flex;gap:6px;">
             <button type="button" id="launcher-install-btn" style="padding:4px 12px;">Install</button>
+            <!-- Visible only when state is "installed, not running" — spawns
+                 the existing launcher script without touching the autostart
+                 entry, so the user doesn't have to do the Uninstall + Install
+                 dance just to get the launcher running this session. Casey
+                 2026-06-09. -->
+            <button type="button" id="launcher-start-btn" style="padding:4px 12px;" class="hidden">Start now</button>
             <button type="button" id="launcher-uninstall-btn" style="padding:4px 12px;" class="hidden">Uninstall</button>
           </div>
         </div>

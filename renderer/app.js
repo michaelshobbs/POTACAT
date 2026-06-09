@@ -4479,6 +4479,7 @@ echocatRefreshPairedList();
 const launcherStatusPill = document.getElementById('launcher-status-pill');
 const launcherStatusDetail = document.getElementById('launcher-status-detail');
 const launcherInstallBtn = document.getElementById('launcher-install-btn');
+const launcherStartBtn = document.getElementById('launcher-start-btn');
 const launcherUninstallBtn = document.getElementById('launcher-uninstall-btn');
 async function refreshLauncherStatus() {
   if (!launcherStatusPill || !window.api.launcherStatus) return;
@@ -4492,7 +4493,7 @@ async function refreshLauncherStatus() {
       detail = 'Auto-starts at login. The phone app can restart POTACAT via port 7301.';
     } else if (installed && !running) {
       label = '○ installed, not running'; color = '#f0a500';
-      detail = 'Will auto-start on your next login — or click Uninstall + Install again to start now.';
+      detail = 'Click Start now to spawn it without logging out, or wait — it will auto-start at your next login.';
     } else if (!installed && running) {
       label = '● running (no autostart)'; color = '#f0a500';
       detail = 'Launcher is up but won\'t auto-start at login. Click Install to make it persistent.';
@@ -4503,7 +4504,12 @@ async function refreshLauncherStatus() {
     launcherStatusPill.textContent = label;
     launcherStatusPill.style.color = color;
     if (launcherStatusDetail) launcherStatusDetail.textContent = detail;
+    // Install button hides when already installed (regardless of running).
+    // Start now button visible only when installed AND not running — the
+    // exact state where the user has an autostart entry but no live process.
+    // Uninstall button visible whenever installed.
     if (launcherInstallBtn)   launcherInstallBtn.classList.toggle('hidden', installed);
+    if (launcherStartBtn)     launcherStartBtn.classList.toggle('hidden', !(installed && !running));
     if (launcherUninstallBtn) launcherUninstallBtn.classList.toggle('hidden', !installed);
   } catch (err) {
     launcherStatusPill.textContent = 'status unavailable';
@@ -4528,6 +4534,29 @@ if (launcherInstallBtn) {
     launcherInstallBtn.disabled = false;
     launcherInstallBtn.textContent = prev;
     // Give the spawned launcher ~800 ms to bind port 7301 before we re-probe.
+    setTimeout(refreshLauncherStatus, 800);
+  });
+}
+// Start now — spawns the existing extracted launcher script without
+// touching the autostart entry. Visible only when state is "installed,
+// not running" (refreshLauncherStatus toggles the .hidden class).
+if (launcherStartBtn) {
+  launcherStartBtn.addEventListener('click', async () => {
+    launcherStartBtn.disabled = true;
+    const prev = launcherStartBtn.textContent;
+    launcherStartBtn.textContent = 'Starting…';
+    try {
+      const r = await window.api.launcherStart();
+      if (r && r.ok) {
+        showLogToast('Remote Launcher started (PID ' + (r.pid || '?') + ')', { duration: 4000 });
+      } else {
+        showLogToast('Start failed: ' + (r && r.error ? r.error : 'unknown error'), { warn: true, duration: 6000 });
+      }
+    } catch (err) {
+      showLogToast('Start failed: ' + (err.message || err), { warn: true, duration: 6000 });
+    }
+    launcherStartBtn.disabled = false;
+    launcherStartBtn.textContent = prev;
     setTimeout(refreshLauncherStatus, 800);
   });
 }

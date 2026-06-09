@@ -64,6 +64,7 @@
       "assets/icon-light.png",
       "assets/cty.dat",
       "scripts/test-alsa.js",
+      "scripts/launcher.js",
       "node_modules/**/*",
       "!node_modules/electron/**/*",
       "!node_modules/electron-builder/**/*",

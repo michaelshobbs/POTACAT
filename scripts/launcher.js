@@ -62,13 +62,35 @@ function loadConfig() {
 }
 
 // --- Get passphrase from POTACAT settings ---
+//
+// POTACAT v1.8 split its settings into a global file + per-operator
+// profile files (multi-op support). `launcherPassphrase` stays in the
+// global file (machine-scoped), but `myCallsign` moved into the per-
+// operator profile file pointed at by `activeProfile`. We try both
+// layouts so a fresh install AND an upgraded install both work, and
+// legacy single-file installs that never ran a multi-op migration
+// keep working too.
 function getPassphrase() {
+  let globalSettings = {};
   try {
-    const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
-    // Custom passphrase takes priority, then callsign
-    if (settings.launcherPassphrase) return settings.launcherPassphrase.trim();
-    if (settings.myCallsign) return settings.myCallsign.trim();
+    globalSettings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
   } catch {}
+
+  // 1. Explicit override always wins, regardless of layout.
+  if (globalSettings.launcherPassphrase) return globalSettings.launcherPassphrase.trim();
+
+  // 2. Legacy / pre-multi-op: callsign lived in the global file.
+  if (globalSettings.myCallsign) return globalSettings.myCallsign.trim();
+
+  // 3. Multi-op layout (v1.8+): follow activeProfile → per-operator file.
+  if (globalSettings.activeProfile) {
+    const profilePath = path.join(CONFIG_DIR, 'profiles', globalSettings.activeProfile, 'settings.json');
+    try {
+      const profileSettings = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+      if (profileSettings.launcherPassphrase) return profileSettings.launcherPassphrase.trim();
+      if (profileSettings.myCallsign) return profileSettings.myCallsign.trim();
+    } catch {}
+  }
   return null;
 }
 
