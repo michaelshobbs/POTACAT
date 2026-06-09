@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 /* actmap-popout.js — Pop-out activation map showing park + logged contacts */
 
 let accentGreen = '#4ecca3'; // updated by colorblind mode
@@ -292,11 +308,7 @@ window.api.onContactAdded((data) => {
 });
 
 window.api.onTheme((theme) => {
-  if (theme === 'light') {
-    document.documentElement.setAttribute('data-theme', 'light');
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-  }
+  _applyPopoutTheme(theme);
 });
 
 window.api.onColorblindMode((enabled) => {
@@ -308,9 +320,10 @@ window.api.onColorblindMode((enabled) => {
 async function init() {
   try {
     const settings = await window.api.getSettings();
-    if (settings.lightMode) {
-      document.documentElement.setAttribute('data-theme', 'light');
-    }
+    _applyPopoutTheme({
+      theme: settings.lightMode ? 'light' : 'dark',
+      variant: settings.darkVariant || 'navy',
+    });
     if (settings.colorblindMode) accentGreen = '#4fc3f7';
     initMap();
   } catch {

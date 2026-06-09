@@ -325,7 +325,8 @@ const GLOBAL_KEYS = new Set([
   'cloudTunnelToken',  // CF Tunnel credential (machine-scoped)
   'firstRun',          // first-time-launch flag
   'piAccess',          // easter egg unlock
-  'lightMode',         // theme
+  'lightMode',         // theme — light vs dark master switch
+  'darkVariant',       // dark sub-variant: 'navy' (legacy) | 'charcoal'
   'updateChannel',     // auto-update channel
   'telemetry',         // telemetry opt-in
   'windowState',       // window geometry
@@ -7655,15 +7656,25 @@ function connectRemote() {
         ? [cleanQrzName(qrzInfo.nickname) || cleanQrzName(qrzInfo.fname), cleanQrzName(qrzInfo.name)].filter(Boolean).join(' ')
         : '';
 
+      const upMode = (data.mode || '').toUpperCase();
+      // Mode-aware RST fallback. Pre-2026-06-06 we defaulted both
+      // sides to '59' which silently corrupted FT8/FT4 QSOs from the
+      // mobile app when the phone didn't populate rstRcvd — N3FJP
+      // and ADIF ended up with "59" instead of the FT8 SNR. KW4N
+      // reported the symptom on 6m FT8 from the Android app. The
+      // mobile-side root cause (missing rstRcvd in the log-qso
+      // envelope) is being fixed separately; this is the safety net.
+      const isDigi = upMode === 'FT8' || upMode === 'FT4' || upMode === 'JS8' || upMode === 'JT65' || upMode === 'JT9';
+      const defaultRst = isDigi ? '-00' : '59';
       const qsoData = {
         callsign: data.callsign.toUpperCase(),
         frequency: String(freqKhz),
-        mode: (data.mode || '').toUpperCase(),
+        mode: upMode,
         band,
         qsoDate,
         timeOn: qsoTime,
-        rstSent: data.rstSent || '59',
-        rstRcvd: data.rstRcvd || '59',
+        rstSent: data.rstSent || defaultRst,
+        rstRcvd: data.rstRcvd || defaultRst,
         sig,
         sigInfo,
         potaRef,
@@ -11006,7 +11017,12 @@ function createWindow() {
   if (!HEADLESS) win.show();
   logStartupStage('win.show() (window visible)');
 
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // Theme + dark-variant in the query string so the renderer's
+  // popout-theme-bootstrap.js can stamp data-theme + data-dark-variant
+  // on <html> BEFORE the stylesheet renders. Without this, Charcoal
+  // users see a navy flash for ~one frame on startup before loadPrefs()
+  // applies the saved theme.
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
   // F12 opens DevTools
   win.webContents.on('before-input-event', (_e, input) => {
@@ -13717,7 +13733,7 @@ app.whenReady().then(() => {
     popoutWin.show();
 
     popoutWin.setMenuBarVisibility(false);
-    popoutWin.loadFile(path.join(__dirname, 'renderer', 'map-popout.html'));
+    popoutWin.loadFile(path.join(__dirname, 'renderer', 'map-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     popoutWin.on('close', () => {
       if (popoutWin && !popoutWin.isDestroyed()) {
@@ -13802,7 +13818,7 @@ app.whenReady().then(() => {
     }
     propPopoutWin.show();
     propPopoutWin.setMenuBarVisibility(false);
-    propPopoutWin.loadFile(path.join(__dirname, 'renderer', 'prop-popout.html'));
+    propPopoutWin.loadFile(path.join(__dirname, 'renderer', 'prop-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     propPopoutWin.on('close', () => {
       if (propPopoutWin && !propPopoutWin.isDestroyed()) {
@@ -13872,11 +13888,11 @@ app.whenReady().then(() => {
     });
     pairPopoutWin.show();
     pairPopoutWin.setMenuBarVisibility(false);
-    pairPopoutWin.loadFile(path.join(__dirname, 'renderer', 'pair-popout.html'));
+    pairPopoutWin.loadFile(path.join(__dirname, 'renderer', 'pair-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     pairPopoutWin.on('closed', () => { pairPopoutWin = null; });
     pairPopoutWin.webContents.on('did-finish-load', () => {
       if (!pairPopoutWin || pairPopoutWin.isDestroyed()) return;
-      pairPopoutWin.webContents.send('pair-popout-theme', settings.lightMode ? 'light' : 'dark');
+      pairPopoutWin.webContents.send('pair-popout-theme', { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' });
     });
     pairPopoutWin.webContents.on('before-input-event', (_e, input) => {
       if (input.key === 'F12' && input.type === 'keyDown') {
@@ -13915,7 +13931,7 @@ app.whenReady().then(() => {
       },
     });
     pairRequestPopoutWin.setMenuBarVisibility(false);
-    pairRequestPopoutWin.loadFile(path.join(__dirname, 'renderer', 'pair-request-popout.html'));
+    pairRequestPopoutWin.loadFile(path.join(__dirname, 'renderer', 'pair-request-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     pairRequestPopoutWin.once('ready-to-show', () => {
       if (!pairRequestPopoutWin || pairRequestPopoutWin.isDestroyed()) return;
       pairRequestPopoutWin.show();
@@ -14084,7 +14100,7 @@ app.whenReady().then(() => {
     qsoPopoutWin.show();
 
     qsoPopoutWin.setMenuBarVisibility(false);
-    qsoPopoutWin.loadFile(path.join(__dirname, 'renderer', 'qso-popout.html'));
+    qsoPopoutWin.loadFile(path.join(__dirname, 'renderer', 'qso-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     qsoPopoutWin.on('close', () => {
       if (qsoPopoutWin && !qsoPopoutWin.isDestroyed()) {
@@ -14180,7 +14196,7 @@ app.whenReady().then(() => {
     }
     logPopoutWin.show();
     logPopoutWin.setMenuBarVisibility(false);
-    logPopoutWin.loadFile(path.join(__dirname, 'renderer', 'log-popout.html'));
+    logPopoutWin.loadFile(path.join(__dirname, 'renderer', 'log-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     logPopoutWin.on('close', () => {
       if (logPopoutWin && !logPopoutWin.isDestroyed()) {
@@ -14195,7 +14211,7 @@ app.whenReady().then(() => {
     logPopoutWin.webContents.on('did-finish-load', () => {
       if (!logPopoutWin || logPopoutWin.isDestroyed()) return;
       // Send theme + prefill once the renderer is ready.
-      logPopoutWin.webContents.send('log-popout-theme', settings.lightMode ? 'light' : 'dark');
+      logPopoutWin.webContents.send('log-popout-theme', { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' });
       if (prefill) logPopoutWin.webContents.send('log-popout-prefill', prefill);
       // Replay current cluster status so the DX-spot toggle hydrates on
       // open without waiting for the next status broadcast.
@@ -14262,7 +14278,7 @@ app.whenReady().then(() => {
     spotsPopoutWin.show();
 
     spotsPopoutWin.setMenuBarVisibility(false);
-    spotsPopoutWin.loadFile(path.join(__dirname, 'renderer', 'spots-popout.html'));
+    spotsPopoutWin.loadFile(path.join(__dirname, 'renderer', 'spots-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     spotsPopoutWin.on('close', () => {
       if (spotsPopoutWin && !spotsPopoutWin.isDestroyed()) {
@@ -14351,7 +14367,7 @@ app.whenReady().then(() => {
     clusterPopoutWin.show();
 
     clusterPopoutWin.setMenuBarVisibility(false);
-    clusterPopoutWin.loadFile(path.join(__dirname, 'renderer', 'cluster-popout.html'));
+    clusterPopoutWin.loadFile(path.join(__dirname, 'renderer', 'cluster-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     clusterPopoutWin.on('close', () => {
       if (clusterPopoutWin && !clusterPopoutWin.isDestroyed()) {
@@ -14427,7 +14443,7 @@ app.whenReady().then(() => {
     }
     bandspreadPopoutWin.show();
     bandspreadPopoutWin.setMenuBarVisibility(false);
-    bandspreadPopoutWin.loadFile(path.join(__dirname, 'renderer', 'bandspread-popout.html'));
+    bandspreadPopoutWin.loadFile(path.join(__dirname, 'renderer', 'bandspread-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     // Persist bounds on resize/move as well as close, so the last known position
     // survives unclean exits (task-manager kill, power loss, etc.).
@@ -14460,8 +14476,8 @@ app.whenReady().then(() => {
       }
     });
     bandspreadPopoutWin.webContents.on('did-finish-load', () => {
-      const theme = settings.lightMode ? 'light' : 'dark';
-      bandspreadPopoutWin.webContents.send('bandspread-popout-theme', theme);
+      const themePayload = { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' };
+      bandspreadPopoutWin.webContents.send('bandspread-popout-theme', themePayload);
       // Tell the main renderer the popout is up so it can push the filtered
       // view (spots + active band) immediately. We no longer push an initial
       // unfiltered snapshot from main — the renderer is the source of truth.
@@ -14556,7 +14572,7 @@ app.whenReady().then(() => {
     actmapPopoutWin.show();
 
     actmapPopoutWin.setMenuBarVisibility(false);
-    actmapPopoutWin.loadFile(path.join(__dirname, 'renderer', 'actmap-popout.html'));
+    actmapPopoutWin.loadFile(path.join(__dirname, 'renderer', 'actmap-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
 
     actmapPopoutWin.on('close', () => {
       if (actmapPopoutWin && !actmapPopoutWin.isDestroyed()) {
@@ -14663,11 +14679,11 @@ app.whenReady().then(() => {
     }
     vfoPopoutWin.show();
     vfoPopoutWin.setMenuBarVisibility(false);
-    vfoPopoutWin.loadFile(path.join(__dirname, 'renderer', 'vfo-popout.html'));
+    vfoPopoutWin.loadFile(path.join(__dirname, 'renderer', 'vfo-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     vfoPopoutWin.webContents.on('did-finish-load', () => {
       sendVfoState();
       if (_cachedSolarData) vfoPopoutWin.webContents.send('solar-data', _cachedSolarData);
-      vfoPopoutWin.webContents.send('vfo-popout-theme', settings.lightMode ? 'light' : 'dark');
+      vfoPopoutWin.webContents.send('vfo-popout-theme', { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' });
       // Initial TX EQ state so the popout's controls hydrate to the
       // current setting on every open (live updates flow through
       // tx-eq-update broadcasts below).
@@ -14742,9 +14758,9 @@ app.whenReady().then(() => {
     }
     conditionsPopoutWin.show();
     conditionsPopoutWin.setMenuBarVisibility(false);
-    conditionsPopoutWin.loadFile(path.join(__dirname, 'renderer', 'conditions-popout.html'));
+    conditionsPopoutWin.loadFile(path.join(__dirname, 'renderer', 'conditions-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     conditionsPopoutWin.webContents.on('did-finish-load', () => {
-      conditionsPopoutWin.webContents.send('conditions-popout-theme', settings.lightMode ? 'light' : 'dark');
+      conditionsPopoutWin.webContents.send('conditions-popout-theme', { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' });
       // Restore the user's last zoom level so Ctrl+ "sticks" across
       // reopens. Default 0 = 100%. Electron clamps -8..+8 internally.
       const savedZoom = typeof settings.conditionsPopoutZoom === 'number' ? settings.conditionsPopoutZoom : 0;
@@ -14874,7 +14890,7 @@ app.whenReady().then(() => {
     }
     jtcatPopoutWin.show();
     jtcatPopoutWin.setMenuBarVisibility(false);
-    jtcatPopoutWin.loadFile(path.join(__dirname, 'renderer', 'jtcat-popout.html'));
+    jtcatPopoutWin.loadFile(path.join(__dirname, 'renderer', 'jtcat-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     jtcatPopoutWin.on('close', () => {
       if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
         if (!jtcatPopoutWin.isMaximized() && !jtcatPopoutWin.isMinimized()) {
@@ -14903,8 +14919,8 @@ app.whenReady().then(() => {
         win.webContents.send('jtcat-popout-status', true);
       }
       // Send current theme
-      const theme = settings.lightMode ? 'light' : 'dark';
-      jtcatPopoutWin.webContents.send('jtcat-popout-theme', theme);
+      const themePayload = { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' };
+      jtcatPopoutWin.webContents.send('jtcat-popout-theme', themePayload);
     });
     jtcatPopoutWin.webContents.on('before-input-event', (_e, input) => {
       if (input.key === 'F12' && input.type === 'keyDown') {
@@ -14929,11 +14945,11 @@ app.whenReady().then(() => {
       frame: false,
       webPreferences: { preload: path.join(__dirname, 'preload-jtcat-popout.js'), contextIsolation: true, nodeIntegration: false },
     });
-    jtcatMapPopoutWin.loadFile('renderer/jtcat-map-popout.html');
+    jtcatMapPopoutWin.loadFile('renderer/jtcat-map-popout.html', { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     jtcatMapPopoutWin.on('closed', () => { jtcatMapPopoutWin = null; });
     jtcatMapPopoutWin.webContents.on('did-finish-load', () => {
-      const theme = settings.lightMode ? 'light' : 'dark';
-      jtcatMapPopoutWin.webContents.send('jtcat-popout-theme', theme);
+      const themePayload = { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' };
+      jtcatMapPopoutWin.webContents.send('jtcat-popout-theme', themePayload);
     });
   });
   ipcMain.on('jtcat-popout-theme', (_e, theme) => {
@@ -15405,7 +15421,7 @@ app.whenReady().then(() => {
     }
     sstvPopoutWin.show();
     sstvPopoutWin.setMenuBarVisibility(false);
-    sstvPopoutWin.loadFile(path.join(__dirname, 'renderer', 'sstv-popout.html'));
+    sstvPopoutWin.loadFile(path.join(__dirname, 'renderer', 'sstv-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
     sstvPopoutWin.on('close', () => {
       if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) {
         if (!sstvPopoutWin.isMaximized() && !sstvPopoutWin.isMinimized()) {
@@ -15420,8 +15436,8 @@ app.whenReady().then(() => {
     });
     sstvPopoutWin.webContents.on('did-finish-load', () => {
       // Send theme
-      const theme = settings.lightMode ? 'light' : 'dark';
-      sstvPopoutWin.webContents.send('sstv-popout-theme', theme);
+      const themePayload = { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' };
+      sstvPopoutWin.webContents.send('sstv-popout-theme', themePayload);
       // Start SSTV engine when popout opens
       startSstv();
     });
@@ -15894,6 +15910,8 @@ app.whenReady().then(() => {
       'https://tailscale.com', 'https://worldradioleague.com',
       'https://api.potacat.com/',
       'http://rx.linkfanel.net', 'http://kiwisdr.com', 'http://websdr.org',
+      // ECHOCAT mobile app store links (Settings footer promo).
+      'https://apps.apple.com/', 'https://play.google.com/',
     ];
     if (allowed.some(prefix => url.startsWith(prefix))) {
       shell.openExternal(url);

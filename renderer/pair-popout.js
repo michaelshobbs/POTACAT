@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 // Pair Mobile App popout — generates a fresh pairing QR via IPC and shows it
 // at a comfortable scanning size, with the same data also exposed as
 // copyable fields above the QR. The fields are the source of truth: the QR
@@ -39,7 +55,7 @@
   // open, then listen for live toggles so the popout flips when the
   // user changes themes mid-session.
   function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+    _applyPopoutTheme(theme);
   }
   if (window.api.onTheme) window.api.onTheme(applyTheme);
   if (window.api.getSettings) {

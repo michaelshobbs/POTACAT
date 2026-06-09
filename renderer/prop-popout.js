@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 // Propagation Map Pop-out — RBN + PSKReporter spots
 (function() {
   'use strict';
@@ -12,7 +28,7 @@
 
   // --- Theme ---
   window.api.onPopoutTheme(function(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
+    _applyPopoutTheme(theme);
   });
 
   // --- State ---

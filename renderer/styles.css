@@ -1,22 +1,84 @@
-/* Theme variables */
+/* ── POTACAT theme variables ──────────────────────────────────────────
+ *
+ * Token vocabulary (mobile-aligned, 2026-06-07 step-1 consolidation):
+ *
+ *   Surfaces:   --bg            page background
+ *               --bg-elevated   card / panel / dialog surface (one step lighter)
+ *               --bg-subtle     pressed / hovered / striped surface
+ *               --bg-input      form fields
+ *               --bg-panel      inset panel inside a card
+ *               --bg-hover      strong hover state on interactive rows
+ *
+ *   Borders:    --border        default 1px divider (visible on bg)
+ *               --border-subtle hairline inside a card (lower contrast)
+ *
+ *   Text:       --text          primary copy
+ *               --text-muted    de-emphasized copy
+ *               --text-dim      help-text, placeholders
+ *               --text-dimmer   captions, disabled
+ *
+ *   Status:     --accent        primary brand / action (red)
+ *               --info          informational / interactive blue
+ *               --ok            success / live / connected (green)
+ *               --warn          caution (amber)
+ *               --bad           error (red, distinct from accent)
+ *               Each has a `-subtle` companion for fills/badges.
+ *
+ *   Spot
+ *   sources:    --source-pota / -sota / -wwff / -llota / -wwbota /
+ *               -tiles / -dxc / -rbn / -pskr / -net   (semantic by spot
+ *               program — these are visual identity, do not retune).
+ *
+ *   Legacy:     --bg-primary, --bg-secondary, --bg-tertiary,
+ *               --border-primary, --border-secondary,
+ *               --text-primary, --text-secondary, --text-tertiary,
+ *               --accent-red, --accent-blue, --accent-green
+ *               are KEPT as aliases of the canonical names above so
+ *               older selectors keep working. Prefer the new names
+ *               in any new code.
+ *
+ * The four blocks below are: dark (default) → light → WCAG dark →
+ * WCAG light. Add a new token to ALL FOUR if it varies between
+ * themes; otherwise add it to :root only.
+ * ──────────────────────────────────────────────────────────────────── */
 :root {
+  /* ── Canonical concrete tokens (theme-switched in [data-theme="light"]
+     and [data-wcag] blocks below). The legacy dash-style names are the
+     *canonical* ones because the light + WCAG blocks already override
+     them — flipping that would mean rewriting both blocks. The mobile-
+     vocabulary names alias these so new code can use the cleaner names
+     and still theme-switch correctly. ── */
+
+  /* Surfaces */
   --bg-primary: #1a1a2e;
   --bg-secondary: #16213e;
   --bg-tertiary: #0f3460;
   --bg-hover: #1a4080;
   --bg-input: #0a0a1a;
   --bg-panel: #0f1a30;
+
+  /* Borders */
   --border-primary: #0f3460;
   --border-secondary: #1a4080;
+
+  /* Text */
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0c0;
   --text-tertiary: #808090;
   --text-dim: #606080;
   --text-dimmer: #404060;
+
+  /* Accents */
   --accent-red: #e94560;
   --accent-blue: #4fc3f7;
   --accent-green: #4ecca3;
   --accent-green-btn: #4ecca3;
+  /* TX-active indicator (PTT border, transmit-state badges). Distinct
+     from --accent (red, brand/alarm) and --warn (amber, caution). */
+  --tx-active: #ff6b00;
+
+  /* Spot-source colors (semantic — visual identity per program;
+     do NOT retune for theming) */
   --source-pota: #4ecca3;
   --source-sota: #f0a500;
   --source-wwff: #26a69a;
@@ -27,6 +89,8 @@
   --source-rbn: #00bcd4;
   --source-pskr: #ff6b6b;
   --source-net: #ffd740;
+
+  /* Effects */
   --shadow: rgba(0,0,0,0.3);
   --shadow-heavy: rgba(0,0,0,0.5);
   --backdrop: rgba(0,0,0,0.6);
@@ -38,9 +102,39 @@
   --scrollbar-thumb: #0f3460;
   --scrollbar-track: #0a0a1a;
   --map-tile-filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
-  /* Conditions view severity palette — readable on dark bg. The light
-     theme block below overrides with darker, higher-contrast equivalents
-     so the same .good/.warn/.bad classes work on both backgrounds. */
+
+  /* ── Mobile-vocabulary aliases (prefer these in new code).
+     They reference the canonical tokens above by name, so the
+     light/WCAG overrides cascade through correctly. ── */
+  --bg: var(--bg-primary);
+  --bg-elevated: var(--bg-secondary);
+  --bg-subtle: var(--bg-tertiary);
+  --bg-header: var(--bg-secondary);
+  --border: var(--border-primary);
+  --border-strong: var(--border-secondary);
+  --border-subtle: var(--border-primary);
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --accent: var(--accent-red);
+  --info: var(--accent-blue);
+  --link: var(--accent-blue);
+  --ok: var(--accent-green);
+  --bad: var(--accent-red);
+  --warn: var(--source-sota);
+  --accent-gold: var(--source-sota);
+  /* `-subtle` companions for status fills/badges. The transparent
+     overlays don't theme-switch — they're meant to tint whatever
+     surface they sit on. */
+  --accent-subtle: rgba(233,69,96,0.18);
+  --info-subtle: rgba(79,195,247,0.18);
+  --ok-subtle: rgba(78,204,163,0.18);
+  --warn-subtle: rgba(240,165,0,0.18);
+  --bad-subtle: rgba(255,107,107,0.18);
+
+  /* ── Conditions-view severity palette ──
+     Readable on dark bg. The light theme block below overrides with
+     darker, higher-contrast equivalents so the same .good/.warn/.bad
+     classes work on both backgrounds. */
   --cond-good: var(--accent-green);
   --cond-warn: #ffe933;
   --cond-bad:  var(--accent-red);
@@ -54,6 +148,69 @@
   /* Filled shapes (Kp bars, etc.) can use a punchier hue than text-warn,
      since large fills aren't constrained by character-edge legibility. */
   --cond-warn-fill: #ffe933;
+}
+
+/* ── Dark — Charcoal variant ──────────────────────────────────────────
+ * Alternate dark palette ported from the iOS/Android app theme. Neutral
+ * charcoal base instead of saturated navy, softened OLED-safe accents,
+ * a real visual hierarchy bg < bg-elevated < bg-subtle < border instead
+ * of the navy theme's border-blends-into-tertiary problem.
+ *
+ * Placed before [data-theme="light"] so that when both data-theme="light"
+ * and data-dark-variant="charcoal" are set on the root, the light block
+ * (later, same specificity) wins. applyTheme() in renderer/app.js only
+ * sets data-dark-variant when not in light mode, but defense in depth.
+ * ──────────────────────────────────────────────────────────────────── */
+[data-dark-variant="charcoal"] {
+  /* Surfaces — neutral charcoal */
+  --bg-primary: #0b0d10;
+  --bg-secondary: #15181d;
+  --bg-tertiary: #1d2127;
+  --bg-hover: #262b33;
+  --bg-input: #0b0d10;
+  --bg-panel: #15181d;
+
+  /* Borders — actually visible against the bg, distinct from bg-tertiary */
+  --border-primary: #262b33;
+  --border-secondary: #363b44;
+
+  /* Text — cooler whites, fewer perceptible steps */
+  --text-primary: #e6e9ee;
+  --text-secondary: #8b919b;
+  --text-tertiary: #6a6f78;
+  --text-dim: #555a62;
+  --text-dimmer: #404550;
+
+  /* Accents — softened versions of navy's saturated hues so they don't
+     vibrate against near-black. Same hue family, lower saturation.
+     Mobile's #ff6b76 read as Pepto-pink on large desktop button fills
+     (active Table/Map toggle, etc.) — switched to a cleaner crimson at
+     lower lightness so white text on the fill stays high-contrast. */
+  --accent-red: #ef4444;
+  --accent-blue: #38bdf8;
+  --accent-green: #52c992;
+  --accent-green-btn: #52c992;
+  --tx-active: #ff8a3d;
+
+  /* Effects — deeper shadows on near-black */
+  --shadow: rgba(0,0,0,0.5);
+  --shadow-heavy: rgba(0,0,0,0.7);
+  --backdrop: rgba(0,0,0,0.7);
+  --table-stripe: rgba(255,255,255,0.025);
+  --tint-green: #0a2a1c;
+  --tint-red: #2a0a0e;
+  --tint-yellow: #2a280a;
+  --tint-orange: #2a1c0a;
+  --scrollbar-thumb: #262b33;
+  --scrollbar-track: #0b0d10;
+
+  /* Conditions overlays — recompute against new accents */
+  --cond-good-bg: rgba(82,201,146,0.18);
+  --cond-bad-bg:  rgba(255,107,118,0.18);
+
+  /* Map tile filter unchanged — the OSM dark filter is independent of
+     the chrome palette. If charcoal ever wants a different map look, do
+     it here. */
 }
 
 [data-theme="light"] {
@@ -503,7 +660,7 @@ header {
 .echo-cat-copy-icon.copied { opacity: 1; }
 .echo-cat-https-note {
   font-size: 9px;
-  color: var(--accent-red, #e94560);
+  color: var(--accent-red, var(--accent-red));
   margin-top: 2px;
   opacity: 0.8;
 }
@@ -562,7 +719,7 @@ header {
 .echo-cat-token-value {
   font-family: monospace;
   font-weight: bold;
-  color: #4fc3f7;
+  color: var(--accent-blue);
   letter-spacing: 1px;
 }
 .echo-cat-copy-btn {
@@ -755,7 +912,7 @@ button:hover {
   bottom: 46px;
   left: 8px;
   z-index: 100;
-  background: #16213e;
+  background: var(--bg-secondary);
   border: 1px solid #444;
   border-radius: 8px;
   padding: 8px 10px;
@@ -783,10 +940,10 @@ button:hover {
 .cw-wpm-ctrl { display: flex; align-items: center; gap: 2px; margin-left: 6px; flex-shrink: 0; }
 .cw-wpm-ctrl button { width: 20px; height: 20px; border-radius: 3px; border: 1px solid #555; background: #2a2a3e; color: #ccc; font-size: 14px; font-weight: bold; cursor: pointer; padding: 0; line-height: 1; }
 .cw-wpm-ctrl button:hover { border-color: var(--blue); color: #fff; }
-.cw-wpm-ctrl span { font-size: 11px; font-weight: 600; color: #4fc3f7; min-width: 28px; text-align: center; font-family: monospace; }
-.cw-spot-wpm { font-size: 10px; color: #f0a500; font-family: monospace; white-space: nowrap; margin-left: 4px; }
-.cw-wpm-sync { font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid #f0a500; background: transparent; color: #f0a500; cursor: pointer; font-weight: 600; margin-left: 2px; }
-.cw-wpm-sync:hover { background: #f0a500; color: #000; }
+.cw-wpm-ctrl span { font-size: 11px; font-weight: 600; color: var(--accent-blue); min-width: 28px; text-align: center; font-family: monospace; }
+.cw-spot-wpm { font-size: 10px; color: var(--source-sota); font-family: monospace; white-space: nowrap; margin-left: 4px; }
+.cw-wpm-sync { font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--source-sota); background: transparent; color: var(--source-sota); cursor: pointer; font-weight: 600; margin-left: 2px; }
+.cw-wpm-sync:hover { background: var(--source-sota); color: #000; }
 .hotkey-row { display: flex; gap: 4px; align-items: center; font-size: 11px; }
 .hotkey-key-btn { min-width: 80px; padding: 3px 6px; font-size: 11px; font-family: monospace; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 3px; cursor: pointer; text-align: center; }
 .hotkey-key-btn:focus { border-color: var(--blue); outline: none; }
@@ -800,7 +957,7 @@ button:hover {
   font-size: 11px;
   padding: 3px 6px;
   font-family: monospace;
-  background: #1a1a2e;
+  background: var(--bg-primary);
   color: #eee;
   border: 1px solid #555;
   border-radius: 4px;
@@ -860,8 +1017,8 @@ button:hover {
 }
 
 /* Sits inside #update-banner whose background is var(--tint-green)
- * (#0a3d2a on dark, #d4edda on light). Pairing #4ecca3 mint against
- * #1a1a2e near-black text is technically high-contrast on paper but
+ * (#0a3d2a on dark, #d4edda on light). Pairing var(--accent-green) mint against
+ * var(--bg-primary) near-black text is technically high-contrast on paper but
  * reads as muddy/illegible in practice (K3SBP report on v1.7.4
  * upgrade). Use a deeper saturated green with bold white text — the
  * contrast ratio jumps from ~6.8:1 (mint/navy) to ~7.5:1 (deep
@@ -908,7 +1065,7 @@ button:hover {
 }
 
 #support-link {
-  color: #f0a500;
+  color: var(--source-sota);
   text-decoration: none;
   cursor: pointer;
 }
@@ -940,7 +1097,7 @@ button:hover {
 /* Event banner */
 #event-banner {
   background: rgba(255, 107, 0, 0.08);
-  border-bottom: 1px solid #ff6b00;
+  border-bottom: 1px solid var(--tx-active);
   padding: 6px 16px;
   display: flex;
   align-items: center;
@@ -955,7 +1112,7 @@ button:hover {
 }
 
 .event-badge-inline {
-  background: #ff6b00;
+  background: var(--tx-active);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -969,13 +1126,13 @@ button:hover {
 }
 
 #event-progress-count {
-  color: #ff6b00;
+  color: var(--tx-active);
   font-weight: bold;
   font-size: 12px;
 }
 
 .event-action-btn {
-  background: #ff6b00;
+  background: var(--tx-active);
   color: #fff;
   border: none;
   border-radius: 3px;
@@ -1015,7 +1172,7 @@ button:hover {
   bottom: 12px;
   right: 12px;
   background: var(--bg-secondary);
-  border: 1px solid #ff6b00;
+  border: 1px solid var(--tx-active);
   border-radius: 8px;
   padding: 0;
   font-size: 13px;
@@ -1034,7 +1191,7 @@ button:hover {
   border-bottom: 1px solid var(--border-primary);
   font-weight: bold;
   font-size: 12px;
-  color: #ff6b00;
+  color: var(--tx-active);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1089,18 +1246,18 @@ button:hover {
 
 .event-state-cell.worked {
   background: var(--accent-green);
-  color: #1a1a2e;
+  color: var(--bg-primary);
 }
 
 .event-state-cell.active-week {
-  outline: 2px solid #ff6b00;
+  outline: 2px solid var(--tx-active);
   outline-offset: -1px;
-  color: #ff6b00;
+  color: var(--tx-active);
   font-weight: 700;
 }
 
 .event-state-cell.active-week.worked {
-  color: #1a1a2e;
+  color: var(--bg-primary);
 }
 
 /* Event checklist board (13 Colonies etc.) */
@@ -1133,7 +1290,7 @@ button:hover {
   font-weight: 700;
   padding: 1px 3px;
   border-radius: 3px;
-  background: #ff6b00;
+  background: var(--tx-active);
   color: #fff;
   vertical-align: middle;
   cursor: default;
@@ -1437,6 +1594,7 @@ th.col-drop-right { border-right: 2px solid var(--accent-blue) !important; }
 .hide-col-distance [data-col="distance"],
 .hide-col-spotTime [data-col="spotTime"],
 .hide-col-skip [data-col="skip"],
+.hide-col-hide [data-col="hide"],
 .hide-col-comments [data-col="comments"],
 .hide-col-grid [data-col="grid"] {
   display: none;
@@ -1533,7 +1691,7 @@ th.col-drop-right { border-right: 2px solid var(--accent-blue) !important; }
 }
 
 .hide-spot-unhide {
-  color: var(--accent-green, #4ecca3);
+  color: var(--accent-green, var(--accent-green));
   border-top: 1px solid var(--border-primary);
   margin-top: 2px;
 }
@@ -1600,9 +1758,14 @@ thead th {
 }
 
 .view-btn.active {
-  background: var(--accent-red);
-  color: #fff;
-  border-color: var(--accent-red);
+  /* "Selected" semantics, not "alert" — switched away from accent-red
+     2026-06-07 (Casey: "red is an alert color, that seems like the
+     wrong color"). Blue fill + dark text reads as iOS/macOS segmented-
+     control selection on both navy and charcoal. */
+  background: var(--accent-blue);
+  color: var(--bg-primary);
+  border-color: var(--accent-blue);
+  font-weight: 600;
 }
 
 .view-menu-item {
@@ -1822,24 +1985,23 @@ dialog {
   color: #ff6b81;
   background: color-mix(in srgb, var(--accent-red) 10%, transparent);
 }
-/* In sidebar mode (≥720px container), the theme toggle + Report a
-   Bug stack at the bottom of the sidebar column. margin-top: auto
+/* Sidebar layout is the default everywhere now (Casey 2026-06-08 —
+   "I prefer this to ALWAYS be the case"). The theme toggle + Report
+   a Bug stack at the bottom of the sidebar column. margin-top: auto
    on the theme toggle pushes itself + Report a Bug to the bottom
    together. The visual divider sits between them — border-top on
    Report a Bug — so the order reads:
        ... topic tabs ...
        Light Mode  ← above the line
        ───────────
-       🐞 Report a Bug
+       Report a Bug
 */
-@container settings (min-width: 720px) {
-  .settings-tab-bar > .settings-tabs-row > .settings-tab-theme-toggle {
-    margin-top: auto;
-  }
-  .settings-tab-bar > .settings-tabs-row > .settings-tab.settings-tab-action {
-    border-top: 1px solid var(--border-secondary);
-    padding-top: 10px;
-  }
+.settings-tab-bar > .settings-tabs-row > .settings-tab-theme-toggle {
+  margin-top: auto;
+}
+.settings-tab-bar > .settings-tabs-row > .settings-tab.settings-tab-action {
+  border-top: 1px solid var(--border-secondary);
+  padding-top: 10px;
 }
 
 .settings-search {
@@ -1899,82 +2061,81 @@ dialog {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Sidebar layout at ≥720px wide.
-   Tabs become a left rail; search pins above the content; the
-   Save/Cancel row sits under the scroll area on the right; the
-   version/links footer spans the full width.
+   Sidebar layout — always-on as of 2026-06-08 (Casey: "I prefer this
+   to ALWAYS be the case"). Used to be gated at ≥720px container width.
+   Tabs are a left rail; search pins above the content; the Save/Cancel
+   row sits under the scroll area on the right; the version/links
+   footer spans the full width.
 
    .settings-tab-bar is set to `display: contents` so the tabs row
    and the search input can land in different grid cells without
    restructuring the markup (they were originally siblings inside
    one tab-bar wrapper for the top-tab layout). */
-@container settings (min-width: 720px) {
-  .settings-shell {
-    display: grid;
-    grid-template-columns: 180px minmax(0, 1fr);
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "header  header"
-      "conn    conn"
-      "tabs    search"
-      "tabs    content"
-      "tabs    buttons"
-      "footer  footer";
-    column-gap: 20px;
-    row-gap: 4px;
-  }
-  .settings-shell > h3 {
-    grid-area: header;
-    margin-bottom: 6px;
-  }
-  .settings-shell > #settings-conn-status {
-    grid-area: conn;
-  }
-  .settings-shell > .settings-tab-bar {
-    display: contents;
-  }
-  .settings-tab-bar > .settings-tabs-row {
-    grid-area: tabs;
-    flex-direction: column;
-    border-bottom: none;
-    border-right: 2px solid var(--border-secondary);
-    align-self: stretch;
-    padding-top: 4px;
-  }
-  .settings-tab-bar > .settings-tabs-row > .settings-tab {
-    flex: 0 0 auto;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    border-bottom: none;
-    border-right: 2px solid transparent;
-    margin-bottom: 0;
-    margin-right: -2px;
-    border-radius: 4px 0 0 4px;
-  }
-  .settings-tab-bar > .settings-tabs-row > .settings-tab.active {
-    border-bottom-color: transparent;
-    border-right-color: var(--accent-blue);
-  }
-  .settings-tab-bar > .settings-search {
-    grid-area: search;
-    margin-top: 0;
-    margin-bottom: 6px;
-  }
-  .settings-shell > .settings-scroll-area {
-    grid-area: content;
-    min-height: 0;
-  }
-  .settings-shell > .dialog-buttons {
-    grid-area: buttons;
-    margin-top: 8px;
-  }
-  .settings-shell > .settings-footer {
-    grid-area: footer;
-    margin-top: 12px;
-    border-top: 1px solid var(--border-secondary);
-    padding-top: 10px;
-  }
+.settings-shell {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "header  header"
+    "conn    conn"
+    "tabs    search"
+    "tabs    content"
+    "tabs    buttons"
+    "footer  footer";
+  column-gap: 20px;
+  row-gap: 4px;
+}
+.settings-shell > h3 {
+  grid-area: header;
+  margin-bottom: 6px;
+}
+.settings-shell > #settings-conn-status {
+  grid-area: conn;
+}
+.settings-shell > .settings-tab-bar {
+  display: contents;
+}
+.settings-tab-bar > .settings-tabs-row {
+  grid-area: tabs;
+  flex-direction: column;
+  border-bottom: none;
+  border-right: 2px solid var(--border-secondary);
+  align-self: stretch;
+  padding-top: 4px;
+}
+.settings-tab-bar > .settings-tabs-row > .settings-tab {
+  flex: 0 0 auto;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: none;
+  border-right: 2px solid transparent;
+  margin-bottom: 0;
+  margin-right: -2px;
+  border-radius: 4px 0 0 4px;
+}
+.settings-tab-bar > .settings-tabs-row > .settings-tab.active {
+  border-bottom-color: transparent;
+  border-right-color: var(--accent-blue);
+}
+.settings-tab-bar > .settings-search {
+  grid-area: search;
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+.settings-shell > .settings-scroll-area {
+  grid-area: content;
+  min-height: 0;
+}
+.settings-shell > .dialog-buttons {
+  grid-area: buttons;
+  margin-top: 8px;
+}
+.settings-shell > .settings-footer {
+  grid-area: footer;
+  margin-top: 12px;
+  border-top: 1px solid var(--border-secondary);
+  padding-top: 10px;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -2208,9 +2369,9 @@ dialog {
   border-color: color-mix(in srgb, var(--accent-green) 40%, transparent);
 }
 .summary-pill.warn {
-  background: color-mix(in srgb, #f0a500 18%, transparent);
-  color: #f0a500;
-  border-color: color-mix(in srgb, #f0a500 40%, transparent);
+  background: color-mix(in srgb, var(--source-sota) 18%, transparent);
+  color: var(--source-sota);
+  border-color: color-mix(in srgb, var(--source-sota) 40%, transparent);
 }
 .summary-pill.bad {
   background: color-mix(in srgb, var(--accent-red) 18%, transparent);
@@ -2316,8 +2477,8 @@ dialog {
   background: color-mix(in srgb, var(--accent-green) 10%, transparent);
 }
 .share-rig-notice.warn {
-  border-left-color: #f0a500;
-  background: color-mix(in srgb, #f0a500 8%, transparent);
+  border-left-color: var(--source-sota);
+  background: color-mix(in srgb, var(--source-sota) 8%, transparent);
 }
 .share-rig-notice a {
   color: var(--accent-blue);
@@ -3707,8 +3868,8 @@ tr.wl-group-2 td:last-child {
 }
 
 .spot-cwspots {
-  border-left: 3px solid #ffd740;
-  background: color-mix(in srgb, #ffd740 6%, transparent);
+  border-left: 3px solid var(--source-net);
+  background: color-mix(in srgb, var(--source-net) 6%, transparent);
 }
 
 .spot-rbn {
@@ -3737,7 +3898,7 @@ tr.wl-group-2 td:last-child {
 }
 
 .spot-net {
-  border-left: 3px solid #ffd740;
+  border-left: 3px solid var(--source-net);
   background: rgba(255, 215, 64, 0.08);
 }
 
@@ -3761,7 +3922,7 @@ tr.wl-group-2 td:last-child {
 .source-badge-tiles { background: var(--source-tiles); color: #fff; }
 .source-badge-pskr { background: var(--source-pskr); color: #000; }
 .source-badge-net  { background: var(--source-net); color: #000; }
-.source-badge-cwspots { background: #ffd740; color: #000; }
+.source-badge-cwspots { background: var(--source-net); color: #000; }
 /* When the same call+freq is reported by multiple sources, the primary
    (highest-priority) badge keeps its full size and any follow-on badges
    render smaller next to it so the row clearly shows it was multi-source. */
@@ -3782,7 +3943,7 @@ tr.wl-group-2 td:last-child {
 }
 
 .potacat-respot {
-  border-left: 3px solid #e94560 !important;
+  border-left: 3px solid var(--accent-red) !important;
 }
 
 .donor-paw {
@@ -3803,7 +3964,7 @@ tr.wl-group-2 td:last-child {
   padding: 1px 3px;
   border-radius: 3px;
   background: #ff9800;
-  color: #1a1a2e;
+  color: var(--bg-primary);
   vertical-align: middle;
   cursor: default;
 }
@@ -3814,8 +3975,8 @@ tr.wl-group-2 td:last-child {
   font-weight: 700;
   padding: 1px 3px;
   border-radius: 3px;
-  background: #ffd740;
-  color: #1a1a2e;
+  background: var(--source-net);
+  color: var(--bg-primary);
   vertical-align: middle;
   cursor: default;
 }
@@ -3831,7 +3992,7 @@ tr.wl-group-2 td:last-child {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
-.spot-history-btn:hover { color: var(--accent-blue, #4fc3f7); }
+.spot-history-btn:hover { color: var(--accent-blue, var(--accent-blue)); }
 
 .spot-history-popover {
   position: fixed;
@@ -3843,7 +4004,7 @@ tr.wl-group-2 td:last-child {
      falling back to the hardcoded dark color, leaving the popover unreadable
      in light mode (N7FQT, 2026-05-03). Use --bg-secondary / --bg-primary
      which ARE themed so this swaps cleanly. */
-  background: var(--bg-secondary, #16213e);
+  background: var(--bg-secondary, var(--bg-secondary));
   color: var(--text-primary, #fff);
   border: 1px solid var(--border-primary, #2a3856);
   border-radius: 8px;
@@ -3862,8 +4023,8 @@ tr.wl-group-2 td:last-child {
   align-items: center;
   gap: 6px;
 }
-.spot-history-popover .sh-header strong { color: var(--accent-blue, #4fc3f7); }
-.spot-history-popover .sh-ref { color: var(--accent-green, #4ecca3); }
+.spot-history-popover .sh-header strong { color: var(--accent-blue, var(--accent-blue)); }
+.spot-history-popover .sh-ref { color: var(--accent-green, var(--accent-green)); }
 .spot-history-popover .sh-source {
   margin-left: auto;
   font-size: 9px;
@@ -3905,7 +4066,7 @@ tr.wl-group-2 td:last-child {
   align-items: baseline;
 }
 .spot-history-popover .sh-time { min-width: 70px; }
-.spot-history-popover .sh-spotter { color: var(--accent-blue, #4fc3f7); font-weight: 600; min-width: 70px; }
+.spot-history-popover .sh-spotter { color: var(--accent-blue, var(--accent-blue)); font-weight: 600; min-width: 70px; }
 .spot-history-popover .sh-fm { margin-left: auto; font-family: monospace; color: var(--text-tertiary, #888); }
 .spot-history-popover .sh-comments {
   font-size: 12px;
@@ -3947,7 +4108,7 @@ tr.wl-group-2 td:last-child {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #e94560;
+  background: var(--accent-red);
 }
 
 .conn-pill.connected .conn-dot {
@@ -3955,7 +4116,7 @@ tr.wl-group-2 td:last-child {
 }
 
 .conn-pill.syncing .conn-dot {
-  background: var(--accent-blue, #42a5f5);
+  background: var(--accent-blue, var(--source-llota));
   animation: cloud-pulse 1s ease-in-out infinite;
 }
 
@@ -4018,12 +4179,127 @@ tr.wl-group-2 td:last-child {
   margin-top: 0;
 }
 
+/* Settings → Display → "Dark variant" radio group. Indented under the
+   Dark/Light switch as a sub-option. */
+.dark-variant-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 8px 28px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.dark-variant-label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.radio-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.radio-inline input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent-blue);
+}
+.dark-variant-sub {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .settings-footer {
   text-align: center;
   margin-top: 16px;
   font-size: 12px;
   color: var(--text-tertiary);
   flex-shrink: 0;
+}
+
+/* Settings footer two-column layout. Left ~40%: ECHOCAT promo +
+   download badges. Right ~60%: existing version / coffee / links
+   cluster, right-aligned so the dialog edge anchors it. Casey
+   2026-06-08 ("badges to the left of the bottom bar"). */
+.settings-footer-cols {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  column-gap: 16px;
+  align-items: center;
+  text-align: left;
+}
+.settings-footer-left {
+  text-align: left;
+}
+.settings-footer-right {
+  text-align: center;
+}
+.settings-footer-right .settings-links {
+  justify-content: center;
+}
+
+/* ECHOCAT mobile-app promo — left column of the Settings footer.
+   Generic CSS-styled CTA buttons (black pill, two-line label) — not
+   the trademarked Apple/Google badge artwork. If you want to swap to
+   official badges later, see assets/README-app-badges.md for download
+   URLs and the markup change required. */
+.settings-echocat-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  letter-spacing: 0.2px;
+}
+.settings-echocat-badges {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+.settings-echocat-badge {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 150px;
+  padding: 6px 14px;
+  background: #000;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 6px;
+  text-decoration: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.settings-echocat-badge:hover {
+  transform: translateY(-1px);
+  border-color: #555;
+  text-decoration: none;
+}
+.settings-echocat-badge-sub {
+  font-size: 9px;
+  opacity: 0.85;
+  letter-spacing: 0.3px;
+}
+.settings-echocat-badge-main {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.settings-echocat-badge-disabled {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
+.settings-echocat-badge-disabled:hover {
+  transform: none;
+  border-color: #333;
 }
 
 .settings-version {
@@ -4040,7 +4316,7 @@ tr.wl-group-2 td:last-child {
 }
 
 .settings-coffee a {
-  color: #f0a500;
+  color: var(--source-sota);
 }
 
 .settings-links {
@@ -4176,7 +4452,7 @@ tr.wl-group-2 td:last-child {
   font-size: 12px;
   color: #8a8a9a;
 }
-.flex-status.connected { color: #4ecca3; }
+.flex-status.connected { color: var(--accent-green); }
 
 #flex-config summary {
   cursor: pointer;
@@ -4414,7 +4690,7 @@ tr.wl-group-2 td:last-child {
 
 /* Net editor panel (mirrors rig editor) */
 #net-editor {
-  border: 1px solid #ffd740;
+  border: 1px solid var(--source-net);
   border-radius: 4px;
   padding: 12px;
   margin-top: 8px;
@@ -4422,7 +4698,7 @@ tr.wl-group-2 td:last-child {
 }
 
 #net-editor h4 {
-  color: #ffd740;
+  color: var(--source-net);
   margin-bottom: 10px;
   font-size: 13px;
 }
@@ -5218,7 +5494,7 @@ tr.wl-group-2 td:last-child {
 
 .bearing-clickable {
   cursor: pointer;
-  color: var(--accent-blue, #4fc3f7);
+  color: var(--accent-blue, var(--accent-blue));
 }
 
 .bearing-clickable:hover {
@@ -5226,7 +5502,7 @@ tr.wl-group-2 td:last-child {
 }
 
 .bearing-sent {
-  color: var(--accent-green, #4ecca3) !important;
+  color: var(--accent-green, var(--accent-green)) !important;
 }
 
 .log-cell {
@@ -5420,8 +5696,8 @@ tr.wl-group-2 td:last-child {
 
 .log-toast.warn {
   background: var(--tint-orange);
-  color: #f0a500;
-  border-color: #f0a500;
+  color: var(--source-sota);
+  border-color: var(--source-sota);
   animation: log-toast-fade-long 8s ease-in-out forwards;
 }
 
@@ -5645,13 +5921,13 @@ tr.wl-group-2 td:last-child {
 
 /* WSJT-X heard indicator — pulsing right border on decoded POTA activators */
 .wsjtx-heard {
-  border-right: 3px solid #4fc3f7;
+  border-right: 3px solid var(--accent-blue);
   animation: wsjtx-pulse 2s ease-in-out infinite;
 }
 
 @keyframes wsjtx-pulse {
-  0%, 100% { border-right-color: #4fc3f7; }
-  50% { border-right-color: #1a4080; }
+  0%, 100% { border-right-color: var(--accent-blue); }
+  50% { border-right-color: var(--bg-hover); }
 }
 
 /* New park indicator — green left border on POTA spots for unworked parks */
@@ -5878,7 +6154,7 @@ tr.wl-group-2 td:last-child {
 .cat-popover-wsjtx-warning {
   margin: 4px 8px 8px 8px;
   padding: 6px 8px;
-  border-left: 3px solid #f0a500;
+  border-left: 3px solid var(--source-sota);
   background: rgba(240, 165, 0, 0.10);
   color: #ffd47a;
   font-size: 11px;
@@ -6009,13 +6285,13 @@ tr.wl-group-2 td:last-child {
 }
 
 .rig-btn-danger {
-  color: #e94560;
+  color: var(--accent-red);
 }
 
 .rig-btn-danger:hover {
-  background: #e94560;
+  background: var(--accent-red);
   color: #fff;
-  border-color: #e94560;
+  border-color: var(--accent-red);
 }
 
 .rig-filter-presets {
@@ -6070,7 +6346,7 @@ tr.wl-group-2 td:last-child {
 
 .rig-tab-btn.active {
   color: var(--text-primary);
-  border-bottom: 2px solid #4ecca3;
+  border-bottom: 2px solid var(--accent-green);
 }
 
 .rig-tab-panel.hidden {
@@ -6150,8 +6426,8 @@ tr.wl-group-2 td:last-child {
 }
 
 .rig-cmd-value.rig-cmd-modified {
-  border-color: #f0a500;
-  color: #f0a500;
+  border-color: var(--source-sota);
+  color: var(--source-sota);
 }
 
 .rig-cmd-send {
@@ -6356,7 +6632,7 @@ tr.wl-group-2 td:last-child {
   flex-shrink: 0;
 }
 .dx-command-bar.hidden { display: none; }
-.dx-command-label { color: #e040fb; font-weight: 600; white-space: nowrap; font-size: 12px; }
+.dx-command-label { color: var(--source-dxc); font-weight: 600; white-space: nowrap; font-size: 12px; }
 .dx-command-node { font-size: 12px; max-width: 120px; }
 .dx-command-field { font-size: 12px; font-family: monospace; }
 .dx-spot-call { width: 100px; }
@@ -6377,7 +6653,7 @@ tr.wl-group-2 td:last-child {
   animation: cat-pop 4.5s ease-in-out forwards;
 }
 .cat-speech {
-  background: #1a1a2e;
+  background: var(--bg-primary);
   border: 2px solid var(--accent-green);
   border-radius: 12px;
   padding: 8px 14px;
@@ -6567,14 +6843,14 @@ tr.wl-group-2 td:last-child {
 .activator-idle-msg p { text-align: center; }
 
 .act-log-dupe {
-  color: #f0a500;
+  color: var(--source-sota);
   font-size: 11px;
   margin-left: 4px;
   cursor: help;
 }
 
 .act-log-p2p {
-  color: #4fc3f7;
+  color: var(--accent-blue);
   font-size: 10px;
   font-weight: 700;
   margin-left: 4px;
@@ -6665,7 +6941,7 @@ tr.wl-group-2 td:last-child {
   border-radius: 4px;
   text-transform: uppercase;
 }
-#activator-hunter-park:focus { border-color: #4fc3f7; outline: none; }
+#activator-hunter-park:focus { border-color: var(--accent-blue); outline: none; }
 #activator-hunter-park::placeholder { color: var(--text-tertiary); font-size: 11px; }
 
 /* Export choice dialog */
@@ -7370,9 +7646,9 @@ body.activator-rbn-on #rbn-view {
 .directory-tab:first-child { border-radius: 4px 0 0 4px; }
 .directory-tab:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .directory-tab.active {
-  background: var(--accent-blue, #4fc3f7);
+  background: var(--accent-blue, var(--accent-blue));
   color: #fff;
-  border-color: var(--accent-blue, #4fc3f7);
+  border-color: var(--accent-blue, var(--accent-blue));
 }
 .directory-search {
   background: var(--bg-primary);
@@ -7447,13 +7723,13 @@ body.activator-rbn-on #rbn-view {
   border-radius: 50%;
   background: var(--text-tertiary);
 }
-.dir-status-dot.on-air { background: #4ecca3; }
+.dir-status-dot.on-air { background: var(--accent-green); }
 .dir-action-col { width: 55px; text-align: center; }
 .dir-add-btn {
   background: none;
-  border: 1px solid var(--accent-blue, #4fc3f7);
+  border: 1px solid var(--accent-blue, var(--accent-blue));
   border-radius: 3px;
-  color: var(--accent-blue, #4fc3f7);
+  color: var(--accent-blue, var(--accent-blue));
   font-size: 11px;
   cursor: pointer;
   padding: 2px 8px;
@@ -7461,17 +7737,17 @@ body.activator-rbn-on #rbn-view {
 .dir-add-btn:hover { background: rgba(79, 195, 247, 0.15); }
 .dir-remove-btn {
   background: none;
-  border: 1px solid #4ecca3;
+  border: 1px solid var(--accent-green);
   border-radius: 3px;
-  color: #4ecca3;
+  color: var(--accent-green);
   font-size: 11px;
   cursor: pointer;
   padding: 2px 8px;
   white-space: nowrap;
 }
 .dir-remove-btn:hover {
-  border-color: #e94560;
-  color: #e94560;
+  border-color: var(--accent-red);
+  color: var(--accent-red);
   background: rgba(233, 69, 96, 0.12);
 }
 .dir-added-label {
@@ -7508,12 +7784,12 @@ body.activator-rbn-on #rbn-view {
   color: var(--text-secondary);
 }
 .dir-suggest-link a {
-  color: var(--accent-blue, #4fc3f7);
+  color: var(--accent-blue, var(--accent-blue));
   text-decoration: none;
 }
 .dir-suggest-link a:hover { text-decoration: underline; }
 .dir-name-link {
-  color: var(--accent-blue, #4fc3f7);
+  color: var(--accent-blue, var(--accent-blue));
   text-decoration: none;
   cursor: pointer;
 }
@@ -7607,7 +7883,7 @@ body.activator-rbn-on #rbn-view {
 
 .directory-view-table tbody tr.dirv-on-air {
   background: rgba(78, 204, 163, 0.12);
-  border-left: 3px solid var(--accent-green, #4ecca3);
+  border-left: 3px solid var(--accent-green, var(--accent-green));
 }
 
 .directory-view-table tbody tr.dirv-on-air:hover {
@@ -7616,7 +7892,7 @@ body.activator-rbn-on #rbn-view {
 
 .directory-view-table tbody tr.dirv-upcoming {
   background: rgba(240, 165, 0, 0.10);
-  border-left: 3px solid var(--accent-orange, #f0a500);
+  border-left: 3px solid var(--accent-orange, var(--source-sota));
 }
 
 .directory-view-table tbody tr.dirv-upcoming:hover {
@@ -7692,12 +7968,12 @@ body.activator-rbn-on #rbn-view {
 }
 
 .dirv-status-badge.live {
-  background: var(--accent-green, #4ecca3);
+  background: var(--accent-green, var(--accent-green));
   color: #000;
 }
 
 .dirv-status-badge.soon {
-  background: var(--accent-orange, #f0a500);
+  background: var(--accent-orange, var(--source-sota));
   color: #000;
 }
 
@@ -7716,7 +7992,7 @@ body.activator-rbn-on #rbn-view {
 }
 
 .dirv-next-countdown.live {
-  color: var(--accent-green, #4ecca3);
+  color: var(--accent-green, var(--accent-green));
   font-weight: 600;
 }
 
@@ -7821,9 +8097,9 @@ body.activator-rbn-on #rbn-view {
 }
 .jtcat-band-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .jtcat-band-btn.active {
-  background: var(--accent-green, #4ecca3);
+  background: var(--accent-green, var(--accent-green));
   color: #fff;
-  border-color: var(--accent-green, #4ecca3);
+  border-color: var(--accent-green, var(--accent-green));
   font-weight: 700;
 }
 
@@ -7847,7 +8123,7 @@ body.activator-rbn-on #rbn-view {
 }
 
 .jtcat-ptt-mode.vox {
-  background: var(--accent-orange, #f0a500);
+  background: var(--accent-orange, var(--source-sota));
   color: #000;
 }
 
@@ -7873,8 +8149,8 @@ body.activator-rbn-on #rbn-view {
   border-radius: 3px;
   font-weight: bold;
 }
-.jtcat-cycle.jtcat-slot-even { color: #4fc3f7; }
-.jtcat-cycle.jtcat-slot-odd { color: #f0a500; }
+.jtcat-cycle.jtcat-slot-even { color: var(--accent-blue); }
+.jtcat-cycle.jtcat-slot-odd { color: var(--source-sota); }
 
 .jtcat-countdown {
   font-family: monospace;
@@ -7997,9 +8273,9 @@ body.activator-rbn-on #rbn-view {
   cursor: pointer;
 }
 .jtcat-filter-btn.active {
-  background: var(--accent-green, #4ecca3);
+  background: var(--accent-green, var(--accent-green));
   color: #fff;
-  border-color: var(--accent-green, #4ecca3);
+  border-color: var(--accent-green, var(--accent-green));
 }
 
 .jtcat-decode-list {
@@ -8114,8 +8390,8 @@ body.activator-rbn-on #rbn-view {
 .jtcat-halt-btn { color: var(--accent-red); border-color: var(--accent-red); }
 .jtcat-halt-btn:hover { background: var(--accent-red); color: #fff; }
 
-.jtcat-tune-btn { color: var(--accent-orange, #f0a500); border-color: var(--accent-orange, #f0a500); }
-.jtcat-tune-btn:hover { background: var(--accent-orange, #f0a500); color: #000; }
+.jtcat-tune-btn { color: var(--accent-orange, var(--source-sota)); border-color: var(--accent-orange, var(--source-sota)); }
+.jtcat-tune-btn:hover { background: var(--accent-orange, var(--source-sota)); color: #000; }
 .jtcat-tune-btn.active { background: var(--accent-red); color: #fff; border-color: var(--accent-red); animation: jtcat-tx-pulse 1s ease-in-out infinite; font-variant-numeric: tabular-nums; }
 
 .jtcat-tx-message {
@@ -8228,42 +8504,6 @@ body.activator-rbn-on #rbn-view {
   position: relative;
 }
 
-/* Station-info second line — DX info pulled from QRZ on callsign
-   input. flex-basis:100% forces it to wrap onto its own row inside
-   the banner-logger flex container. KM4CFT request 2026-05-26. */
-.bl-station-info {
-  flex-basis: 100%;
-  display: flex;
-  align-items: center;
-  gap: calc(10px * var(--bl-scale, 1));
-  font-size: calc(11px * var(--bl-scale, 1));
-  color: var(--text-secondary);
-  padding: calc(2px * var(--bl-scale, 1)) calc(2px * var(--bl-scale, 1));
-  border-top: 1px dashed var(--border-secondary);
-  margin-top: calc(2px * var(--bl-scale, 1));
-}
-.bl-station-info.hidden { display: none; }
-.bl-info-label {
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-size: calc(10px * var(--bl-scale, 1));
-  color: var(--text-tertiary);
-  font-weight: 600;
-}
-.bl-info-chip {
-  font-family: monospace;
-  white-space: nowrap;
-}
-.bl-info-chip:empty { display: none; }
-.bl-info-grid { color: var(--text-primary); }
-.bl-info-heading { color: var(--accent-green); font-weight: 700; }
-/* Empty-state hint when no callsign / QRZ has no grid. Same row, no
-   layout shift — the chips fill in next to it once data lands. */
-.bl-info-placeholder {
-  color: var(--text-tertiary);
-  font-style: italic;
-}
-.bl-info-placeholder.hidden { display: none; }
 .banner-logger.hidden { display: none; }
 
 /* Drag-to-resize strip on the top edge — W9TEF wanted a way to make the
@@ -8300,8 +8540,8 @@ main.banner-logger-active #event-progress-overlay {
 .bl-type { width: calc(72px * var(--bl-scale, 1)); font-size: calc(11px * var(--bl-scale, 1)); padding: calc(3px * var(--bl-scale, 1)) 2px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 3px; }
 .bl-ref { width: calc(80px * var(--bl-scale, 1)); text-transform: uppercase; }
 .bl-ref.hidden { display: none; }
-.bl-callsign { width: calc(100px * var(--bl-scale, 1)); text-transform: uppercase; }
-.bl-name { width: calc(200px * var(--bl-scale, 1)); color: var(--text-secondary); background: transparent; border-color: transparent; cursor: default; }
+.bl-callsign { width: calc(78px * var(--bl-scale, 1)); text-transform: uppercase; }
+.bl-name { width: calc(320px * var(--bl-scale, 1)); color: var(--text-secondary); background: transparent; border-color: transparent; cursor: default; }
 .bl-freq { width: calc(80px * var(--bl-scale, 1)); }
 .bl-notes { flex: 1; min-width: 60px; }
 .bl-respot-label { font-size: calc(11px * var(--bl-scale, 1)); color: var(--text-secondary); display: flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
@@ -8317,7 +8557,7 @@ main.banner-logger-active #event-progress-overlay {
   letter-spacing: 0.5px;
   padding: calc(2px * var(--bl-scale, 1)) calc(6px * var(--bl-scale, 1));
   border-radius: 3px;
-  background: var(--accent-red, #e94560);
+  background: var(--accent-red, var(--accent-red));
   color: #fff;
   cursor: help;
   user-select: none;
@@ -8345,17 +8585,17 @@ main.banner-logger-active #event-progress-overlay {
 
 /* ── WebSDR station picker (Settings → WebSDR → Browse...) ───────────── */
 #kiwi-picker-list .kiwi-station-row { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;margin:4px 0;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary,#0f1419);transition:background 0.1s; }
-#kiwi-picker-list .kiwi-station-row:hover { background:var(--bg-input,#16213e); }
-#kiwi-picker-list .kiwi-station-row.recommended { border-left:3px solid var(--accent-gold,#f0a500); }
+#kiwi-picker-list .kiwi-station-row:hover { background:var(--bg-input,var(--bg-secondary)); }
+#kiwi-picker-list .kiwi-station-row.recommended { border-left:3px solid var(--accent-gold,var(--source-sota)); }
 #kiwi-picker-list .kiwi-station-meta { flex:1;min-width:0; }
 #kiwi-picker-list .kiwi-station-name { font-weight:600;font-size:13px; }
-#kiwi-picker-list .kiwi-station-name .kiwi-recommend-badge { display:inline-block;font-size:10px;font-weight:normal;color:var(--accent-gold,#f0a500);margin-left:6px;padding:1px 6px;border:1px solid var(--accent-gold,#f0a500);border-radius:8px; }
+#kiwi-picker-list .kiwi-station-name .kiwi-recommend-badge { display:inline-block;font-size:10px;font-weight:normal;color:var(--accent-gold,var(--source-sota));margin-left:6px;padding:1px 6px;border:1px solid var(--accent-gold,var(--source-sota));border-radius:8px; }
 #kiwi-picker-list .kiwi-station-loc { font-size:11px;color:var(--text-muted);margin-top:2px; }
 #kiwi-picker-list .kiwi-station-tech { font-size:11px;color:var(--text-muted);font-family:monospace;margin-top:2px; }
 #kiwi-picker-list .kiwi-station-notes { font-size:11px;color:var(--text-muted);font-style:italic;margin-top:2px; }
 #kiwi-picker-list .kiwi-section { font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:14px 0 4px;padding-bottom:2px;border-bottom:1px solid var(--border); }
 #kiwi-picker-list .kiwi-section:first-child { margin-top:6px; }
-#kiwi-picker-list .kiwi-use-btn { background:var(--accent-blue,#4fc3f7);color:#000;border:none;padding:5px 12px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap; }
+#kiwi-picker-list .kiwi-use-btn { background:var(--accent-blue,var(--accent-blue));color:#000;border:none;padding:5px 12px;border-radius:3px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap; }
 #kiwi-picker-list .kiwi-use-btn:hover { background:#80d8ff; }
 #kiwi-picker-list .kiwi-empty { padding:20px;text-align:center;color:var(--text-muted);font-size:12px; }
 
@@ -8415,8 +8655,8 @@ main.banner-logger-active #event-progress-overlay {
   background:var(--accent-blue);opacity:0.6;
 }
 .cond-card.card-geo::before    { background:var(--accent-green); }
-.cond-card.card-bands::before  { background:#f0a500; }
-.cond-card.card-vhf::before    { background:#e040fb; }
+.cond-card.card-bands::before  { background:var(--source-sota); }
+.cond-card.card-vhf::before    { background:var(--source-dxc); }
 .cond-card.card-kp::before     { background:var(--accent-red); }
 .cond-card.card-alerts::before { background:var(--text-tertiary); }
 .cond-card h3 {
@@ -8629,7 +8869,7 @@ main.banner-logger-active #event-progress-overlay {
 }
 .contests-attribution .link,
 .contests-attribution a {
-  color: #4fc3f7;
+  color: var(--accent-blue);
   cursor: pointer;
   text-decoration: none;
 }
@@ -8663,6 +8903,95 @@ main.banner-logger-active #event-progress-overlay {
 }
 .contests-error { color: var(--accent-red); }
 
+/* Flat "What's Next" list — single chronological column. Replaces the
+   old card-grouped layout 2026-06-08 (Casey wanted a unified next-up
+   view with source toggles rather than per-category cards). The
+   .contest-card* + .contest-entry* rules below are no longer
+   referenced but kept as dead-code for now in case we revert. */
+#contests-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1000px;
+}
+/* Temporal bucket — "This weekend", "This week", etc. Header has a
+   sticky-feel separation; body holds the contest rows. */
+.contest-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.contest-bucket-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+.contest-bucket-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+}
+.contest-bucket-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-panel);
+  padding: 1px 7px;
+  border-radius: 8px;
+}
+.contest-bucket-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* LIVE bucket header gets the alert accent so it really pops. */
+.contest-bucket-live .contest-bucket-header {
+  border-bottom-color: var(--accent-red);
+}
+.contest-bucket-live .contest-bucket-label {
+  color: var(--accent-red);
+}
+.contest-row {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  padding: 10px 14px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  align-items: center;
+  transition: background 0.1s;
+}
+.contest-row:hover { background: var(--bg-hover); }
+.contest-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.contest-row-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.contest-row-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.contests-empty {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* (kept for legacy — unused after 2026-06-08 redesign) */
 #contests-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -8739,7 +9068,7 @@ main.banner-logger-active #event-progress-overlay {
   text-align: center;
 }
 .contest-pill-live {
-  background: #e94560;
+  background: var(--accent-red);
   color: #fff;
   animation: contest-live-blink 2s ease-in-out infinite;
 }
@@ -8748,8 +9077,8 @@ main.banner-logger-active #event-progress-overlay {
   50% { opacity: 0.7; }
 }
 .contest-pill-imminent {
-  background: #f0a500;
-  color: #1a1a2e;
+  background: var(--source-sota);
+  color: var(--bg-primary);
 }
 .contest-pill-soon {
   background: var(--bg-primary);
@@ -8833,7 +9162,7 @@ main.banner-logger-active #event-progress-overlay {
   background: var(--bg-primary);
   border: 1px solid var(--border-secondary);
   border-radius: 4px;
-  color: #4fc3f7;
+  color: var(--accent-blue);
   text-decoration: none;
   font-size: 12px;
   text-align: center;

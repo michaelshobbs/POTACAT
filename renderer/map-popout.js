@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 /* map-popout.js — Self-contained Leaflet map for the POTACAT pop-out window */
 
 // --- Titlebar + Platform ---
@@ -483,11 +499,7 @@ window.api.onPopoutHome((data) => {
 });
 
 window.api.onPopoutTheme((theme) => {
-  if (theme === 'light') {
-    document.documentElement.setAttribute('data-theme', 'light');
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-  }
+  _applyPopoutTheme(theme);
 });
 
 window.api.onColorblindMode((enabled) => {
@@ -527,10 +539,11 @@ async function init() {
     distUnit = settings.distUnit || 'mi';
     enableLogging = !!settings.enableLogging;
 
-    // Apply theme
-    if (settings.lightMode) {
-      document.documentElement.setAttribute('data-theme', 'light');
-    }
+    // Apply theme + dark variant
+    _applyPopoutTheme({
+      theme: settings.lightMode ? 'light' : 'dark',
+      variant: settings.darkVariant || 'navy',
+    });
 
     // Apply colorblind mode
     if (settings.colorblindMode) {

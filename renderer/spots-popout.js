@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 // Spots pop-out renderer — simplified spot table for activator mode
 // Receives enriched spot data from main process via IPC
 
@@ -20,7 +36,10 @@ document.getElementById('tb-close').addEventListener('click', () => window.api.c
 
 // --- Theme ---
 window.api.getSettings().then(s => {
-  if (s && s.lightMode) document.documentElement.setAttribute('data-theme', 'light');
+  _applyPopoutTheme({
+    theme: s && s.lightMode ? 'light' : 'dark',
+    variant: (s && s.darkVariant) || 'navy',
+  });
   distUnit = s?.distUnit || 'mi';
   // Update dist header
   const distTh = document.querySelector('th[data-sort="distance"]');
@@ -28,8 +47,7 @@ window.api.getSettings().then(s => {
 });
 
 window.api.onTheme(theme => {
-  if (theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
-  else document.documentElement.removeAttribute('data-theme');
+  _applyPopoutTheme(theme);
 });
 
 const CB_SOURCE_COLORS = {

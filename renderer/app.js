@@ -986,6 +986,15 @@ const setDisableAutoUpdate = document.getElementById('set-disable-auto-update');
 const setEnableTelemetry = document.getElementById('set-enable-telemetry');
 const setLightMode = document.getElementById('set-light-mode');
 setLightMode.addEventListener('change', () => applyTheme(setLightMode.checked));
+// Dark sub-variant — live preview on radio change. Save still happens
+// in the Settings save handler; this just paints immediately so the user
+// can A/B charcoal vs navy without committing.
+document.querySelectorAll('input[name="set-dark-variant"]').forEach((r) => {
+  r.addEventListener('change', () => {
+    const v = document.querySelector('input[name="set-dark-variant"]:checked');
+    if (v) applyTheme(setLightMode.checked, v.value);
+  });
+});
 const setEnableQrz = document.getElementById('set-enable-qrz');
 const qrzConfig = document.getElementById('qrz-config');
 const setQrzUsername = document.getElementById('set-qrz-username');
@@ -1418,8 +1427,24 @@ function watchlistHasCallsign(rules, callsign) {
   return false;
 }
 
-function applyTheme(light) {
+// Current dark sub-variant. Read by applyTheme() when the user hasn't
+// passed an explicit variant arg — keeps existing two-arg-less call
+// sites (welcome screen, quick light toggle) working without a thread
+// of plumbing. Updated when settings load OR the variant radio changes.
+let _currentDarkVariant = 'navy';
+
+function applyTheme(light, darkVariant) {
   document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+  if (darkVariant !== undefined) _currentDarkVariant = darkVariant;
+  // data-dark-variant is only set when in dark mode AND non-default.
+  // Removing it when light or navy keeps the attribute set minimal and
+  // means the CSS [data-dark-variant="charcoal"] block can be a single
+  // override without :not() guards.
+  if (!light && _currentDarkVariant && _currentDarkVariant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', _currentDarkVariant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
 }
 
 async function loadPrefs() {
@@ -1448,7 +1473,7 @@ async function loadPrefs() {
       quickShowMeter.checked = meterBoxVisible;
     }
   }
-  applyTheme(settings.lightMode === true);
+  applyTheme(settings.lightMode === true, settings.darkVariant || 'navy');
   applyColorblindMode(settings.colorblindMode === true);
   applyWcagMode(settings.wcagMode === true);
   grid = settings.grid || '';
@@ -2841,51 +2866,27 @@ function _blCardinal(brg) {
 }
 
 function _blRenderStationInfo(info, callsign) {
-  // Always-visible model (Casey 2026-06-04). Swaps between a
-  // placeholder hint and the grid/distance/heading chips. Location
-  // is intentionally omitted — the Name field already shows it.
+  // Single-line composite: "Name | Grid | Distance | Heading" rendered
+  // into the bl-name input (Casey 2026-06-06 — collapsed the old
+  // two-line layout). Empty fields are dropped from the join so a
+  // station with no QRZ name still reads cleanly as "FN20 | 97mi | 92°".
   //
   // Coordinate source priority (Casey 2026-06-04: QRZ alone misses
   // too many ops; the spot table shows a grid because it falls back
   // to lat/lon from POTA / cty.dat. Mirror that here):
   //   1. QRZ grid                            (cleanest, when QRZ has it)
   //   2. Active spot's lat/lon → grid        (most live POTA / SOTA / cluster spots have this)
-  //   3. cty.dat entity centroid via QRZ     (last resort; not yet wired)
-  const placeholder = document.getElementById('bl-info-placeholder');
-  const gridEl = document.getElementById('bl-info-grid');
-  const distEl = document.getElementById('bl-info-distance');
-  const hdgEl = document.getElementById('bl-info-heading');
-  if (!placeholder || !gridEl || !distEl || !hdgEl) return;
+  if (!blName) return;
 
-  const setChips = (grid, dist, hdg) => {
-    gridEl.textContent = grid || '';
-    distEl.textContent = dist || '';
-    hdgEl.textContent = hdg || '';
-  };
-  const showPlaceholder = (msg) => {
-    placeholder.textContent = msg;
-    placeholder.classList.remove('hidden');
-    setChips('', '', '');
-  };
-  const hidePlaceholder = () => {
-    placeholder.classList.add('hidden');
-  };
-
-  if (!info && !callsign) {
-    showPlaceholder('Type a callsign to see grid, distance, and heading.');
-    return;
-  }
+  // Name part — drop the " · location" tail; the location chips below
+  // carry that load now (and Casey's spec is name-only here).
+  const name = info ? qrzDisplayName(info) : '';
 
   // Resolve (lat, lon, grid) from the best source we have.
   let theirGrid = info && info.grid ? String(info.grid).trim().toUpperCase() : '';
   let them = theirGrid ? gridToLatLonLocal(theirGrid) : null;
   let gridSource = them ? 'qrz' : '';
 
-  // Fallback: look up the callsign in the current allSpots and use
-  // its lat/lon. Match on raw call AND on the suffix-stripped form
-  // (so "K3SBP/P" finds "K3SBP"). The spot's lat/lon usually points
-  // at the park / cty.dat centroid, which is the right location to
-  // turn a beam at for the contact.
   if (!them && callsign && typeof allSpots !== 'undefined' && Array.isArray(allSpots)) {
     const wanted = callsign.toUpperCase();
     const base = wanted.split('/')[0];
@@ -2895,8 +2896,6 @@ function _blRenderStationInfo(info, callsign) {
     });
     if (match && typeof match.lat === 'number' && typeof match.lon === 'number') {
       them = { lat: match.lat, lon: match.lon };
-      // Derive a 6-char grid from the spot's lat/lon so the chip
-      // still reads as a locator rather than a blank.
       try {
         const g = latLonToGridLocal(match.lat, match.lon);
         if (g) theirGrid = g.toUpperCase();
@@ -2905,41 +2904,33 @@ function _blRenderStationInfo(info, callsign) {
     }
   }
 
-  if (!them) {
-    // Nothing usable from any source.
-    if (info) {
-      showPlaceholder('No grid or location data for this callsign yet.');
-    } else {
-      showPlaceholder('Looking up ' + (callsign || 'callsign') + '…');
-    }
-    return;
-  }
+  // Casey's spec example was 4-char grid ("FM20"). The 6-char form is
+  // still computed for accuracy but trimmed for display — the extra
+  // sub-square is noise in the banner.
+  const gridShort = theirGrid ? theirGrid.slice(0, 4) : '';
 
-  // Operator's QTH lives in the module-scope `grid` var (loaded by
-  // loadPrefs from settings.grid). The renderer has no module-scope
-  // `settings` object — fetching it on every keystroke would be
-  // wasteful, and loadPrefs keeps `grid` + `distUnit` fresh.
-  const myGrid = (typeof grid === 'string' && grid) || '';
-  const me = myGrid ? gridToLatLonLocal(myGrid) : null;
   let distTxt = '';
   let hdgTxt = '';
-  if (me) {
-    const useMiles = (typeof distUnit === 'string' ? distUnit : 'mi') !== 'km';
-    const d = Math.round(_blHaversine(me.lat, me.lon, them.lat, them.lon, useMiles));
-    distTxt = d.toLocaleString() + (useMiles ? ' mi' : ' km');
-    const b = Math.round(_blBearingDeg(me.lat, me.lon, them.lat, them.lon));
-    hdgTxt = b + '° ' + _blCardinal(b);
+  if (them) {
+    const myGrid = (typeof grid === 'string' && grid) || '';
+    const me = myGrid ? gridToLatLonLocal(myGrid) : null;
+    if (me) {
+      const useMiles = (typeof distUnit === 'string' ? distUnit : 'mi') !== 'km';
+      const d = Math.round(_blHaversine(me.lat, me.lon, them.lat, them.lon, useMiles));
+      distTxt = d.toLocaleString() + (useMiles ? 'mi' : 'km');
+      const b = Math.round(_blBearingDeg(me.lat, me.lon, them.lat, them.lon));
+      hdgTxt = b + '°';
+    }
   }
 
-  // Annotate the grid chip's title attribute with the source so a
-  // curious operator can see WHERE we got it from (without cluttering
-  // the visible row).
-  gridEl.title = gridSource === 'spot'
-    ? 'Derived from spot location (park / cty.dat centroid)'
-    : (gridSource === 'qrz' ? 'From QRZ profile' : '');
+  const parts = [name, gridShort, distTxt, hdgTxt].filter(Boolean);
+  blName.value = parts.join(' | ');
 
-  hidePlaceholder();
-  setChips(theirGrid, distTxt, hdgTxt);
+  // Source hint on hover — keeps the "where did this grid come from?"
+  // affordance from the old chips without burning visible real estate.
+  blName.title = gridSource === 'spot'
+    ? 'Grid derived from spot location (park / cty.dat centroid)'
+    : (gridSource === 'qrz' ? 'Grid from QRZ profile' : '');
 }
 
 blCallsign.addEventListener('input', () => {
@@ -2960,17 +2951,13 @@ blCallsign.addEventListener('input', () => {
   blLookupTimer = setTimeout(async () => {
     const cached = qrzData.get(cs.split('/')[0]);
     if (cached) {
-      blName.value = qrzNameAndLocation(cached);
       _blRenderStationInfo(cached, cs);
       return;
     }
     try {
       const result = await window.api.qrzLookup(cs);
       if (blCallsign.value.trim().toUpperCase() !== cs) return; // stale
-      if (result) {
-        qrzData.set(cs.split('/')[0], result);
-        blName.value = qrzNameAndLocation(result);
-      }
+      if (result) qrzData.set(cs.split('/')[0], result);
       // Pass result (possibly null) AND callsign so the spot-table
       // fallback runs even when QRZ has no record at all.
       _blRenderStationInfo(result, cs);
@@ -9666,20 +9653,20 @@ if (viewContestsBtn) viewContestsBtn.addEventListener('click', () => setView('co
 // with status pills for running/upcoming. Data drawn from
 // data/contests.json — sponsor-direct public materials only.
 const CONTESTS_CATEGORY_ORDER = [
-  { key: 'worldwide-dx',    label: '🌍 Worldwide DX' },
-  { key: 'north-american',  label: '🇺🇸 North American' },
-  { key: 'state-qso-party', label: '🗺️ State QSO Parties' },
-  { key: 'special-event',   label: '🏛️ Special Events' },
-  { key: 'operating-event', label: '🎯 Operating Events' },
-  { key: 'single-band',     label: '📡 Single-Band' },
-  { key: 'vhf-uhf',         label: '📶 VHF / UHF' },
-  { key: 'digital',         label: '💾 Digital' },
-  { key: 'weekly-sprint',   label: '⚡ Weekly Sprints' },
-  { key: 'monthly-qrp',     label: '🔋 QRP / Monthly' },
-  { key: 'monthly',         label: '📅 Monthly' },
-  { key: 'newcomer',        label: '🌱 Newcomer / YOTA' },
-  { key: 'pota-sota',       label: '🏞️ POTA / SOTA Events' },
-  { key: 'regional',        label: '🌐 Regional' },
+  { key: 'worldwide-dx',    label: 'Worldwide DX' },
+  { key: 'north-american',  label: 'North American' },
+  { key: 'state-qso-party', label: 'State QSO Parties' },
+  { key: 'special-event',   label: 'Special Events' },
+  { key: 'operating-event', label: 'Operating Events' },
+  { key: 'single-band',     label: 'Single-Band' },
+  { key: 'vhf-uhf',         label: 'VHF / UHF' },
+  { key: 'digital',         label: 'Digital' },
+  { key: 'weekly-sprint',   label: 'Weekly Sprints' },
+  { key: 'monthly-qrp',     label: 'QRP / Monthly' },
+  { key: 'monthly',         label: 'Monthly' },
+  { key: 'newcomer',        label: 'Newcomer / YOTA' },
+  { key: 'pota-sota',       label: 'POTA / SOTA Events' },
+  { key: 'regional',        label: 'Regional' },
 ];
 let contestsCache = null;
 let contestsRefreshTimer = null;
@@ -9714,8 +9701,109 @@ function _contestsRunningEndLabel(end, now) {
   return `${m}m left`;
 }
 
+// Persisted source filter. Default = all categories enabled. Keys are
+// the CONTESTS_CATEGORY_ORDER `key` values; value is bool. Loaded from
+// localStorage so the user's choice survives across launches.
+const CONTESTS_FILTER_LS_KEY = 'pota-cat-contests-sources-v1';
+function _contestsLoadFilter() {
+  try {
+    const raw = localStorage.getItem(CONTESTS_FILTER_LS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+function _contestsSaveFilter(map) {
+  try { localStorage.setItem(CONTESTS_FILTER_LS_KEY, JSON.stringify(map)); } catch {}
+}
+function _contestsCurrentFilter() {
+  const stored = _contestsLoadFilter() || {};
+  // Default any missing category to ON so newly-added categories aren't
+  // silently hidden after a sponsor-list update.
+  const out = {};
+  for (const { key } of CONTESTS_CATEGORY_ORDER) out[key] = stored[key] !== false;
+  return out;
+}
+
+function _contestsPopulateSourceMenu() {
+  const menu = document.getElementById('contests-source-menu');
+  const container = document.getElementById('contests-source-filter');
+  if (!menu || !container || menu.dataset.populated === '1') return;
+  const filter = _contestsCurrentFilter();
+  const items = [
+    `<label class="multi-dropdown-item"><input type="checkbox" value="__all__"> All</label>`,
+    ...CONTESTS_CATEGORY_ORDER.map(({ key, label }) =>
+      `<label class="multi-dropdown-item"><input type="checkbox" value="${key}"${filter[key] ? ' checked' : ''}> ${_contestsEscape(label)}</label>`
+    ),
+  ];
+  menu.innerHTML = items.join('');
+  menu.dataset.populated = '1';
+
+  // Button click toggles open; clicks inside menu don't bubble so the
+  // global outside-click closer (line ~7311) doesn't fire. Same pattern
+  // as the other multi-dropdowns (band, mode, spots).
+  const btn = container.querySelector('.multi-dropdown-btn');
+  if (btn) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.multi-dropdown.open').forEach((d) => {
+        if (d !== container) d.classList.remove('open');
+      });
+      container.classList.toggle('open');
+    });
+  }
+  menu.addEventListener('click', (e) => e.stopPropagation());
+
+  // "All" master-toggle: clicking it sets every category to the new state.
+  const allCb = menu.querySelector('input[value="__all__"]');
+  if (allCb) {
+    const syncAllState = () => {
+      const cbs = menu.querySelectorAll('input[type="checkbox"]:not([value="__all__"])');
+      const allOn = Array.from(cbs).every((c) => c.checked);
+      allCb.checked = allOn;
+    };
+    syncAllState();
+    allCb.addEventListener('change', () => {
+      const cbs = menu.querySelectorAll('input[type="checkbox"]:not([value="__all__"])');
+      cbs.forEach((c) => { c.checked = allCb.checked; });
+      _contestsSaveAndRerender();
+    });
+  }
+  menu.querySelectorAll('input[type="checkbox"]:not([value="__all__"])').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      // Keep the "All" master checkbox in sync with the actual state.
+      if (allCb) {
+        const cbs = menu.querySelectorAll('input[type="checkbox"]:not([value="__all__"])');
+        allCb.checked = Array.from(cbs).every((c) => c.checked);
+      }
+      _contestsSaveAndRerender();
+    });
+  });
+  _contestsUpdateSourceBtnLabel();
+}
+
+function _contestsUpdateSourceBtnLabel() {
+  const btn = document.querySelector('#contests-source-filter .multi-dropdown-text');
+  if (!btn) return;
+  const filter = _contestsCurrentFilter();
+  const enabled = CONTESTS_CATEGORY_ORDER.filter((c) => filter[c.key]).length;
+  const total = CONTESTS_CATEGORY_ORDER.length;
+  btn.textContent = enabled === total ? 'All' : enabled === 0 ? 'None' : `${enabled}/${total}`;
+}
+
+function _contestsSaveAndRerender() {
+  const menu = document.getElementById('contests-source-menu');
+  if (!menu) return;
+  const map = {};
+  menu.querySelectorAll('input[type="checkbox"]:not([value="__all__"])').forEach((cb) => {
+    map[cb.value] = cb.checked;
+  });
+  _contestsSaveFilter(map);
+  _contestsUpdateSourceBtnLabel();
+  _contestsRender();
+}
+
 async function renderContestsView() {
-  const host = document.getElementById('contests-cards');
+  const host = document.getElementById('contests-list');
   if (!host) return;
   if (!contestsCache) {
     host.innerHTML = '<div class="contests-loading">Loading contests…</div>';
@@ -9726,6 +9814,7 @@ async function renderContestsView() {
       return;
     }
   }
+  _contestsPopulateSourceMenu();
   _contestsRender();
   // Live tick: refresh status labels every 60s so countdowns stay current.
   if (contestsRefreshTimer) clearInterval(contestsRefreshTimer);
@@ -9739,53 +9828,124 @@ async function renderContestsView() {
   }, 60000);
 }
 
+// Temporal bucket for a contest. "This weekend" is upcoming Sat 00:00
+// — Sun 23:59 in the user's local time (if today is Sat/Sun, it starts
+// at midnight today so today + tomorrow read as "this weekend"). "Next
+// weekend" is the following Sat/Sun. "This week" / "Next week" are the
+// weekday slots in their respective ISO-ish weeks. "Later" is anything
+// beyond next weekend. LIVE outranks the calendar; Unscheduled at end.
+function _contestsBucket(c, now) {
+  const s = c._status;
+  if (s.kind === 'live') return BUCKETS.live;
+  if (s.kind === 'unscheduled' || !s.start) return BUCKETS.unscheduled;
+  const start = s.start;
+
+  // Local-time weekend anchors.
+  const day = now.getDay(); // 0=Sun .. 6=Sat
+  const inWeekendNow = (day === 0 || day === 6);
+  // "This weekend" window:
+  const thisWkStart = new Date(now);
+  if (inWeekendNow) {
+    // Already in the weekend → window started yesterday (Sat) or today (Sat/Sun).
+    thisWkStart.setDate(now.getDate() - (day === 0 ? 1 : 0));
+  } else {
+    // Next Saturday.
+    const daysToSat = (6 - day + 7) % 7;
+    thisWkStart.setDate(now.getDate() + daysToSat);
+  }
+  thisWkStart.setHours(0, 0, 0, 0);
+  const thisWkEnd = new Date(thisWkStart);
+  thisWkEnd.setDate(thisWkStart.getDate() + 1);    // Sunday
+  thisWkEnd.setHours(23, 59, 59, 999);
+
+  if (start >= thisWkStart && start <= thisWkEnd) return BUCKETS.thisWeekend;
+  if (start < thisWkStart) return BUCKETS.thisWeek;  // weekday before the weekend hits
+
+  const nextWkStart = new Date(thisWkStart.getTime() + 7 * 86400000);
+  const nextWkEnd = new Date(thisWkEnd.getTime() + 7 * 86400000);
+  if (start >= nextWkStart && start <= nextWkEnd) return BUCKETS.nextWeekend;
+  if (start < nextWkStart) return BUCKETS.nextWeek;  // weekday of the following week
+  return BUCKETS.later;
+}
+
+// Bucket definitions — key + label + display rank + CSS class.
+const BUCKETS = {
+  live:         { key: 'live',          label: 'Live now',                rank: 0, accent: true },
+  thisWeekend:  { key: 'this-weekend',  label: 'This weekend',            rank: 1 },
+  thisWeek:     { key: 'this-week',     label: 'This week',               rank: 2 },
+  nextWeekend:  { key: 'next-weekend',  label: 'Next weekend',            rank: 3 },
+  nextWeek:     { key: 'next-week',     label: 'Next week',               rank: 4 },
+  later:        { key: 'later',         label: 'Later',                   rank: 5 },
+  unscheduled:  { key: 'unscheduled',   label: 'Unscheduled / recurring', rank: 6 },
+};
+// Property names in BUCKETS, in display order. Each maps to .key for grouping.
+const BUCKET_NAMES = ['live', 'thisWeekend', 'thisWeek', 'nextWeekend', 'nextWeek', 'later', 'unscheduled'];
+
 function _contestsRender() {
-  const host = document.getElementById('contests-cards');
+  const host = document.getElementById('contests-list');
   if (!host || !contestsCache) return;
   const now = new Date();
   const showPast = document.getElementById('contests-show-past').checked;
+  const filter = _contestsCurrentFilter();
+  const catLabel = new Map(CONTESTS_CATEGORY_ORDER.map(({ key, label }) => [key, label]));
 
-  // Group by category, preserving each contest's status for sort.
-  const byCat = new Map();
+  // Flatten + tag with status & temporal bucket.
+  const rows = [];
   for (const c of contestsCache.contests) {
+    const cat = c.category || 'other';
+    if (filter[cat] === false) continue;
     const status = _contestsStatus(c, now);
-    if (!showPast && status.kind === 'unscheduled') {
-      // Unresolved-cadence entries still show — they're useful even without dates.
-    }
-    const entry = { ...c, _status: status };
-    const k = c.category || 'other';
-    if (!byCat.has(k)) byCat.set(k, []);
-    byCat.get(k).push(entry);
-  }
-  // Within each category: live first, then soon, then imminent, then by date, then unscheduled.
-  const kindRank = { live: 0, imminent: 1, soon: 2, unscheduled: 3 };
-  for (const arr of byCat.values()) {
-    arr.sort((a, b) => {
-      const ra = kindRank[a._status.kind] ?? 9;
-      const rb = kindRank[b._status.kind] ?? 9;
-      if (ra !== rb) return ra - rb;
-      const sa = a._status.start ? a._status.start.getTime() : Infinity;
-      const sb = b._status.start ? b._status.start.getTime() : Infinity;
-      return sa - sb;
-    });
+    if (!showPast && status.kind === 'unscheduled') continue;
+    const entry = { ...c, _status: status, _catLabel: catLabel.get(cat) || cat };
+    entry._bucket = _contestsBucket(entry, now);
+    rows.push(entry);
   }
 
-  // Render cards in CONTESTS_CATEGORY_ORDER; any unknown categories appended.
-  const html = [];
-  const seen = new Set();
-  for (const { key, label } of CONTESTS_CATEGORY_ORDER) {
-    if (!byCat.has(key)) continue;
-    seen.add(key);
-    html.push(_contestsCardHtml(label, byCat.get(key), now));
+  // LIVE bucket sorts DESC (freshest first); every other bucket sorts ASC.
+  // Casey: the freshest-running contest is the one users want to see first
+  // when they peek at the list mid-stream. Do not unify the sort direction —
+  // mobile makes the same exception. See docs/desktop-handoffs/contests-view.md
+  // §"Sort" (resolved 2026-06-08).
+  rows.sort((a, b) => {
+    if (a._bucket.rank !== b._bucket.rank) return a._bucket.rank - b._bucket.rank;
+    const sa = a._status.start ? a._status.start.getTime() : Infinity;
+    const sb = b._status.start ? b._status.start.getTime() : Infinity;
+    if (a._bucket.key === 'live') return sb - sa;
+    return sa - sb;
+  });
+
+  if (rows.length === 0) {
+    host.innerHTML = '<div class="contests-empty">No contests match the current filter.</div>';
+    return;
   }
-  for (const [key, arr] of byCat.entries()) {
-    if (seen.has(key)) continue;
-    html.push(_contestsCardHtml(key, arr, now));
+
+  // Group into bucket sections; render each header + its rows.
+  const byBucket = new Map();
+  for (const r of rows) {
+    if (!byBucket.has(r._bucket.key)) byBucket.set(r._bucket.key, []);
+    byBucket.get(r._bucket.key).push(r);
+  }
+  const html = [];
+  for (const name of BUCKET_NAMES) {
+    const b = BUCKETS[name];
+    const arr = byBucket.get(b.key);
+    if (!arr || arr.length === 0) continue;
+    html.push(`
+      <div class="contest-bucket${b.accent ? ' contest-bucket-live' : ''}">
+        <div class="contest-bucket-header">
+          <span class="contest-bucket-label">${b.label}</span>
+          <span class="contest-bucket-count">${arr.length}</span>
+        </div>
+        <div class="contest-bucket-body">
+          ${arr.map((c) => _contestsRowHtml(c, now)).join('')}
+        </div>
+      </div>
+    `);
   }
   host.innerHTML = html.join('');
 
-  // Wire entry click → drawer.
-  host.querySelectorAll('.contest-entry').forEach((el) => {
+  // Wire row click → drawer.
+  host.querySelectorAll('.contest-row').forEach((el) => {
     el.addEventListener('click', () => {
       const id = el.getAttribute('data-id');
       const c = contestsCache.contests.find((x) => x.id === id);
@@ -9794,26 +9954,23 @@ function _contestsRender() {
   });
 }
 
-function _contestsCardHtml(label, arr, now) {
-  const rows = arr.map((c) => {
-    const s = c._status;
-    const pillClass = `contest-pill contest-pill-${s.kind}`;
-    let pillText = s.label;
-    if (s.kind === 'live') pillText = `LIVE — ${_contestsRunningEndLabel(s.end, now)}`;
-    const modes = (c.modes || []).join(', ');
-    const sponsor = c.sponsor || '';
-    return `
-      <div class="contest-entry" data-id="${c.id}">
-        <span class="${pillClass}">${_contestsEscape(pillText)}</span>
-        <div class="contest-entry-name">${_contestsEscape(c.name)}</div>
-        <div class="contest-entry-meta">${_contestsEscape(modes)} · ${_contestsEscape(sponsor)}</div>
-      </div>
-    `;
-  }).join('');
+function _contestsRowHtml(c, now) {
+  const s = c._status;
+  const pillClass = `contest-pill contest-pill-${s.kind}`;
+  let pillText = s.label;
+  if (s.kind === 'live') pillText = `LIVE — ${_contestsRunningEndLabel(s.end, now)}`;
+  const modes = (c.modes || []).join(', ');
+  const sponsor = c.sponsor || '';
+  // Start time UTC alongside the relative label, so the user can plan
+  // their evening without doing the math.
+  const startStr = s.start ? _contestsFmtUtc(s.start) : '';
   return `
-    <div class="contest-card">
-      <div class="contest-card-header">${label} <span class="contest-card-count">${arr.length}</span></div>
-      <div class="contest-card-body">${rows}</div>
+    <div class="contest-row" data-id="${c.id}">
+      <span class="${pillClass}">${_contestsEscape(pillText)}</span>
+      <div class="contest-row-main">
+        <div class="contest-row-name">${_contestsEscape(c.name)}</div>
+        <div class="contest-row-meta">${_contestsEscape(c._catLabel)} · ${_contestsEscape(modes)}${sponsor ? ' · ' + _contestsEscape(sponsor) : ''}${startStr ? ' · ' + startStr : ''}</div>
+      </div>
     </div>
   `;
 }
@@ -11820,23 +11977,35 @@ function _updateThemeToggleLabel() {
   label.textContent = quickLightMode && quickLightMode.checked ? 'Light Mode' : 'Dark Mode';
 }
 
+// Theme payload for popouts. The wire shape is `{theme, variant}` —
+// popouts read both fields, set data-theme + data-dark-variant on
+// their <html>. Receivers also accept plain string for backward
+// compat (older popout builds that haven't been updated yet).
+function _popoutThemePayload() {
+  return {
+    theme: setLightMode.checked ? 'light' : 'dark',
+    variant: _currentDarkVariant || 'navy',
+  };
+}
+
 quickLightMode.addEventListener('change', async () => {
   const light = quickLightMode.checked;
   applyTheme(light);
   setLightMode.checked = light;
   _updateThemeToggleLabel();
-  if (popoutOpen) window.api.sendPopoutTheme(light ? 'light' : 'dark');
-  if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(light ? 'light' : 'dark');
-  window.api.logPopoutTheme(light ? 'light' : 'dark');
-  if (window.api.pairPopoutTheme) window.api.pairPopoutTheme(light ? 'light' : 'dark');
-  if (actmapPopoutOpen) window.api.actmapPopoutTheme(light ? 'light' : 'dark');
-  if (spotsPopoutOpen) window.api.sendSpotsPopoutTheme(light ? 'light' : 'dark');
-  if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(light ? 'light' : 'dark');
-  if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(light ? 'light' : 'dark');
-  window.api.sstvPopoutTheme(light ? 'light' : 'dark');
-  window.api.vfoPopoutTheme(light ? 'light' : 'dark');
-  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(light ? 'light' : 'dark');
-  window.api.sendBandspreadPopoutTheme(light ? 'light' : 'dark');
+  const p = _popoutThemePayload();
+  if (popoutOpen) window.api.sendPopoutTheme(p);
+  if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(p);
+  window.api.logPopoutTheme(p);
+  if (window.api.pairPopoutTheme) window.api.pairPopoutTheme(p);
+  if (actmapPopoutOpen) window.api.actmapPopoutTheme(p);
+  if (spotsPopoutOpen) window.api.sendSpotsPopoutTheme(p);
+  if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(p);
+  if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(p);
+  window.api.sstvPopoutTheme(p);
+  window.api.vfoPopoutTheme(p);
+  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(p);
+  window.api.sendBandspreadPopoutTheme(p);
   await window.api.saveSettings({ lightMode: light });
 });
 
@@ -12669,6 +12838,11 @@ async function openSettingsDialog(tab) {
   setDisableAutoUpdate.checked = s.disableAutoUpdate === true;
   setEnableTelemetry.checked = s.enableTelemetry === true;
   setLightMode.checked = s.lightMode === true;
+  // Mirror the dark sub-variant radio. Default 'navy' for legacy users
+  // who don't have the field yet; setting persists in settings.json.
+  const _dvVal = s.darkVariant || 'navy';
+  const _dvRadio = document.querySelector(`input[name="set-dark-variant"][value="${_dvVal}"]`);
+  if (_dvRadio) _dvRadio.checked = true;
   hamlibTestResult.textContent = '';
   hamlibTestResult.className = '';
   renderRigList(s.rigs || [], s.activeRigId || null);
@@ -12693,7 +12867,7 @@ async function openSettingsDialog(tab) {
 settingsCancel.addEventListener('click', async () => {
   // Revert theme to saved state on cancel
   const s = await window.api.getSettings();
-  applyTheme(s.lightMode === true);
+  applyTheme(s.lightMode === true, s.darkVariant || 'navy');
   settingsDialog.close();
 });
 
@@ -13050,6 +13224,10 @@ settingsSave.addEventListener('click', async () => {
   const disableAutoUpdate = setDisableAutoUpdate.checked;
   const telemetryEnabled = setEnableTelemetry.checked;
   const lightModeEnabled = setLightMode.checked;
+  // Dark sub-variant — radio "navy" vs "charcoal". Reads the checked
+  // radio; falls back to current value so missing UI doesn't reset it.
+  const darkVariantRadio = document.querySelector('input[name="set-dark-variant"]:checked');
+  const darkVariantVal = (darkVariantRadio && darkVariantRadio.value) || _currentDarkVariant || 'navy';
   const smartSdrSpotsEnabled = setSmartSdrSpots.checked;
   const smartSdrMaxAgeVal = parseInt(setSmartSdrMaxAge.value, 10) || 0;
   const smartSdrMaxSpotsVal = parseInt(setSmartSdrMaxSpots.value, 10) || 0;
@@ -13237,6 +13415,7 @@ settingsSave.addEventListener('click', async () => {
     disableAutoUpdate: disableAutoUpdate,
     enableTelemetry: telemetryEnabled,
     lightMode: lightModeEnabled,
+    darkVariant: darkVariantVal,
     panadapterSyncTable: setPanadapterSyncTable.checked,
     panadapterPota:      setPanadapterPota.checked,
     panadapterSota:      setPanadapterSota.checked,
@@ -13377,16 +13556,17 @@ settingsSave.addEventListener('click', async () => {
   defaultPower = defaultPowerVal;
   updateLoggingVisibility();
   updateBannerLoggerVisibility();
-  applyTheme(lightModeEnabled);
-  if (popoutOpen) window.api.sendPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (actmapPopoutOpen) window.api.actmapPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (spotsPopoutOpen) window.api.sendSpotsPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  window.api.sstvPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(lightModeEnabled ? 'light' : 'dark');
-  window.api.sendBandspreadPopoutTheme(lightModeEnabled ? 'light' : 'dark');
+  applyTheme(lightModeEnabled, darkVariantVal);
+  const _popoutTheme = { theme: lightModeEnabled ? 'light' : 'dark', variant: darkVariantVal };
+  if (popoutOpen) window.api.sendPopoutTheme(_popoutTheme);
+  if (qsoPopoutOpen) window.api.sendQsoPopoutTheme(_popoutTheme);
+  if (actmapPopoutOpen) window.api.actmapPopoutTheme(_popoutTheme);
+  if (spotsPopoutOpen) window.api.sendSpotsPopoutTheme(_popoutTheme);
+  if (clusterPopoutOpen) window.api.sendClusterPopoutTheme(_popoutTheme);
+  if (jtcatPopoutOpen) window.api.jtcatPopoutTheme(_popoutTheme);
+  window.api.sstvPopoutTheme(_popoutTheme);
+  if (window.api.conditionsPopoutTheme) window.api.conditionsPopoutTheme(_popoutTheme);
+  window.api.sendBandspreadPopoutTheme(_popoutTheme);
   enableDxcc = dxccEnabled;
   licenseClass = licenseClassVal;
   hideOutOfBand = hideOob;

@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 'use strict';
 
 // Bandspread pop-out renderer — horizontal strip showing spots on a single HF/VHF band
@@ -126,7 +142,7 @@ if (window.api.platform === 'darwin') document.body.classList.add('platform-darw
 
 // --- Theme + tune-blocked feedback ---
 window.api.onTheme((theme) => {
-  document.documentElement.setAttribute('data-theme', theme);
+  _applyPopoutTheme(theme);
   draw();
 });
 window.api.onTuneBlocked((msg) => {
@@ -935,7 +951,10 @@ ro.observe(wrap);
 // --- Bootstrap ---
 (async function init() {
   settings = await window.api.getSettings();
-  if (settings.lightMode) document.documentElement.setAttribute('data-theme', 'light');
+  _applyPopoutTheme({
+    theme: settings.lightMode ? 'light' : 'dark',
+    variant: settings.darkVariant || 'navy',
+  });
   licenseClass = settings.licenseClass || 'none';
   selectedBand = settings.bandspreadBand && BANDS[settings.bandspreadBand] ? settings.bandspreadBand : '20m';
   const savedScale = parseFloat(settings.bandspreadFontScale);

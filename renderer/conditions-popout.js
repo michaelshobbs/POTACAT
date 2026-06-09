@@ -1,3 +1,19 @@
+// Theme applier — handles both legacy string payloads ('light'/'dark')
+// and the v1.9+ {theme, variant} object form so older + newer senders
+// both work. Sets data-theme and (in charcoal dark variant only) the
+// data-dark-variant attribute on <html>.
+function _applyPopoutTheme(payload) {
+  const theme = typeof payload === 'string'
+    ? payload
+    : ((payload && payload.theme) || 'dark');
+  const variant = (payload && typeof payload === 'object' && payload.variant) || 'navy';
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark' && variant !== 'navy') {
+    document.documentElement.setAttribute('data-dark-variant', variant);
+  } else {
+    document.documentElement.removeAttribute('data-dark-variant');
+  }
+}
 // Conditions popout — standalone window showing solar + propagation.
 // Mirrors the data shape of the main `solar-data` IPC (hamqsl XML +
 // NOAA Kp history + SWPC alerts), and reuses the same theme tokens
@@ -38,7 +54,7 @@
   // Theme — hydrate from settings, then live updates
   // ---------------------------------------------------------------------
   function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+    _applyPopoutTheme(theme);
   }
   window.api.onTheme(applyTheme);
   window.api.getSettings().then((s) => {
