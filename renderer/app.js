@@ -2231,6 +2231,9 @@ async function openRigEditor(mode, rigId) {
       if (extAtuEl) extAtuEl.value = rig.externalAtu || '';
       if (extAtuWattsEl) extAtuWattsEl.value = rig.externalAtuWatts || 10;
       if (extAtuSecsEl) extAtuSecsEl.value = rig.externalAtuSeconds || 4;
+      // Per-rig Flex band→antenna map. Always rebuilt so editing a
+      // different rig doesn't show the previous rig's selections.
+      buildFlexBandAntennaMap(rig.flexBandAntennaMap || {});
     }
   } else {
     rigEditorTitle.textContent = 'Add Rig';
@@ -2241,6 +2244,7 @@ async function openRigEditor(mode, rigId) {
     if (fh) fh.value = '';
     setRadioType('flex');
     updateRadioSubPanels();
+    buildFlexBandAntennaMap({});
     await populateRigAudioDevices('', '');
   }
 
@@ -2338,6 +2342,9 @@ rigSaveBtn.addEventListener('click', async () => {
   const rigExternalAtuWatts = extAtuWattsEl ? Math.max(5, Math.min(25, parseInt(extAtuWattsEl.value, 10) || 10)) : 10;
   const rigExternalAtuSeconds = extAtuSecsEl ? Math.max(1, Math.min(15, parseFloat(extAtuSecsEl.value) || 4)) : 4;
 
+  // Per-rig Flex per-band antenna map (skipped silently for non-Flex
+  // rigs — empty map serializes as `{}`, no runtime impact).
+  const flexBandAntennaMap = getFlexBandAntennaMap();
   if (rigEditorMode === 'edit' && editingRigId) {
     const rig = currentRigs.find(r => r.id === editingRigId);
     if (rig) {
@@ -2352,6 +2359,7 @@ rigSaveBtn.addEventListener('click', async () => {
       rig.externalAtu = rigExternalAtu;
       rig.externalAtuWatts = rigExternalAtuWatts;
       rig.externalAtuSeconds = rigExternalAtuSeconds;
+      rig.flexBandAntennaMap = flexBandAntennaMap;
     }
   } else {
     const newRig = {
@@ -2367,6 +2375,7 @@ rigSaveBtn.addEventListener('click', async () => {
       externalAtu: rigExternalAtu,
       externalAtuWatts: rigExternalAtuWatts,
       externalAtuSeconds: rigExternalAtuSeconds,
+      flexBandAntennaMap,
     };
     currentRigs.push(newRig);
   }
@@ -3836,6 +3845,50 @@ setEnableN1mmUdp.addEventListener('change', () => {
 setEnableTgxl.addEventListener('change', () => {
   tgxlConfig.classList.toggle('hidden', !setEnableTgxl.checked);
 });
+
+// Flex per-band antenna map UI (lives inside the rig editor — per-rig
+// scope, not global, since each rig has its own antennas). Casey
+// 2026-06-09. The map is `{ '20m': { rx: 'ANT1', tx: 'ANT2' }, ... }`
+// stored on the rig profile as `rig.flexBandAntennaMap`. main.js's
+// getFlexBandAntenna(band) reads it on every Flex tuneSlice.
+const FLEX_BANDS = ['160m','80m','60m','40m','30m','20m','17m','15m','12m','10m','6m','4m','2m','70cm'];
+const FLEX_ANTENNAS = ['ANT1', 'ANT2', 'XVTR_A', 'XVTR_B'];
+function buildFlexBandAntennaMap(bandMap) {
+  const grid = document.getElementById('flex-band-antenna-map');
+  if (!grid) return;
+  // Clear everything below the static header row (first 3 children).
+  // The header (`""`, `RX`, `TX` spans) is preserved.
+  while (grid.children.length > 3) grid.removeChild(grid.lastChild);
+  for (const band of FLEX_BANDS) {
+    const label = document.createElement('span');
+    label.textContent = band;
+    label.style.textAlign = 'right';
+    label.style.color = 'var(--text-secondary)';
+    grid.appendChild(label);
+    for (const dir of ['rx', 'tx']) {
+      const sel = document.createElement('select');
+      sel.id = `flex-band-${band}-${dir}`;
+      sel.style.width = '100%';
+      sel.style.fontSize = '11px';
+      sel.innerHTML = '<option value="">—</option>' +
+        FLEX_ANTENNAS.map(a => `<option value="${a}">${a}</option>`).join('');
+      const saved = bandMap && bandMap[band] && bandMap[band][dir];
+      if (saved) sel.value = saved;
+      grid.appendChild(sel);
+    }
+  }
+}
+function getFlexBandAntennaMap() {
+  const map = {};
+  for (const band of FLEX_BANDS) {
+    const rxEl = document.getElementById(`flex-band-${band}-rx`);
+    const txEl = document.getElementById(`flex-band-${band}-tx`);
+    const rx = rxEl ? rxEl.value : '';
+    const tx = txEl ? txEl.value : '';
+    if (rx || tx) map[band] = { rx, tx };
+  }
+  return map;
+}
 
 // Antenna Genius band map UI
 const AG_BANDS = ['160m','80m','60m','40m','30m','20m','17m','15m','12m','10m','6m','4m','2m','70cm'];

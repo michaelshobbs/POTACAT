@@ -833,10 +833,30 @@ newQsoTypeChips.addEventListener('click', (e) => {
   if (newQsoSelectedType !== 'dx') newQsoRef.focus();
 });
 
+// Live rig frequency in kHz. Pushed by main on every cat-frequency
+// update (sendCatFrequency in main.js). Used to auto-fill the Freq
+// field on "+ New QSO" — N4DWJ 2026-06-09 ("cruising frequencies
+// looking for DX contacts, one less field to type per QSO").
+let _currentRigFreqKhz = null;
+if (window.api.onCatFrequency) {
+  window.api.onCatFrequency((hz) => {
+    if (typeof hz === 'number' && hz > 0) {
+      _currentRigFreqKhz = Math.round(hz / 1000);
+    }
+  });
+}
+
 newQsoBtn.addEventListener('click', () => {
   newQsoForm.classList.toggle('hidden');
   if (!newQsoForm.classList.contains('hidden')) {
     updateNewQsoTypeUI();
+    // Auto-fill freq with the rig's current frequency unless the user
+    // already typed something (manual edit wins). Only fires when we
+    // actually have a frequency cached — opening the form before the
+    // rig connects leaves the field empty to type into.
+    if (_currentRigFreqKhz && !newQsoFreq.value.trim()) {
+      newQsoFreq.value = String(_currentRigFreqKhz);
+    }
     newQsoCall.focus();
   }
 });

@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('api', {
   onSetSearch: (cb) => ipcRenderer.on('qso-popout-set-search', (_e, q) => cb(q)),
   onTheme: (cb) => ipcRenderer.on('qso-popout-theme', (_e, theme) => cb(theme)),
   onColorblindMode: (cb) => ipcRenderer.on('colorblind-mode', (_e, enabled) => cb(enabled)),
+  // Rig frequency push — used by "+ New QSO" to auto-fill the Freq field
+  // with the radio's current frequency (N4DWJ 2026-06-09).
+  onCatFrequency: (cb) => ipcRenderer.on('cat-frequency', (_e, hz) => cb(hz)),
   resolveCallsignLocations: (callsigns) => ipcRenderer.invoke('resolve-callsign-locations', callsigns),
   getPark: (ref) => ipcRenderer.invoke('get-park', ref),
   resendQsosToLogbook: (qsos) => ipcRenderer.invoke('resend-qsos-to-logbook', qsos),

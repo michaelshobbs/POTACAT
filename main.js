@@ -821,6 +821,24 @@ function getActiveRigModel() {
   return getModel(modelName, rigType);
 }
 
+// Per-band Flex antenna lookup for the currently active rig. Returns
+// `{ rx, tx }` from the rig's flexBandAntennaMap[band] entry, or null
+// when the user hasn't configured anything for that band (then we
+// leave the radio's current selection alone). Casey 2026-06-09 — feeds
+// the slice antenna call alongside every Flex tuneSlice.
+function getFlexBandAntenna(band) {
+  if (!band) return null;
+  const activeRig = (settings.rigs || []).find(r => r.id === settings.activeRigId);
+  const map = activeRig && activeRig.flexBandAntennaMap;
+  if (!map || typeof map !== 'object') return null;
+  const entry = map[band];
+  if (!entry || typeof entry !== 'object') return null;
+  const rx = entry.rx || '';
+  const tx = entry.tx || '';
+  if (!rx && !tx) return null;
+  return { rx, tx };
+}
+
 function getRigCapabilities(rigType) {
   // Try model-specific capabilities first
   const model = getActiveRigModel();
@@ -1160,6 +1178,10 @@ function sendCatFrequency(hz) {
   if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('cat-frequency', hz);
   if (sstvPopoutWin && !sstvPopoutWin.isDestroyed()) sstvPopoutWin.webContents.send('cat-frequency', hz);
   if (logPopoutWin && !logPopoutWin.isDestroyed()) logPopoutWin.webContents.send('cat-frequency', hz);
+  // Logbook popout caches this so "+ New QSO" can auto-fill the Freq
+  // field with the rig's current frequency. N4DWJ 2026-06-09 — cruising
+  // bands looking for DX wants one fewer field to type per QSO.
+  if (qsoPopoutWin && !qsoPopoutWin.isDestroyed()) qsoPopoutWin.webContents.send('cat-frequency', hz);
   // Bandspread expects kHz, not Hz, so it can draw the VFO cursor at the
   // right x-coordinate without needing CAT plumbing of its own.
   if (bandspreadPopoutWin && !bandspreadPopoutWin.isDestroyed()) {
@@ -12785,6 +12807,19 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
         ? 'DIGU' : (mode === 'DIGL' || mode === 'PKTLSB') ? 'DIGL'
         : (mode === 'CW' ? 'CW' : (mode === 'AM' ? 'AM' : (mode === 'FM' ? 'FM' : (mode === 'SSB' ? ssbSide : (mode === 'USB' ? 'USB' : (mode === 'LSB' ? 'LSB' : null))))));
       sendCatLog(`tune via SmartSDR API: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}->${flexMode} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
+      // Per-band antenna selection (rig.flexBandAntennaMap) — fires
+      // BEFORE the tune so the radio is already on the right antenna
+      // by the time the freq lands. Skipped silently when the user
+      // hasn't mapped this band, leaving the radio's current selection
+      // alone.
+      {
+        const _tuneBand = freqToBand(freqHz / 1e6);
+        const _antEntry = getFlexBandAntenna(_tuneBand);
+        if (_antEntry) {
+          smartSdr.setSliceAntenna(sliceIndex, _antEntry.rx, _antEntry.tx);
+          sendCatLog(`[Flex Ant] band=${_tuneBand} slice=${sliceIndex} rx=${_antEntry.rx || '-'} tx=${_antEntry.tx || '-'}`);
+        }
+      }
       smartSdr.tuneSlice(sliceIndex, freqMhz, flexMode, filterWidth);
       // Set or clear XIT on the slice. When the user has chosen VFO-shift mode,
       // we actively disable native slice XIT so offsets don't double up.
@@ -12827,6 +12862,17 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
     if (mode) _modeSuppressUntil = Date.now() + 2000;
     const _flexLabel = smartSdr.mode === 'self' ? 'Flex Direct' : 'Flex API (bound)';
     sendCatLog(`tune via ${_flexLabel}: slice=${sliceIndex} freq=${freqMhz.toFixed(6)}MHz mode=${mode}${flexMode && mode !== flexMode ? '->' + flexMode : ''} filter=${filterWidth}${useVfoShift ? ` (VFO shifted +${settings.cwXit}Hz for XIT)` : ''}`);
+    // Per-band antenna selection — same lookup as the SmartSDR-Win path
+    // above. Fires before tuneSlice so the antenna is already switched
+    // when the freq lands.
+    {
+      const _tuneBand = freqToBand(freqHz / 1e6);
+      const _antEntry = getFlexBandAntenna(_tuneBand);
+      if (_antEntry) {
+        smartSdr.setSliceAntenna(sliceIndex, _antEntry.rx, _antEntry.tx);
+        sendCatLog(`[Flex Ant] band=${_tuneBand} slice=${sliceIndex} rx=${_antEntry.rx || '-'} tx=${_antEntry.tx || '-'}`);
+      }
+    }
     smartSdr.tuneSlice(sliceIndex, freqMhz, flexMode, filterWidth);
     // Reflect the tune in the UI right away. Flex Direct has no CAT frequency
     // poll to echo the new VFO back, so the VFO popout / main window / ECHOCAT
@@ -14225,6 +14271,13 @@ app.whenReady().then(() => {
     qsoPopoutWin.webContents.on('did-finish-load', () => {
       if (win && !win.isDestroyed()) {
         win.webContents.send('qso-popout-status', true);
+      }
+      // Push current rig frequency immediately so "+ New QSO" can
+      // auto-fill the Freq field on the very first click — otherwise
+      // the user has to wait for the next cat-frequency tick (~1s) to
+      // populate the cache.
+      if (typeof _currentFreqHz === 'number' && _currentFreqHz > 0) {
+        qsoPopoutWin.webContents.send('cat-frequency', _currentFreqHz);
       }
     });
 

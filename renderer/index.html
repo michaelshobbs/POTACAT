@@ -1472,6 +1472,20 @@
             </label>
             <span class="help-text" style="display:block;">POTACAT tunes the radio directly over the API. This routes tuning through SmartSDR-Win's Kenwood CAT shim (TCP 5002&ndash;5005) instead &mdash; a fallback only, and SmartSDR must be running.</span>
           </details>
+          <!-- Per-band antenna selection. Sent to the radio via SmartSDR
+               `slice set <N> rxant=ANTx txant=ANTy` immediately before
+               every tune. Skipped for bands left blank. Casey 2026-06-09. -->
+          <details id="flex-antenna-map" style="margin-top:10px;">
+            <summary>Per-band antennas</summary>
+            <span class="help-text" style="display:block;margin-bottom:6px;">Select which antenna the Flex should use on each band. Sent automatically on every tune. Leave blank for bands where you want the radio's current selection unchanged. RX and TX are independent &mdash; useful for split antenna setups.</span>
+            <div id="flex-band-antenna-map" style="display:grid;grid-template-columns:50px 1fr 1fr;gap:2px 8px;align-items:center;font-size:12px;">
+              <!-- Header row -->
+              <span></span>
+              <span style="font-weight:600;color:var(--text-secondary);font-size:11px;">RX</span>
+              <span style="font-weight:600;color:var(--text-secondary);font-size:11px;">TX</span>
+              <!-- Per-band rows populated by buildFlexBandAntennaMap() -->
+            </div>
+          </details>
         </div>
         <label class="radio-label"><input type="radio" name="radio-type" value="tcpcat"> IP Radio (TCP CAT)</label>
         <div id="tcpcat-config" class="radio-sub hidden">
