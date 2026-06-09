@@ -8152,6 +8152,25 @@ body.activator-rbn-on #rbn-view {
 .jtcat-cycle.jtcat-slot-even { color: var(--accent-blue); }
 .jtcat-cycle.jtcat-slot-odd { color: var(--source-sota); }
 
+/* JTCAT RX-gain-low hint badge — appears in the audio strip when input
+   signal is present but post-gain level is too low for the decoder.
+   Amber color matches the existing warn semantic. cursor: help so the
+   tooltip is discoverable. Resolved chriskf0jfw 2026-06-09. */
+.jtcat-rx-low-hint {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
+  cursor: help;
+  white-space: nowrap;
+}
+.jtcat-rx-low-hint.hidden { display: none; }
+
 .jtcat-countdown {
   font-family: monospace;
   font-size: 13px;

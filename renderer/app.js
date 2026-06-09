@@ -17053,6 +17053,58 @@ async function renderVoiceMacroEditor() {
   if (!voiceMacroEditor) return;
   voiceMacroEditor.innerHTML = '';
   var filled = await window.api.voiceMacroList();
+
+  // Mic input device picker — points users at their headset / laptop
+  // mic instead of the rig's USB CODEC (which is often the OS default
+  // on a POTACAT setup, and the cause of "I recorded my voice and got
+  // tones" reports). Built once per render, persisted to localStorage.
+  var savedDeviceId = '';
+  try { savedDeviceId = localStorage.getItem(VOICE_MACRO_DEVICE_KEY) || ''; } catch {}
+  var deviceRow = document.createElement('div');
+  deviceRow.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);';
+  var deviceLabel = document.createElement('span');
+  deviceLabel.textContent = 'Mic input:';
+  deviceLabel.style.cssText = 'font-size:11px;color:var(--text-secondary);min-width:60px;';
+  deviceRow.appendChild(deviceLabel);
+  var deviceSelect = document.createElement('select');
+  deviceSelect.style.cssText = 'flex:1;font-size:11px;padding:2px 4px;';
+  // Pre-populate with the saved selection so the picker isn't blank on
+  // first render — enumerateDevices() is async and may race the editor
+  // open. Real device list fills in below.
+  var defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'Default (OS default mic)';
+  if (!savedDeviceId) defaultOpt.selected = true;
+  deviceSelect.appendChild(defaultOpt);
+  deviceRow.appendChild(deviceSelect);
+  voiceMacroEditor.appendChild(deviceRow);
+  // Hint row — explicit warning about the rig USB CODEC trap. Casey
+  // 2026-06-09 from John WZ1H's bug report.
+  var deviceHint = document.createElement('div');
+  deviceHint.style.cssText = 'font-size:10px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.3;';
+  deviceHint.textContent = 'If you recorded but heard tones on playback, the OS default is probably your rig\'s USB audio. Pick your headset or laptop mic here explicitly.';
+  voiceMacroEditor.appendChild(deviceHint);
+  // Populate with the actual audio inputs once enumerateDevices resolves.
+  try {
+    var devices = await navigator.mediaDevices.enumerateDevices();
+    var inputs = devices.filter(function(d) { return d.kind === 'audioinput'; });
+    for (var di = 0; di < inputs.length; di++) {
+      var opt = document.createElement('option');
+      opt.value = inputs[di].deviceId;
+      opt.textContent = inputs[di].label || ('Microphone ' + (di + 1));
+      if (savedDeviceId && savedDeviceId === inputs[di].deviceId) opt.selected = true;
+      deviceSelect.appendChild(opt);
+    }
+  } catch (e) {
+    // enumerateDevices needs a prior getUserMedia call to expose labels.
+    // Without that, options are empty and the user just sees "Default" —
+    // they can hit Rec, accept the mic prompt, then come back here and
+    // pick a specific device.
+  }
+  deviceSelect.addEventListener('change', function() {
+    try { localStorage.setItem(VOICE_MACRO_DEVICE_KEY, deviceSelect.value); } catch {}
+  });
+
   for (var i = 0; i < VOICE_MACRO_COUNT; i++) {
     (function(idx) {
       var row = document.createElement('div');
@@ -17122,10 +17174,24 @@ async function renderVoiceMacroEditor() {
   }
 }
 
+// localStorage key for the user-chosen recording mic. Empty / unset =
+// "use the OS default audio input." We expose this as an explicit
+// device picker in the Voice Macros editor because the OS default on a
+// POTACAT setup is OFTEN the rig's USB CODEC (the user set it that way
+// for SmartSDR / JTCAT audio capture). Recording with that as default
+// captures the rig's TX sidetone / monitor — exactly John WZ1H's 5/26
+// report: "When I play it I just hear a series of tones, not my voice."
+const VOICE_MACRO_DEVICE_KEY = 'pota-cat-voice-macro-input-device';
+
 async function startVoiceRecording(idx, btn, statusEl) {
   if (voiceRecorder) { voiceRecorder.stop(); voiceRecorder = null; }
   try {
-    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    var savedDeviceId = '';
+    try { savedDeviceId = localStorage.getItem(VOICE_MACRO_DEVICE_KEY) || ''; } catch {}
+    var constraints = savedDeviceId
+      ? { audio: { deviceId: { exact: savedDeviceId } } }
+      : { audio: true };
+    var stream = await navigator.mediaDevices.getUserMedia(constraints);
     voiceRecordingIdx = idx;
     btn.textContent = 'Stop';
     btn.style.color = '#e94560';
@@ -21828,6 +21894,13 @@ var jtcatAudioCtx = null;
 var jtcatAudioStream = null;
 var jtcatAudioProcessor = null;
 var jtcatAnalyser = null;
+// Pre-gain tap on the raw input stream. Used only by the meter render
+// loop to distinguish "no signal coming in" from "signal coming in but
+// gain is muting it" — drives the .jtcat-rx-low-hint badge.
+var jtcatPreGainAnalyser = null;
+// Sticky timer: when pre-gain is hot and post-gain is starved, count
+// frames so the badge appears after sustained low instead of blinking.
+var _jtcatRxLowStartedAt = 0;
 var jtcatAudioSource = null; // strong ref to prevent GC in Chromium 134+
 var jtcatRxGainNode = null;
 var jtcatMeterAnim = null;
@@ -21965,6 +22038,15 @@ async function startJtcatAudio() {
     jtcatAnalyser.smoothingTimeConstant = 0.3;
     jtcatRxGainNode.connect(jtcatAnalyser);
 
+    // Pre-gain tap — observes the raw input level so the meter loop can
+    // tell "rig audio is silent" from "rig audio is fine but the slider
+    // is starving the decoder." Tap directly off `source`, never connect
+    // to destination so it doesn't double-route audio. chriskf0jfw 5/27.
+    jtcatPreGainAnalyser = jtcatAudioCtx.createAnalyser();
+    jtcatPreGainAnalyser.fftSize = 2048;
+    jtcatPreGainAnalyser.smoothingTimeConstant = 0.3;
+    source.connect(jtcatPreGainAnalyser);
+
     // Start RX level meter rendering
     startJtcatMeter();
 
@@ -22082,24 +22164,66 @@ async function startJtcatAudio() {
 }
 
 // --- JTCAT RX Audio Meter ---
+// Reusable buffer — at ~60fps this avoids allocating a fresh Uint8Array
+// 60 times a second.
+var _jtcatMeterBuf = null;
+function _jtcatRmsFromAnalyser(analyser) {
+  if (!analyser) return 0;
+  if (!_jtcatMeterBuf || _jtcatMeterBuf.length !== analyser.frequencyBinCount) {
+    _jtcatMeterBuf = new Uint8Array(analyser.frequencyBinCount);
+  }
+  analyser.getByteTimeDomainData(_jtcatMeterBuf);
+  var sum = 0;
+  for (var i = 0; i < _jtcatMeterBuf.length; i++) {
+    var v = (_jtcatMeterBuf[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / _jtcatMeterBuf.length);
+}
 function startJtcatMeter() {
   var canvas = document.getElementById('jtcat-rx-meter');
   if (!canvas || jtcatMeterAnim) return;
+  var lowHintEl = document.getElementById('jtcat-rx-low-hint');
   function render() {
     if (jtcatAnalyser && canvas) {
       var ctx = canvas.getContext('2d');
       var w = canvas.width, h = canvas.height;
-      var data = new Uint8Array(jtcatAnalyser.frequencyBinCount);
-      jtcatAnalyser.getByteTimeDomainData(data);
-      var sum = 0;
-      for (var i = 0; i < data.length; i++) { var v = (data[i] - 128) / 128; sum += v * v; }
-      var rms = Math.sqrt(sum / data.length);
-      var db = rms > 0 ? 20 * Math.log10(rms) : -60;
+      var postRms = _jtcatRmsFromAnalyser(jtcatAnalyser);
+      var db = postRms > 0 ? 20 * Math.log10(postRms) : -60;
       var level = Math.max(0, Math.min(1, (db + 40) / 40));
       ctx.clearRect(0, 0, w, h);
       var barW = Math.round(level * w);
       ctx.fillStyle = level < 0.6 ? '#4ecca3' : level < 0.85 ? '#ffd740' : '#e94560';
       ctx.fillRect(0, 0, barW, h);
+
+      // "RX low — bump gain" hint. Fires when pre-gain RMS shows actual
+      // input signal but post-gain RMS is starving the decoder. Sustained
+      // for 3 seconds before showing (avoid flashing on transients), and
+      // sustained for 1 second below threshold before clearing (avoid
+      // flashing off mid-call). chriskf0jfw 5/27.
+      if (lowHintEl) {
+        var preRms = _jtcatRmsFromAnalyser(jtcatPreGainAnalyser);
+        var inputHot = preRms > 0.005;    // -46 dBFS — clearly above silence
+        var outputStarved = postRms < 0.025; // -32 dBFS — below FT8 decode floor
+        var now = Date.now();
+        if (inputHot && outputStarved) {
+          if (!_jtcatRxLowStartedAt) _jtcatRxLowStartedAt = now;
+          if (now - _jtcatRxLowStartedAt > 3000) {
+            lowHintEl.classList.remove('hidden');
+          }
+        } else {
+          // Reset only if we've been NOT in the low state for ≥1s,
+          // implemented via the negative side of the counter — flip the
+          // anchor to a future "release time" stamp so the hide is gated.
+          if (_jtcatRxLowStartedAt > 0 && _jtcatRxLowStartedAt < now) {
+            // Use negative value as a sentinel for "release pending"
+            _jtcatRxLowStartedAt = -now;
+          } else if (_jtcatRxLowStartedAt < 0 && now + _jtcatRxLowStartedAt > 1000) {
+            lowHintEl.classList.add('hidden');
+            _jtcatRxLowStartedAt = 0;
+          }
+        }
+      }
     }
     jtcatMeterAnim = requestAnimationFrame(render);
   }

@@ -685,6 +685,12 @@
         <canvas id="jtcat-rx-meter" width="100" height="10" style="border-radius:2px;background:#111;flex-shrink:0;"></canvas>
         <input type="range" id="jtcat-rx-gain" min="0" max="300" value="100" style="width:80px;" title="RX Gain %">
         <span id="jtcat-rx-gain-val" style="min-width:32px;text-align:right;">100%</span>
+        <!-- "RX gain low" hint badge — fires when pre-gain input is non-silent
+             but post-gain level is too low for decode. Hidden by default;
+             revealed by startJtcatMeter() when the audio path is hot but the
+             slider is starving the decoder. Reporter chriskf0jfw 5/27 lost
+             two days to this exact symptom. -->
+        <span id="jtcat-rx-low-hint" class="jtcat-rx-low-hint hidden" title="Pre-gain input is non-silent but the post-gain level is too low for FT8 decode. Try raising the RX slider above.">RX low — bump gain</span>
         <span style="flex-shrink:0;margin-left:8px;border-left:1px solid var(--border);padding-left:8px;">TX Pwr</span>
         <input type="range" id="jtcat-tx-gain" min="0" max="100" value="100" style="width:80px;accent-color:#e94560;" title="TX Power % (logarithmic — fine control at low end for FT8)">
         <span id="jtcat-tx-gain-val" style="min-width:32px;text-align:right;">100%</span>
@@ -1982,7 +1988,7 @@
       <label class="checkbox-label"><input type="checkbox" id="set-enable-split"> Enable split mode</label>
       <span class="help-text" style="margin-left:12px;margin-bottom:6px;display:block;">Send split on/off with each tune command (VFO A = RX, VFO B = TX)</span>
       <label class="checkbox-label"><input type="checkbox" id="set-enable-atu"> Auto-tune ATU on band change</label>
-      <span class="help-text" style="margin-left:12px;margin-bottom:6px;display:block;">Trigger the antenna tuner when tuning to a different band. Supports Yaesu, Kenwood, Elecraft, Hamlib rigctld, and FlexRadio.</span>
+      <span class="help-text" style="margin-left:12px;margin-bottom:6px;display:block;">Trigger the antenna tuner when tuning to a different band. Supports Yaesu, Kenwood, Elecraft, Hamlib rigctld, and FlexRadio. <b>This is the rig's internal ATU command.</b> For external RF-sensing tuners (LDG, MFJ, etc.) that need a tune-up signal: open the FT8 view and use its <b>Tune</b> button (90s steady tone via USB audio), or configure a Custom CAT Command in Settings → Rig if you want a one-click tune from any view.</span>
       <label class="checkbox-label"><input type="checkbox" id="set-tune-click"> Tune confirmation sound</label>
       <span class="help-text" style="margin-left:12px;margin-bottom:6px;display:block;">Play a click when the radio confirms it has changed frequency</span>
     </fieldset>
