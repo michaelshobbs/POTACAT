@@ -2810,7 +2810,6 @@
       <div id="cloud-account-section" class="hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <span><strong id="cloud-user-callsign"></strong> &mdash; <span id="cloud-user-email" style="color:var(--text-secondary);"></span></span>
-          <button type="button" id="cloud-signout-btn" class="btn btn-sm">Sign Out</button>
         </div>
         <div style="margin-bottom:6px;">
           <span id="cloud-sub-status" class="status disconnected">inactive</span>
@@ -2832,9 +2831,11 @@
       </div>
     </fieldset>
 
-    <!-- POTA.app Sync — Cloud-subscriber feature; keeps the Parks Worked
-         list in sync with pota.app so new-park badges stay accurate. -->
-    <fieldset class="source-toggles" data-settings-tab="cloud">
+    <!-- POTA.app Profile — operator identity, NOT a cloud feature, so it lives
+         on the Station tab (and is surfaced as a card on Summary). Keeps the
+         Parks Worked list in sync with pota.app so new-park badges stay
+         accurate. K3SBP 2026-06-10. -->
+    <fieldset class="source-toggles" data-settings-tab="station">
       <legend>POTA.app Profile</legend>
       <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">
         Sign in to display your pota.app activator and hunter stats. POTACAT tracks worked parks from your local QSO log &mdash; no password is stored.
@@ -2866,7 +2867,7 @@
 
     <!-- POTACAT Cloud — one-tap remote (CF tunnel) -->
     <fieldset id="cloud-tunnel-fieldset" class="source-toggles" data-settings-tab="cloud">
-      <legend>POTACAT Cloud (one-tap remote)</legend>
+      <legend>POTACAT Tunnel (one-tap remote)</legend>
       <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">Reach your radio from anywhere — no Tailscale, no port forwarding. POTACAT opens an outbound tunnel to Cloudflare; your phone connects over <code style="background:var(--bg-tertiary);padding:1px 4px;border-radius:2px;">https://&lt;callsign&gt;.cloud.potacat.com</code>.</p>
       <div id="cloud-tunnel-status-row" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
         <span id="cloud-tunnel-status-pill" class="status disconnected">LAN only</span>
@@ -2880,7 +2881,7 @@
     </fieldset>
 
     <fieldset class="source-toggles" data-settings-tab="cloud">
-      <legend>Sync</legend>
+      <legend>Logbook Sync</legend>
       <label class="checkbox-label"><input type="checkbox" id="cloud-sync-enabled"> Enable QSO Cloud Sync</label>
       <div id="cloud-sync-controls" style="margin-top:8px;">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
@@ -2994,6 +2995,14 @@
       <legend>Troubleshooting</legend>
       <button type="button" id="cloud-clear-tokens" class="btn btn-danger">Sign Out &amp; Clear Cloud Tokens</button>
       <p class="help-text" style="margin-top:4px;">Clears your saved login. Use this if you're stuck or seeing errors.</p>
+    </fieldset>
+
+    <!-- Sign out — last item on the Cloud tab. Only shown when signed in
+         (cloud-ui.js toggles `hidden` alongside the account view; `.hidden`
+         uses !important so it overrides the tab's display rule). -->
+    <fieldset id="cloud-signout-fieldset" class="source-toggles hidden" data-settings-tab="cloud">
+      <legend>Sign Out</legend>
+      <button type="button" id="cloud-signout-btn" class="btn">Sign Out of POTACAT Cloud</button>
     </fieldset>
     </div><!-- /.settings-scroll-area -->
     <div class="dialog-buttons">

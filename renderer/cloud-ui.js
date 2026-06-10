@@ -55,10 +55,14 @@
 
   const loginSignout = document.getElementById('cloud-login-signout');
   const loginSignoutLink = document.getElementById('cloud-login-signout-link');
+  // Sign Out moved to its own fieldset at the bottom of the Cloud tab — shown
+  // only when signed in, hidden (with the login form) otherwise.
+  const signOutFieldset = document.getElementById('cloud-signout-fieldset');
 
   function showLogin(hasStaleTokens) {
     loginSection.classList.remove('hidden');
     accountSection.classList.add('hidden');
+    if (signOutFieldset) signOutFieldset.classList.add('hidden');
     isLoggedIn = false;
     updateCloudPill('disconnected');
     if (loginSignout) loginSignout.classList.toggle('hidden', !hasStaleTokens);
@@ -67,6 +71,7 @@
   function showAccount(user, subscription) {
     loginSection.classList.add('hidden');
     accountSection.classList.remove('hidden');
+    if (signOutFieldset) signOutFieldset.classList.remove('hidden');
     isLoggedIn = true;
 
     userCallsignSpan.textContent = subscription?.callsign || user?.callsign || '';
