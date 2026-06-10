@@ -3867,6 +3867,15 @@ function broadcastFullAutoCqState() {
   if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
     jtcatPopoutWin.webContents.send('jtcat-full-auto-cq-state', state);
   }
+  // Mirror to ECHOCAT clients (phone) so they can show the run indicator.
+  if (remoteServer) {
+    remoteServer.broadcastJtcatUltracatState({
+      ultracat: !!settings.ultracat,
+      fullAutoCq: jtcatFullAutoCq,
+      owner: jtcatFullAutoCqOwner,
+      maxQsoAttempts: jtcatMaxQsoRetries(),
+    });
+  }
 }
 
 // Build a fresh CQ QSO object and start transmitting. Returns the QSO or null
@@ -5461,6 +5470,13 @@ function updateRemoteSettings() {
     ssbFilterWidth: settings.ssbFilterWidth || 0,
     digitalFilterWidth: settings.digitalFilterWidth || 0,
     enableSplit: !!settings.enableSplit,
+    // ULTRACAT (hidden tier-2) — lets the phone reveal + mirror the JTCAT
+    // Full Auto CQ controls when the desktop is unlocked. Connect-time
+    // detection rides the auth-ok settings blob; live changes come via the
+    // jtcat-ultracat-state S2C message. jtcatMaxQsoAttempts is the per-QSO
+    // retry ceiling so the phone's matching control shows the same value.
+    ultracat: !!settings.ultracat,
+    jtcatMaxQsoAttempts: jtcatMaxQsoRetries(),
     enableAtu: !!settings.enableAtu,
     tuneClick: !!settings.tuneClick,
     enableRotor: !!settings.enableRotor,
@@ -16030,6 +16046,10 @@ app.whenReady().then(() => {
     if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
       jtcatPopoutWin.webContents.send('jtcat-ultracat', jtcatUltracat);
     }
+    // Push to ECHOCAT clients: refresh the auth-ok settings blob (connect-time
+    // detection) and send a live jtcat-ultracat-state (mid-session toggle).
+    updateRemoteSettings();
+    broadcastFullAutoCqState();
   });
 
   // ULTRACAT Full Auto CQ run mode — start/stop. Server-side ULTRACAT guard
