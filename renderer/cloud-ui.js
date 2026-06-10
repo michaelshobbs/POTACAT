@@ -238,6 +238,25 @@
     });
   }
 
+  // Sign-in vs create-account mode. Sign-in (default) only needs email +
+  // password; creating an account also needs the callsign. Toggling hides the
+  // callsign field in sign-in mode so the form doesn't look like it wants all
+  // three at once. K3SBP 2026-06-10.
+  const callsignLabel = document.getElementById('cloud-callsign-label');
+  const signinActions = document.getElementById('cloud-signin-actions');
+  const registerActions = document.getElementById('cloud-register-actions');
+  const showRegisterLink = document.getElementById('cloud-show-register');
+  const showSigninLink = document.getElementById('cloud-show-signin');
+  function setCloudAuthMode(mode) {
+    const reg = mode === 'register';
+    if (callsignLabel) callsignLabel.classList.toggle('hidden', !reg);
+    if (signinActions) signinActions.classList.toggle('hidden', reg);
+    if (registerActions) registerActions.classList.toggle('hidden', !reg);
+    if (loginError) loginError.classList.add('hidden');
+  }
+  if (showRegisterLink) showRegisterLink.addEventListener('click', (e) => { e.preventDefault(); setCloudAuthMode('register'); });
+  if (showSigninLink) showSigninLink.addEventListener('click', (e) => { e.preventDefault(); setCloudAuthMode('signin'); });
+
   if (signOutBtn) {
     signOutBtn.addEventListener('click', async () => {
       await window.api.cloudLogout();
