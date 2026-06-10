@@ -23636,8 +23636,8 @@ window.api.onJtcatDecode(function(data) {
       results: jtcatDecodes,
     });
   }
-  jtcatSyncStatus.textContent = 'Sync: OK';
-  jtcatSyncStatus.classList.add('jtcat-synced');
+  // NOTE: sync status is NOT set here. Decodes arriving says nothing about the
+  // PC clock — the real status comes from the NTP monitor (onJtcatClock below).
   // Plot decodes on JTCAT map
   jtcatDecodes.forEach(function(d) { jtcatMapPlotDecode(d); });
   jtcatMapClearOld();
@@ -23652,14 +23652,95 @@ window.api.onJtcatCycle(function(data) {
 // Spectrum/waterfall is rendered directly from AnalyserNode in jtcatWaterfallLoop()
 
 window.api.onJtcatStatus(function(data) {
-  if (data.state === 'running') {
+  if (data && data.state === 'stopped') applyJtcatClock(null);
+});
+
+// --- Real clock-sync indicator + notice banner ---
+// Driven by the NTP offset monitor in main (jtcat-clock). FT8 is time-locked,
+// so a PC clock off by more than ~1 s silently kills decoding even though the
+// audio and waterfall look perfect. Replaces the old fake "Sync: OK" that lit
+// up on every decode cycle. (K3SBP 2026-06-10.)
+var jtcatClockBanner  = document.getElementById('jtcat-clock-banner');
+var jtcatClockMsg     = document.getElementById('jtcat-clock-msg');
+var jtcatClockSyncBtn = document.getElementById('jtcat-clock-sync');
+var jtcatClockSetBtn  = document.getElementById('jtcat-clock-settings');
+var jtcatClockReBtn   = document.getElementById('jtcat-clock-recheck');
+
+function fmtJtcatOffset(ms) {
+  return (ms > 0 ? '+' : '') + (ms / 1000).toFixed(1) + 's';
+}
+
+function applyJtcatClock(d) {
+  if (!jtcatSyncStatus) return;
+  jtcatSyncStatus.classList.remove('jtcat-synced');
+  jtcatSyncStatus.style.color = '';
+  if (jtcatClockBanner) jtcatClockBanner.classList.add('hidden');
+
+  if (!d) { jtcatSyncStatus.textContent = 'Sync: \u2014'; return; }
+
+  if (d.level === 'unknown') {
+    jtcatSyncStatus.textContent = 'Sync: ? (no NTP)';
+    jtcatSyncStatus.style.color = '#888';
+    jtcatSyncStatus.title = 'Could not reach an NTP server to measure clock offset' + (d.error ? ' (' + d.error + ')' : '');
+    return;
+  }
+
+  var off = fmtJtcatOffset(d.offsetMs || 0);
+  jtcatSyncStatus.title = 'PC clock offset vs ' + (d.server || 'NTP') + ': ' + off;
+
+  if (d.level === 'ok') {
     jtcatSyncStatus.textContent = 'Sync: OK';
     jtcatSyncStatus.classList.add('jtcat-synced');
-  } else if (data.state === 'stopped') {
-    jtcatSyncStatus.textContent = 'Sync: \u2014';
-    jtcatSyncStatus.classList.remove('jtcat-synced');
+    return;
   }
-});
+
+  var bad = d.level === 'bad';
+  jtcatSyncStatus.textContent = 'Sync: ' + off + (bad ? ' \u2715' : ' \u26a0');
+  jtcatSyncStatus.style.color = bad ? '#e94560' : '#f0a500';
+  if (jtcatClockBanner && jtcatClockMsg) {
+    jtcatClockMsg.textContent = bad
+      ? '\u26a0 PC clock is ' + off + ' off UTC \u2014 FT8 will NOT decode until you fix it.'
+      : '\u26a0 PC clock is ' + off + ' off UTC \u2014 decoding may be unreliable. Sync recommended.';
+    jtcatClockBanner.style.background   = bad ? '#5a1a1a' : '#5a4a1a';
+    jtcatClockBanner.style.borderBottom = '2px solid ' + (bad ? '#e94560' : '#f0a500');
+    jtcatClockBanner.classList.remove('hidden');
+  }
+}
+
+if (window.api.onJtcatClock) window.api.onJtcatClock(applyJtcatClock);
+
+if (jtcatClockSetBtn && window.api.jtcatOpenTimeSettings) {
+  jtcatClockSetBtn.addEventListener('click', function() { window.api.jtcatOpenTimeSettings(); });
+}
+if (jtcatClockReBtn && window.api.jtcatCheckClock) {
+  jtcatClockReBtn.addEventListener('click', function() {
+    if (jtcatClockMsg) jtcatClockMsg.textContent = 'Checking clock\u2026';
+    window.api.jtcatCheckClock().then(function(c) { if (c) applyJtcatClock(c); });
+  });
+}
+if (jtcatClockSyncBtn && window.api.jtcatSyncClock) {
+  jtcatClockSyncBtn.addEventListener('click', function() {
+    if (jtcatClockMsg) jtcatClockMsg.textContent = 'Syncing clock\u2026';
+    window.api.jtcatSyncClock().then(function(res) {
+      if (res && res.clock) applyJtcatClock(res.clock);
+      if (res && res.sync && !res.sync.success && jtcatClockMsg) {
+        jtcatClockMsg.textContent = '\u26a0 ' + (res.sync.message || 'Sync failed') + ' \u2014 use \u201cTime settings\u2026\u201d.';
+      }
+    });
+  });
+}
+// Click the status chip itself to force a re-check.
+if (jtcatSyncStatus && window.api.jtcatCheckClock) {
+  jtcatSyncStatus.style.cursor = 'pointer';
+  jtcatSyncStatus.addEventListener('click', function() {
+    window.api.jtcatCheckClock().then(function(c) { if (c) applyJtcatClock(c); });
+  });
+}
+// The engine may already be running before this view first paints, so grab the
+// monitor's last measurement instead of waiting for the next broadcast.
+if (window.api.jtcatGetClock) {
+  window.api.jtcatGetClock().then(function(c) { if (c) applyJtcatClock(c); });
+}
 
 // --- JTCAT TX Audio Playback ---
 var jtcatTxAudioCtx = null;

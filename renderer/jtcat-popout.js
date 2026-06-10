@@ -643,8 +643,10 @@ function _applyPopoutTheme(payload) {
   // --- Event handlers ---
   window.api.onJtcatDecode(function(data) {
     renderDecodes(data);
-    syncEl.textContent = 'Sync: OK';
-    syncEl.classList.add('jtcat-synced');
+    // NOTE: do NOT set "Sync: OK" here. Decodes arriving says nothing about
+    // the PC clock — the real sync status comes from the NTP monitor via
+    // onJtcatClock below. (K3SBP 2026-06-10: old code lit "Sync: OK" on every
+    // cycle even with the clock 10 s off UTC and 0 decodes.)
   });
 
   // Spot-list highlight push from the main renderer. Rebuild the Map, then
@@ -695,8 +697,93 @@ function _applyPopoutTheme(payload) {
   });
 
   window.api.onJtcatStatus(function(data) {
-    syncEl.textContent = 'Sync: ' + (data.sync || '--');
+    // Engine stopped — clear the sync readout (no meaningful offset to show).
+    if (data && data.state === 'stopped') applyClock(null);
   });
+
+  // --- Real clock-sync indicator + notice banner ---
+  // Driven by the NTP offset monitor in main (jtcat-clock). FT8 is time-locked,
+  // so a PC clock off by more than ~1 s silently kills decoding even though the
+  // audio and waterfall look perfect.
+  var clockBanner   = document.getElementById('jp-clock-banner');
+  var clockMsg      = document.getElementById('jp-clock-msg');
+  var clockSyncBtn  = document.getElementById('jp-clock-sync');
+  var clockSetBtn   = document.getElementById('jp-clock-settings');
+  var clockReBtn    = document.getElementById('jp-clock-recheck');
+
+  function fmtOffset(ms) {
+    return (ms > 0 ? '+' : '') + (ms / 1000).toFixed(1) + 's';
+  }
+
+  function applyClock(d) {
+    if (!syncEl) return;
+    syncEl.classList.remove('jtcat-synced');
+    syncEl.style.color = '';
+    if (clockBanner) clockBanner.classList.add('hidden');
+
+    if (!d) { syncEl.textContent = 'Sync: —'; return; }
+
+    if (d.level === 'unknown') {
+      // NTP unreachable — don't claim bad, just show we couldn't check.
+      syncEl.textContent = 'Sync: ? (no NTP)';
+      syncEl.style.color = '#888';
+      syncEl.title = 'Could not reach an NTP server to measure clock offset' + (d.error ? ' (' + d.error + ')' : '');
+      return;
+    }
+
+    var off = fmtOffset(d.offsetMs || 0);
+    syncEl.title = 'PC clock offset vs ' + (d.server || 'NTP') + ': ' + off;
+
+    if (d.level === 'ok') {
+      syncEl.textContent = 'Sync: OK';
+      syncEl.classList.add('jtcat-synced');
+      return;
+    }
+
+    // warn / bad — light the indicator and raise the banner.
+    var bad = d.level === 'bad';
+    syncEl.textContent = 'Sync: ' + off + (bad ? ' ✕' : ' ⚠');
+    syncEl.style.color = bad ? '#e94560' : '#f0a500';
+    if (clockBanner && clockMsg) {
+      clockMsg.textContent = bad
+        ? '⚠ PC clock is ' + off + ' off UTC — FT8 will NOT decode until you fix it.'
+        : '⚠ PC clock is ' + off + ' off UTC — decoding may be unreliable. Sync recommended.';
+      clockBanner.style.background    = bad ? '#5a1a1a' : '#5a4a1a';
+      clockBanner.style.borderBottom  = '2px solid ' + (bad ? '#e94560' : '#f0a500');
+      clockBanner.classList.remove('hidden');
+    }
+  }
+
+  if (window.api.onJtcatClock) window.api.onJtcatClock(applyClock);
+
+  if (clockSetBtn && window.api.jtcatOpenTimeSettings) {
+    clockSetBtn.addEventListener('click', function() { window.api.jtcatOpenTimeSettings(); });
+  }
+  if (clockReBtn && window.api.jtcatCheckClock) {
+    clockReBtn.addEventListener('click', function() {
+      if (clockMsg) clockMsg.textContent = 'Checking clock…';
+      window.api.jtcatCheckClock().then(function(c) { if (c) applyClock(c); });
+    });
+  }
+  if (clockSyncBtn && window.api.jtcatSyncClock) {
+    clockSyncBtn.addEventListener('click', function() {
+      if (clockMsg) clockMsg.textContent = 'Syncing clock…';
+      window.api.jtcatSyncClock().then(function(res) {
+        if (res && res.clock) applyClock(res.clock);
+        if (res && res.sync && !res.sync.success && clockMsg) {
+          // w32tm failed (usually: not Administrator). Tell the user, and the
+          // "Time settings…" button is right there as the no-admin path.
+          clockMsg.textContent = '⚠ ' + (res.sync.message || 'Sync failed') + ' — use “Time settings…”.';
+        }
+      });
+    });
+  }
+
+  // Fetch whatever the monitor last measured (the engine may already have been
+  // running before this popout opened, so we won't get a fresh broadcast).
+  if (window.api.jtcatGetClock) {
+    window.api.jtcatGetClock().then(function(c) { if (c) applyClock(c); });
+  }
 
   // PTT mode indicator (CAT vs VOX)
   var pttModeEl = document.getElementById('jp-ptt-mode');

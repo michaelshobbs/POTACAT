@@ -677,8 +677,16 @@
         <div class="jtcat-status">
           <span id="jtcat-cycle-indicator" class="jtcat-cycle">&mdash;</span>
           <span id="jtcat-countdown" class="jtcat-countdown">&mdash;</span>
-          <span id="jtcat-sync-status" class="jtcat-sync" title="Click to check clock offset">Sync: &mdash;</span>
+          <span id="jtcat-sync-status" class="jtcat-sync" title="Click to re-check clock offset">Sync: &mdash;</span>
         </div>
+      </div>
+      <!-- Clock-sync warning banner — FT8 is time-locked; an off PC clock
+           zeroes out decodes while audio/waterfall still look fine. -->
+      <div id="jtcat-clock-banner" class="hidden" style="display:flex;align-items:center;gap:10px;padding:6px 12px;background:#5a1a1a;border-bottom:2px solid #e94560;color:#ffd9d9;font-size:12px;font-weight:600;">
+        <span id="jtcat-clock-msg" style="flex:1;">⚠ PC clock is off — FT8 will not decode.</span>
+        <button type="button" id="jtcat-clock-settings" class="jtcat-filter-btn" title="Open Windows Date &amp; Time settings — click &quot;Sync now&quot;">Time settings…</button>
+        <button type="button" id="jtcat-clock-sync" class="jtcat-filter-btn" title="Try w32tm /resync (needs Administrator)">Sync now</button>
+        <button type="button" id="jtcat-clock-recheck" class="jtcat-filter-btn" title="Re-measure clock offset">Recheck</button>
       </div>
       <div id="jtcat-audio-strip" style="display:flex;align-items:center;gap:8px;padding:2px 10px;font-size:11px;color:var(--text-dim);background:var(--bg-header);border-bottom:1px solid var(--border);">
         <span style="flex-shrink:0;">RX</span>

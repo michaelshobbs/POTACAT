@@ -179,6 +179,16 @@
     </div>
   </div>
 
+  <!-- Clock-sync warning banner. FT8 is time-locked; an off PC clock zeroes
+       out decodes while audio/waterfall still look fine. Shown only when the
+       measured NTP offset is marginal/bad. -->
+  <div id="jp-clock-banner" class="hidden" style="display:flex;align-items:center;gap:10px;padding:6px 12px;background:#5a1a1a;border-bottom:2px solid #e94560;color:#ffd9d9;font-size:12px;font-weight:600;">
+    <span id="jp-clock-msg" style="flex:1;">⚠ PC clock is off — FT8 will not decode.</span>
+    <button type="button" id="jp-clock-settings" class="jtcat-filter-btn" title="Open Windows Date &amp; Time settings — click &quot;Sync now&quot;">Time settings…</button>
+    <button type="button" id="jp-clock-sync" class="jtcat-filter-btn" title="Try w32tm /resync (needs Administrator)">Sync now</button>
+    <button type="button" id="jp-clock-recheck" class="jtcat-filter-btn" title="Re-measure clock offset">Recheck</button>
+  </div>
+
   <!-- Multi-slice config panel -->
   <div id="jp-multi-panel" class="jp-multi-panel hidden">
     <div id="jp-multi-slices"></div>

@@ -169,6 +169,7 @@ const { PotaSync } = require('./lib/pota-sync');
 const { WsjtxClient, extractCallsigns, encodeHeartbeat, encodeLoggedAdif, encodeQsoLogged } = require('./lib/wsjtx');
 const { PskrClient } = require('./lib/pskreporter');
 const { Ft8Engine } = require('./lib/ft8-engine');
+const { checkClockOffset, syncSystemClock } = require('./lib/ntp');
 const { RemoteServer } = require('./lib/remote-server');
 const { RemoteClient } = require('./lib/remote-client');
 // Linux-only ALSA bridge. On non-Linux, alsa.isAvailable() returns false
@@ -4427,6 +4428,14 @@ function startJtcat(mode) {
       jtcatPopoutWin.webContents.send('jtcat-status', data);
     }
     if (remoteServer && remoteServer.hasClient()) remoteServer.broadcastJtcatStatus(data);
+    // FT8/FT4 are time-locked: the decoder only searches a ~±2.5 s window
+    // around the slot boundary it derives from the OS clock, so a PC clock
+    // more than ~1 s off UTC silently zeroes out decodes while audio + the
+    // waterfall still look perfect (K3SBP 2026-06-10: +10.8 s CMOS drift,
+    // "Sync: OK" but 0 decodes). Measure the real NTP offset while the
+    // engine runs and surface it to the JTCAT views as a genuine warning.
+    if (data.state === 'running') startJtcatClockMonitor();
+    else if (data.state === 'stopped') stopJtcatClockMonitor();
   });
 
   ft8Engine.on('tx-start', (data) => {
@@ -4517,6 +4526,53 @@ function startJtcat(mode) {
 
   ft8Engine.start();
   console.log('[JTCAT] Engine started, mode:', mode || 'FT8');
+}
+
+// --- JTCAT clock-offset monitor -----------------------------------------
+// Measures the local clock vs NTP (lib/ntp.js) and pushes a real sync status
+// to the JTCAT views. Replaces the old fake "Sync: OK" that the renderers lit
+// up on every decode cycle regardless of the actual clock. Thresholds chosen
+// to match FT8's decode tolerance: <1 s is fine, 1–2 s is marginal, >2 s means
+// decodes will fail outright.
+let jtcatClockTimer = null;
+let jtcatLastClock = null;
+const JTCAT_CLOCK_POLL_MS = 5 * 60 * 1000;
+
+function classifyClockOffset(offsetMs) {
+  const abs = Math.abs(offsetMs);
+  if (abs < 1000) return 'ok';
+  if (abs < 2000) return 'warn';
+  return 'bad';
+}
+
+function broadcastJtcatClock(payload) {
+  if (win && !win.isDestroyed()) win.webContents.send('jtcat-clock', payload);
+  if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('jtcat-clock', payload);
+  if (jtcatMapPopoutWin && !jtcatMapPopoutWin.isDestroyed()) jtcatMapPopoutWin.webContents.send('jtcat-clock', payload);
+}
+
+async function runJtcatClockCheck() {
+  try {
+    const res = await checkClockOffset();
+    const level = classifyClockOffset(res.offset);
+    jtcatLastClock = { offsetMs: res.offset, server: res.server, level, ok: level === 'ok', checkedAt: Date.now() };
+  } catch (e) {
+    // NTP unreachable (offline, firewall). Don't claim the clock is bad —
+    // just report unknown so we don't nag a user whose clock is actually fine.
+    jtcatLastClock = { offsetMs: null, server: null, level: 'unknown', ok: false, error: e.message, checkedAt: Date.now() };
+  }
+  broadcastJtcatClock(jtcatLastClock);
+  return jtcatLastClock;
+}
+
+function startJtcatClockMonitor() {
+  if (jtcatClockTimer) return;
+  runJtcatClockCheck();
+  jtcatClockTimer = setInterval(runJtcatClockCheck, JTCAT_CLOCK_POLL_MS);
+}
+
+function stopJtcatClockMonitor() {
+  if (jtcatClockTimer) { clearInterval(jtcatClockTimer); jtcatClockTimer = null; }
 }
 
 // --- JTCAT Tune (WSJT-X-style steady-tone for power/ALC tuning) ---
@@ -19267,6 +19323,25 @@ app.whenReady().then(() => {
     console.log('[JTCAT] Auto-CQ mode:', mode);
   });
   ipcMain.on('jtcat-tx-complete', () => { if (ft8Engine) ft8Engine.txComplete(); });
+
+  // Clock sync (lib/ntp.js). check = measure NTP offset now and rebroadcast;
+  // sync = attempt w32tm /resync (needs admin), then re-measure; open-time-
+  // settings = pop the Windows Date & Time panel where the user can hit "Sync
+  // now" without elevation.
+  ipcMain.handle('jtcat-get-clock', () => jtcatLastClock);
+  ipcMain.handle('jtcat-check-clock', async () => await runJtcatClockCheck());
+  ipcMain.handle('jtcat-sync-clock', async () => {
+    const sync = await syncSystemClock();
+    // Give the clock a moment to settle before re-measuring.
+    await new Promise(r => setTimeout(r, 1500));
+    const clock = await runJtcatClockCheck();
+    return { sync, clock };
+  });
+  ipcMain.handle('jtcat-open-time-settings', async () => {
+    const { shell } = require('electron');
+    if (process.platform === 'win32') return shell.openExternal('ms-settings:dateandtime');
+    return false;
+  });
 
   // DAX TX direct chunks from remote-audio.html (iOS phone mic → WebRTC →
   // renderer downsample → IPC chunk → here → VITA-49 to radio). Bypasses
