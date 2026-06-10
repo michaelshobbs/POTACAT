@@ -1138,3 +1138,62 @@ async function resolveAllParkLocations() {
   render();
   showLogPath();
 })();
+
+// ── Zoom (Ctrl+= / Ctrl+- / Ctrl+0, plus Ctrl+wheel) ───────────────────────
+// Matches the main window's font scaling (Ctrl+ +/-). By default the Logbook
+// inherits the main window's zoom — its "table view font size" — so the two
+// stay in sync. The first time the user zooms *here*, we record an override
+// under OWN_KEY and the Logbook remembers its own size across close/reopen.
+// Ctrl+0 clears the override and re-syncs to the main window.
+//
+// localStorage is shared across the app's file:// windows, so reading the
+// main window's MAIN_KEY ('pota-cat-zoom', written by renderer/app.js) gives
+// us its current zoom; we never write that key from here.
+(function () {
+  const OWN_KEY = 'potacat-qso-popout-zoom';   // popout's remembered override
+  const MAIN_KEY = 'pota-cat-zoom';            // main window's zoom (read-only)
+  const ZOOM_MIN = 0.6, ZOOM_MAX = 2.0, ZOOM_STEP = 0.1;
+  const clamp = (z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
+  // Main window's current zoom, or 1 if it has never been zoomed.
+  function mainZoom() {
+    const m = parseFloat(localStorage.getItem(MAIN_KEY));
+    return isFinite(m) ? clamp(m) : 1;
+  }
+  // Apply + persist as an explicit popout override.
+  function setZoom(z) {
+    const clamped = clamp(z);
+    window.api.setZoom(clamped);
+    try { localStorage.setItem(OWN_KEY, clamped.toFixed(2)); } catch {}
+  }
+
+  // Restore on open: own override if set, otherwise follow the main window.
+  try {
+    const own = parseFloat(localStorage.getItem(OWN_KEY));
+    window.api.setZoom(isFinite(own) ? clamp(own) : mainZoom());
+  } catch { window.api.setZoom(mainZoom()); }
+
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === '=' || e.key === '+') {
+      e.preventDefault();
+      setZoom((window.api.getZoom() || 1) + ZOOM_STEP);
+    } else if (e.key === '-') {
+      e.preventDefault();
+      setZoom((window.api.getZoom() || 1) - ZOOM_STEP);
+    } else if (e.key === '0') {
+      e.preventDefault();
+      // Reset = drop the override and snap back to the main window's size.
+      try { localStorage.removeItem(OWN_KEY); } catch {}
+      window.api.setZoom(mainZoom());
+    }
+  });
+
+  // Ctrl+wheel zoom — matches every browser convention.
+  document.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const dir = e.deltaY < 0 ? 1 : -1;
+    setZoom((window.api.getZoom() || 1) + dir * ZOOM_STEP);
+  }, { passive: false });
+})();

@@ -59,6 +59,10 @@ contextBridge.exposeInMainWorld('api', {
   openQsoLog: () => ipcRenderer.send('qso-popout-open'),
   jtcatSetAutoCqMode: (mode) => ipcRenderer.send('jtcat-popout-auto-cq-mode', mode),
   onJtcatAutoCqState: (cb) => ipcRenderer.on('jtcat-auto-cq-state', (_e, data) => cb(data)),
+  // ULTRACAT (tier-2 easter egg) — Full Auto CQ run mode
+  onJtcatUltracat: (cb) => ipcRenderer.on('jtcat-ultracat', (_e, on) => cb(on)),
+  jtcatSetFullAutoCq: (on) => ipcRenderer.send('jtcat-popout-full-auto-cq', on),
+  onJtcatFullAutoCqState: (cb) => ipcRenderer.on('jtcat-full-auto-cq-state', (_e, data) => cb(data)),
   // Map popout
   jtcatMapPopout: () => ipcRenderer.send('jtcat-map-popout'),
   // Tuning

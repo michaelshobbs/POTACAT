@@ -816,6 +816,26 @@ section('Pre-encode race — concurrent setTxFreq + setTxMessage');
       await Promise.all([pA, pB, pC]);
       assertEq(_txEncodedMsg, 'C K3SBP FN20', 'multi-drift: final state is C');
 
+      // -- ULTRACAT: Full Auto CQ retry-outcome policy (decideRetryOutcome) --
+      section('ULTRACAT decideRetryOutcome — Full Auto CQ retry policy');
+      const D = sm.decideRetryOutcome;
+      assertEq(D({ phase: 'reply', txRetries: 5, heard: true, maxCq: 15, maxQso: 12, runMode: false }),
+        { retries: 0, action: 'continue' }, 'heard partner resets retries and continues');
+      assertEq(D({ phase: 'reply', txRetries: 3, heard: false, maxCq: 15, maxQso: 12, runMode: false }),
+        { retries: 4, action: 'continue' }, 'miss under limit increments and continues');
+      assertEq(D({ phase: 'r+report', txRetries: 11, heard: false, maxCq: 15, maxQso: 12, runMode: false }),
+        { retries: 12, action: 'abort' }, 'QSO retry limit aborts when not in run mode');
+      assertEq(D({ phase: 'r+report', txRetries: 11, heard: false, maxCq: 15, maxQso: 12, runMode: true }),
+        { retries: 12, action: 'rearm' }, 'QSO retry limit re-arms CQ in run mode');
+      assertEq(D({ phase: 'cq', txRetries: 99, heard: false, maxCq: 15, maxQso: 12, runMode: true }),
+        { retries: 0, action: 'continue' }, 'cq phase never aborts in run mode (CQ forever)');
+      assertEq(D({ phase: 'cq', txRetries: 14, heard: false, maxCq: 15, maxQso: 12, runMode: false }),
+        { retries: 15, action: 'abort' }, 'manual CQ aborts at maxCq');
+      assertEq(D({ phase: 'reply', txRetries: 2, heard: false, maxCq: 15, maxQso: 3, runMode: false }),
+        { retries: 3, action: 'abort' }, 'configurable max attempts (X=3) aborts at 3');
+      assertEq(D({ phase: 'reply', txRetries: 2, heard: false, maxCq: 15, maxQso: 3, runMode: true }),
+        { retries: 3, action: 'rearm' }, 'configurable X re-arms CQ in run mode');
+
       // -- Test 4: drive the REAL lib/ft8-engine.js _preEncode + setTxMessage
       // pipeline with a stubbed encodeMessage, so the algorithm-level
       // simulation above is corroborated by the actual code on disk.

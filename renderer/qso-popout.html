@@ -49,7 +49,27 @@
     .qso-table td.editable { cursor: text; }
     .qso-table tbody tr { cursor: pointer; }
     .qso-table tbody tr.selected { background: color-mix(in srgb, var(--accent-blue) 20%, transparent); }
-    .qso-table tbody tr.selected td { color: var(--text-primary); }
+
+    /* ── Per-column color coding ──
+       Columns map to the --log-* palette in styles.css, which themes
+       itself for light/dark (Park stays green on every theme). Applied
+       to td (not th) so headers stay neutral. Kept above the .selected
+       rule's reach so colors persist when a row is selected — the blue
+       background tint is enough to signal selection. */
+    .qso-table td:nth-child(1)  { color: var(--log-date); }                          /* Date */
+    .qso-table td:nth-child(2)  { color: var(--log-time); }                          /* Time */
+    .qso-table td:nth-child(3)  { color: var(--log-call); font-weight: 600; }        /* Callsign */
+    .qso-table td:nth-child(4)  { color: var(--log-freq); }                          /* Freq */
+    .qso-table td:nth-child(5)  { color: var(--log-mode); }                          /* Mode */
+    .qso-table td:nth-child(6)  { color: var(--log-band); }                          /* Band */
+    .qso-table td:nth-child(7)  { color: var(--log-rst); }                           /* Pwr */
+    .qso-table td:nth-child(8)  { color: var(--log-rst); }                           /* RST S */
+    .qso-table td:nth-child(9)  { color: var(--log-rst); }                           /* RST R */
+    .qso-table td:nth-child(10) { color: var(--log-park); font-weight: 600; }        /* Park — always green */
+    .qso-table td:nth-child(11) { color: var(--log-region); }                        /* Grid */
+    .qso-table td:nth-child(12) { color: var(--log-region); }                        /* State */
+    .qso-table td:nth-child(13) { color: var(--log-region); }                        /* Country */
+    .qso-table td:nth-child(14) { color: var(--log-notes); }                         /* Notes */
     .qso-table td input {
       width: 100%; background: var(--bg-input); border: 1px solid var(--accent-blue);
       color: var(--text-primary); padding: 1px 4px; font-size: inherit;

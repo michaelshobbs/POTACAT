@@ -3341,6 +3341,17 @@
     <div class="pi-overlay-text">ACCESS: AUTHORIZED</div>
   </div>
 
+  <!-- ULTRACAT unlock overlay (The Net — CTRL+SHIFT+click the π).
+       A <dialog> opened with showModal() so it joins the top layer ABOVE
+       the (also-modal) Settings dialog — a plain div would paint behind it. -->
+  <dialog id="ultracat-overlay" class="ultracat-overlay">
+    <div class="ultracat-reveal">
+      <div class="ultracat-title" data-text="ULTRACAT">ULTRACAT</div>
+      <div class="ultracat-sub">ACCESS: AUTHORIZED</div>
+      <div class="ultracat-line">&#47;&#47; FULL AUTO SEQUENCE UNLOCKED</div>
+    </div>
+  </dialog>
+
   <!-- WebSDR station picker — at top level (not nested inside settings-dialog)
        so showModal() can open it on top of the settings dialog. Populated
        dynamically by initKiwiPicker() in renderer/app.js. -->

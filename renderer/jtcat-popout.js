@@ -53,10 +53,22 @@ function _applyPopoutTheme(payload) {
   // on each render(); drives the .jp-spotted / .jp-new-park row classes.
   var spottedCalls = new Map();
 
+  // ULTRACAT (tier-2 easter egg) — reveal/hide the Full Auto CQ controls.
+  function applyUltracat(on) {
+    document.body.classList.toggle('ultracat', !!on);
+    var els = document.querySelectorAll('.ultracat-gated');
+    for (var i = 0; i < els.length; i++) els[i].classList.toggle('hidden', !on);
+  }
+  window.api.onJtcatUltracat(applyUltracat);
+
   // Load settings
   window.api.getSettings().then(function(s) {
     myCallsign = (s.myCallsign || '').toUpperCase();
     myGrid = (s.grid || '').toUpperCase().substring(0, 4);
+    applyUltracat(!!s.ultracat);
+    if (maxAttemptsInput && typeof s.jtcatMaxQsoAttempts === 'number') {
+      maxAttemptsInput.value = s.jtcatMaxQsoAttempts;
+    }
     updateMapHome();
     // Center map on home QTH if grid is available
     if (myGrid && map) {
@@ -90,6 +102,8 @@ function _applyPopoutTheme(payload) {
   var cqFilterBtn = document.getElementById('jp-cq-filter');
   var wantedFilterBtn = document.getElementById('jp-wanted-filter');
   var cqBtn = document.getElementById('jp-cq');
+  var fullAutoCqBtn = document.getElementById('jp-full-auto-cq');
+  var maxAttemptsInput = document.getElementById('jp-max-attempts');
   var enableTxBtn = document.getElementById('jp-enable-tx');
   var haltTxBtn = document.getElementById('jp-halt-tx');
   var tuneBtn = document.getElementById('jp-tune');
@@ -1378,6 +1392,43 @@ function _applyPopoutTheme(payload) {
     autoCqSelect.value = state.mode || 'off';
     autoCqSelect.style.borderColor = state.mode !== 'off' ? 'var(--pota)' : '';
   });
+
+  // ULTRACAT — Full Auto CQ run mode (button hidden unless π-unlocked)
+  var fullAutoCqActive = false;
+  if (fullAutoCqBtn) {
+    fullAutoCqBtn.addEventListener('click', function() {
+      var turningOn = !fullAutoCqActive;
+      var mod = cqModifierSelect ? cqModifierSelect.value : '';
+      window.api.jtcatSetFullAutoCq({ on: turningOn, modifier: mod });
+      if (turningOn) { // run mode drives TX
+        txEnabled = true;
+        enableTxBtn.classList.add('active');
+        enableTxBtn.textContent = 'TX On';
+        window.api.jtcatEnableTx(true);
+      }
+    });
+  }
+  window.api.onJtcatFullAutoCqState(function(state) {
+    fullAutoCqActive = !!(state && state.active);
+    if (fullAutoCqBtn) {
+      fullAutoCqBtn.classList.toggle('active', fullAutoCqActive);
+      fullAutoCqBtn.textContent = fullAutoCqActive ? 'Auto CQ ●' : 'Auto CQ';
+    }
+    if (!fullAutoCqActive) {
+      enableTxBtn.classList.remove('active');
+      enableTxBtn.textContent = 'Enable TX';
+      txEnabled = false;
+    }
+  });
+  if (maxAttemptsInput) {
+    maxAttemptsInput.addEventListener('change', function() {
+      var n = parseInt(maxAttemptsInput.value, 10);
+      if (!isFinite(n) || n < 1) n = 1;
+      if (n > 60) n = 60;
+      maxAttemptsInput.value = n;
+      window.api.saveSettings({ jtcatMaxQsoAttempts: n });
+    });
+  }
 
   // Band buttons
   function selectBand(btn, save) {

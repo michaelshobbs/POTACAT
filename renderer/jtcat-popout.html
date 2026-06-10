@@ -79,6 +79,10 @@
     .jp-btn.jp-tune { color: #f0a500; border-color: #f0a500; }
     .jp-btn.jp-tune:hover { background: #f0a500; color: #000; }
     .jp-btn.jp-tune.active { background: #e94560; color: #fff; border-color: #e94560; animation: jp-tune-pulse 1s ease-in-out infinite; font-variant-numeric: tabular-nums; }
+    /* ULTRACAT Full Auto CQ — Matrix-green identity, pulses while running. */
+    .jp-btn.jp-ultracat { color: #00ff41; border-color: #00ff41; }
+    .jp-btn.jp-ultracat:hover { background: #00ff41; color: #000; }
+    .jp-btn.jp-ultracat.active { background: #00ff41; color: #000; border-color: #00ff41; text-shadow: none; box-shadow: 0 0 8px #00ff4188; animation: jp-tune-pulse 1.2s ease-in-out infinite; }
     @keyframes jp-tune-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
     .jp-tx-msg { flex: 1; font-family: monospace; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .jp-status { font-family: monospace; color: var(--text-dim); font-size: 11px; }
@@ -253,6 +257,11 @@
       <option value="sota">Auto: SOTA</option>
       <option value="all">Auto: All CQ</option>
     </select>
+    <!-- ULTRACAT — Full Auto CQ (hidden until the π unlock) -->
+    <button id="jp-full-auto-cq" class="jp-btn jp-ultracat ultracat-gated hidden" title="ULTRACAT: call CQ continuously, work answerers, then resume CQ. Attended operation only.">Auto CQ</button>
+    <label class="ultracat-gated hidden" style="font-size:10px;color:var(--text-tertiary);display:flex;align-items:center;gap:3px;" title="Stop retrying a QSO after this many cycles with no reply, then go back to calling CQ">
+      tries<input id="jp-max-attempts" type="number" min="1" max="60" value="12" style="width:38px;font-size:11px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-primary);background:var(--bg-tertiary);color:var(--text-primary);">
+    </label>
     <button id="jp-enable-tx" class="jp-btn">Enable TX</button>
     <button id="jp-halt-tx" class="jp-btn jp-halt">Halt TX</button>
     <button id="jp-tune" class="jp-btn jp-tune" title="WSJT-X-style 90s steady-tone tune (click again to stop early)">Tune</button>

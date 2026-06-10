@@ -316,6 +316,7 @@ contextBridge.exposeInMainWorld('api', {
   onVfoPopoutStatus: (cb) => ipcRenderer.on('vfo-popout-status', (_e, open) => cb(open)),
   // JTCAT pop-out
   jtcatPopoutOpen: () => ipcRenderer.send('jtcat-popout-open'),
+  jtcatSetUltracat: (on) => ipcRenderer.send('jtcat-set-ultracat', on),
   jtcatPopoutTheme: (theme) => ipcRenderer.send('jtcat-popout-theme', theme),
   onJtcatPopoutStatus: (cb) => ipcRenderer.on('jtcat-popout-status', (_e, open) => cb(open)),
   onJtcatPopoutReply: (cb) => ipcRenderer.on('jtcat-popout-reply', (_e, data) => cb(data)),

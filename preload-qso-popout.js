@@ -1,7 +1,17 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const electron = require('electron');
+const { contextBridge, ipcRenderer } = electron;
+const webFrame = electron.webFrame;
+
+// webFrame is part of the sandbox-allowed surface in modern Electron, but
+// if it's ever missing the zoom helpers degrade to no-ops rather than
+// blowing up the whole exposeInMainWorld call. Mirrors preload-log-popout.
+const setZoom = (factor) => { try { if (webFrame) webFrame.setZoomFactor(factor); } catch (e) { console.warn('[preload-qso-popout] setZoom:', e); } };
+const getZoom = () => { try { return webFrame ? webFrame.getZoomFactor() : 1; } catch { return 1; } };
 
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
+  setZoom,
+  getZoom,
   getAllQsos: () => ipcRenderer.invoke('get-all-qsos'),
   updateQso: (data) => ipcRenderer.invoke('update-qso', data),
   expandQsoMultipark: (data) => ipcRenderer.invoke('expand-qso-multipark', data),

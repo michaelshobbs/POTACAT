@@ -324,7 +324,8 @@ const GLOBAL_KEYS = new Set([
   'pairedDevices',     // ECHOCAT paired-device tokens
   'cloudTunnelToken',  // CF Tunnel credential (machine-scoped)
   'firstRun',          // first-time-launch flag
-  'piAccess',          // easter egg unlock
+  'piAccess',          // easter egg unlock (legacy — now-public features)
+  'ultracat',          // ULTRACAT mode unlock (CTRL+SHIFT+click π — The Net)
   'lightMode',         // theme — light vs dark master switch
   'darkVariant',       // dark sub-variant: 'navy' (legacy) | 'charcoal'
   'updateChannel',     // auto-update channel
@@ -3804,6 +3805,16 @@ let jtcatAutoCqMode = 'off';          // 'off' | 'pota' | 'sota' | 'all'
 let jtcatAutoCqWorkedSession = new Set(); // callsigns attempted/worked this session
 let jtcatAutoCqOwner = null;           // 'popout' | 'remote' | null
 
+// ULTRACAT (tier-2 easter egg) — Full Auto CQ "run" mode: we call CQ, work
+// whoever answers, then re-arm CQ. Gated behind the π unlock (settings.ultracat)
+// and bounded by an attended-operator watchdog (Part 97 automatic-control line).
+let jtcatUltracat = false;             // mirrors settings.ultracat (live popout reveal)
+let jtcatFullAutoCq = false;           // run mode active
+let jtcatFullAutoCqOwner = null;       // 'popout' | 'remote'
+let jtcatFullAutoCqModifier = '';      // CQ modifier carried across re-arms (POTA/DX/…)
+let jtcatFullAutoCqLastActivity = 0;   // ms epoch of last QSO/decode progress (watchdog)
+const JTCAT_FULL_AUTO_CQ_WATCHDOG_MS = 30 * 60 * 1000; // 30 min unattended cap
+
 function matchesAutoCqFilter(text, filterMode) {
   const upper = (text || '').toUpperCase();
   if (!upper.startsWith('CQ ')) return false;
@@ -3837,6 +3848,104 @@ function broadcastAutoCqState() {
   }
   if (remoteServer && remoteServer.hasClient()) {
     remoteServer.broadcastJtcatAutoCqState(state);
+  }
+}
+
+// ─── Full Auto CQ (ULTRACAT) ────────────────────────────────────────────────
+// Run mode: call CQ, work whoever answers, then re-arm CQ — forever, until the
+// operator stops it or the attended-watchdog trips. Gated behind the π unlock.
+
+// Per-QSO retry ceiling — user-configurable via settings.jtcatMaxQsoAttempts,
+// falling back to the historical constant. Clamped to a sane range.
+function jtcatMaxQsoRetries() {
+  const n = parseInt(settings.jtcatMaxQsoAttempts, 10);
+  return (Number.isFinite(n) && n >= 1 && n <= 60) ? n : JTCAT_MAX_QSO_RETRIES;
+}
+
+function broadcastFullAutoCqState() {
+  const state = { active: jtcatFullAutoCq, owner: jtcatFullAutoCqOwner, workedCount: jtcatAutoCqWorkedSession.size };
+  if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
+    jtcatPopoutWin.webContents.send('jtcat-full-auto-cq-state', state);
+  }
+}
+
+// Build a fresh CQ QSO object and start transmitting. Returns the QSO or null
+// if callsign/grid/engine aren't ready. Shared by re-arm; mirrors the manual
+// CQ button's message build.
+function jtcatBuildCqQso(modifier) {
+  const myCall = (settings.myCallsign || '').toUpperCase();
+  const myGrid = (settings.grid || '').toUpperCase().substring(0, 4);
+  if (!myCall || !myGrid || !ft8Engine) return null;
+  const mod = (modifier || '').toUpperCase().replace(/[^A-Z]/g, '').substring(0, 4);
+  const txMsg = mod ? 'CQ ' + mod + ' ' + myCall + ' ' + myGrid : 'CQ ' + myCall + ' ' + myGrid;
+  const nextSlot = ft8Engine._lastRxSlot === 'even' ? 'odd' : 'even';
+  ft8Engine.setTxSlot(nextSlot);
+  const qso = { mode: 'cq', call: null, grid: null, phase: 'cq', txMsg,
+    report: null, sentReport: null, myCall, myGrid, txRetries: 0 };
+  ft8Engine._txEnabled = true;
+  ft8Engine.setTxMessage(txMsg);
+  ft8Engine.tryImmediateTx();
+  return qso;
+}
+
+// Re-arm CQ after a QSO completes or a stalled QSO is abandoned, in run mode.
+function rearmCq(owner) {
+  if (!jtcatFullAutoCq || jtcatFullAutoCqOwner !== owner) return false;
+  const qso = jtcatBuildCqQso(jtcatFullAutoCqModifier);
+  if (!qso) { stopFullAutoCq('callsign/grid not set'); return false; }
+  jtcatFullAutoCqLastActivity = Date.now();
+  if (owner === 'remote') { remoteJtcatQso = qso; remoteJtcatBroadcastQso(); }
+  else { popoutJtcatQso = qso; popoutBroadcastQso(); }
+  sendCatLog('[JTCAT] Full Auto CQ — re-arming CQ: ' + qso.txMsg);
+  return true;
+}
+
+// Start run mode for an owner (popout-only for v1). Guarded by the ULTRACAT
+// unlock so a locked client can't drive it.
+function startFullAutoCq(owner, modifier) {
+  if (!settings.ultracat) { sendCatLog('[JTCAT] Full Auto CQ blocked — ULTRACAT locked'); return false; }
+  if (!ft8Engine) { sendCatLog('[JTCAT] Full Auto CQ blocked — engine not running'); return false; }
+  jtcatFullAutoCq = true;
+  jtcatFullAutoCqOwner = owner;
+  jtcatFullAutoCqModifier = modifier || '';
+  jtcatFullAutoCqLastActivity = Date.now();
+  jtcatAutoCqMode = 'off';        // run and hunt are mutually exclusive
+  jtcatAutoCqWorkedSession.clear();
+  broadcastAutoCqState();
+  const qso = jtcatBuildCqQso(jtcatFullAutoCqModifier);
+  if (!qso) { stopFullAutoCq('callsign/grid not set'); return false; }
+  if (owner === 'remote') { remoteJtcatQso = qso; remoteJtcatBroadcastQso(); }
+  else { popoutJtcatQso = qso; popoutBroadcastQso(); }
+  broadcastFullAutoCqState();
+  sendCatLog('[JTCAT] Full Auto CQ STARTED: ' + qso.txMsg);
+  return true;
+}
+
+// Stop run mode and silence TX. `reason` (if set) surfaces a popout notice.
+function stopFullAutoCq(reason) {
+  const wasActive = jtcatFullAutoCq;
+  jtcatFullAutoCq = false;
+  jtcatFullAutoCqOwner = null;
+  if (ft8Engine) {
+    ft8Engine._txEnabled = false;
+    try { ft8Engine.setTxMessage(''); } catch {}
+    try { ft8Engine.setTxSlot('auto'); } catch {}
+    if (ft8Engine._txActive && typeof ft8Engine.txComplete === 'function') ft8Engine.txComplete();
+  }
+  broadcastFullAutoCqState();
+  if (wasActive && reason && jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
+    jtcatPopoutWin.webContents.send('jtcat-qso-state', { phase: 'error', error: 'Full Auto CQ stopped — ' + reason });
+  }
+  if (wasActive) sendCatLog('[JTCAT] Full Auto CQ STOPPED (' + (reason || 'user') + ')');
+}
+
+// Attended-operator watchdog — Part 97 keeps unattended automatic control off
+// the FT8 calling frequencies, so a forgotten run session must not transmit
+// indefinitely. Called each decode cycle while run mode is active.
+function jtcatFullAutoCqWatchdog() {
+  if (!jtcatFullAutoCq) return;
+  if (Date.now() - jtcatFullAutoCqLastActivity > JTCAT_FULL_AUTO_CQ_WATCHDOG_MS) {
+    stopFullAutoCq('30-minute attended limit reached — confirm you are at the radio to resume');
   }
 }
 
@@ -4017,6 +4126,8 @@ function startJtcat(mode) {
   jtcatAutoCqMode = 'off';
   jtcatAutoCqWorkedSession.clear();
   jtcatAutoCqOwner = null;
+  jtcatFullAutoCq = false;
+  jtcatFullAutoCqOwner = null;
   if (!jtcatManager) jtcatManager = new JtcatManager();
   jtcatManager.startSlice({ sliceId: 'default', mode: mode || 'FT8' });
   ft8Engine = jtcatManager.engine; // Phase 0 alias
@@ -4124,14 +4235,22 @@ function startJtcat(mode) {
       const sliceBand = jtcatManager ? jtcatManager.getDialFreq('default').band : '';
       remoteServer.broadcastJtcatDecode({ ...data, time: timeStr, sliceId: 'default', band: sliceBand });
     }
-    // Clean up completed QSOs (re-arms auto-CQ for next cycle)
+    // Attended-operator watchdog for Full Auto CQ run mode (Part 97).
+    jtcatFullAutoCqWatchdog();
+    // Clean up completed QSOs. In Full Auto CQ run mode the popout owner
+    // re-arms a fresh CQ instead of going idle (work-then-CQ-again loop).
     if (remoteJtcatQso && remoteJtcatQso.phase === 'done') {
       remoteJtcatQso = null;
       remoteJtcatBroadcastQso();
     }
     if (popoutJtcatQso && popoutJtcatQso.phase === 'done') {
-      popoutJtcatQso = null;
-      popoutBroadcastQso();
+      if (popoutJtcatQso.call) jtcatAutoCqWorkedSession.add(popoutJtcatQso.call);
+      if (jtcatFullAutoCq && jtcatFullAutoCqOwner === 'popout') {
+        rearmCq('popout');
+      } else {
+        popoutJtcatQso = null;
+        popoutBroadcastQso();
+      }
     }
     if (remoteJtcatQso && remoteJtcatQso.phase !== 'done') {
       const phaseBefore = remoteJtcatQso.phase;
@@ -4144,7 +4263,7 @@ function startJtcat(mode) {
         } else {
           remoteJtcatQso.txRetries = (remoteJtcatQso.txRetries || 0) + 1;
         }
-        const max = (remoteJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : JTCAT_MAX_QSO_RETRIES;
+        const max = (remoteJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : jtcatMaxQsoRetries();
         if (remoteJtcatQso.txRetries >= max) {
           console.log('[JTCAT Remote] TX retry limit reached (' + max + ') in phase ' + remoteJtcatQso.phase + ' — giving up');
           const stoppedPhase = remoteJtcatQso.phase;
@@ -4173,18 +4292,22 @@ function startJtcat(mode) {
       popoutJtcatQso._heardThisCycle = false;
       processPopoutJtcatQso(data.results || []);
       if (popoutJtcatQso && popoutJtcatQso.phase === phaseBefore && popoutJtcatQso.phase !== 'done') {
-        if (popoutJtcatQso._heardThisCycle) {
-          popoutJtcatQso.txRetries = 0; // they're still responding, keep trying
-        } else {
-          popoutJtcatQso.txRetries = (popoutJtcatQso.txRetries || 0) + 1;
-        }
-        const max = (popoutJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : JTCAT_MAX_QSO_RETRIES;
-        if (popoutJtcatQso.txRetries >= max) {
-          console.log('[JTCAT Popout] TX retry limit reached (' + max + ') in phase ' + popoutJtcatQso.phase + ' — giving up');
-          // Capture phase + call BEFORE null'ing the QSO state for the
-          // user-facing message (the toast on the popout reads it).
-          const stoppedPhase = popoutJtcatQso.phase;
-          const stoppedCall = popoutJtcatQso.call || '';
+        const inRunMode = jtcatFullAutoCq && jtcatFullAutoCqOwner === 'popout';
+        const stoppedPhase = popoutJtcatQso.phase;
+        const stoppedCall = popoutJtcatQso.call || '';
+        const outcome = _jtcatStateMachine.decideRetryOutcome({
+          phase: stoppedPhase, txRetries: popoutJtcatQso.txRetries, heard: popoutJtcatQso._heardThisCycle,
+          maxCq: JTCAT_MAX_CQ_RETRIES, maxQso: jtcatMaxQsoRetries(), runMode: inRunMode,
+        });
+        popoutJtcatQso.txRetries = outcome.retries;
+        if (outcome.action === 'rearm') {
+          // Abandon the stalled QSO and resume calling CQ.
+          sendCatLog('[JTCAT] Full Auto CQ — ' + (stoppedCall || 'partner') + ' stalled, resuming CQ');
+          if (stoppedCall) jtcatAutoCqWorkedSession.add(stoppedCall);
+          rearmCq('popout');
+        } else if (outcome.action === 'abort') {
+          const max = (stoppedPhase === 'cq') ? JTCAT_MAX_CQ_RETRIES : jtcatMaxQsoRetries();
+          console.log('[JTCAT Popout] TX retry limit reached (' + max + ') in phase ' + stoppedPhase);
           ft8Engine._txEnabled = false;
           ft8Engine.setTxMessage('');
           ft8Engine.setTxSlot('auto');
@@ -4201,6 +4324,7 @@ function startJtcat(mode) {
         }
       } else if (popoutJtcatQso && popoutJtcatQso.phase !== phaseBefore) {
         popoutJtcatQso.txRetries = 0;
+        jtcatFullAutoCqLastActivity = Date.now(); // QSO progressed — pet the watchdog
       }
     }
 
@@ -15897,6 +16021,25 @@ app.whenReady().then(() => {
     console.log('[JTCAT Popout] Auto-CQ mode:', mode);
   });
 
+  // ULTRACAT unlock state from the main window — forward to the popout so its
+  // .ultracat-gated controls reveal/hide live. (The popout also reads
+  // settings.ultracat on its own load for the open-fresh case.)
+  ipcMain.on('jtcat-set-ultracat', (_e, on) => {
+    jtcatUltracat = !!on;
+    if (!jtcatUltracat && jtcatFullAutoCq) stopFullAutoCq('ULTRACAT locked');
+    if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
+      jtcatPopoutWin.webContents.send('jtcat-ultracat', jtcatUltracat);
+    }
+  });
+
+  // ULTRACAT Full Auto CQ run mode — start/stop. Server-side ULTRACAT guard
+  // lives in startFullAutoCq. `payload` = { on, modifier }.
+  ipcMain.on('jtcat-popout-full-auto-cq', (_e, payload) => {
+    const on = payload && typeof payload === 'object' ? payload.on : payload;
+    if (on) startFullAutoCq('popout', (payload && payload.modifier) || '');
+    else stopFullAutoCq('stopped by operator');
+  });
+
   ipcMain.on('jtcat-popout-skip-phase', async () => {
     if (!popoutJtcatQso || popoutJtcatQso.phase === 'done' || popoutJtcatQso.phase === 'idle') return;
     const q = popoutJtcatQso;
@@ -15937,6 +16080,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.on('jtcat-popout-cancel-qso', () => {
+    if (jtcatFullAutoCq && jtcatFullAutoCqOwner === 'popout') stopFullAutoCq('cancelled by operator');
     const q = popoutJtcatQso;
     popoutJtcatQso = null;
     const eng = (q && q.sliceId && jtcatManager) ? jtcatManager.getEngine(q.sliceId) : ft8Engine;
@@ -19057,6 +19201,7 @@ app.whenReady().then(() => {
   });
   ipcMain.on('jtcat-enable-tx', (_e, enabled) => { if (ft8Engine) ft8Engine._txEnabled = enabled; });
   ipcMain.on('jtcat-halt-tx', () => {
+    if (jtcatFullAutoCq) stopFullAutoCq('Halt TX');
     // Halt TX on ALL engines (multi-slice: any engine could be TX'ing)
     if (jtcatManager) {
       for (const id of jtcatManager.sliceIds) {
@@ -19274,9 +19419,15 @@ app.whenReady().then(() => {
         }
         // Advance QSO state machine from this slice's decodes
         // (same logic as single-engine path in startJtcat)
+        jtcatFullAutoCqWatchdog();
         if (popoutJtcatQso && popoutJtcatQso.phase === 'done') {
-          popoutJtcatQso = null;
-          popoutBroadcastQso();
+          if (popoutJtcatQso.call) jtcatAutoCqWorkedSession.add(popoutJtcatQso.call);
+          if (jtcatFullAutoCq && jtcatFullAutoCqOwner === 'popout') {
+            rearmCq('popout');
+          } else {
+            popoutJtcatQso = null;
+            popoutBroadcastQso();
+          }
         }
         if (remoteJtcatQso && remoteJtcatQso.phase === 'done') {
           remoteJtcatQso = null;
@@ -19287,25 +19438,30 @@ app.whenReady().then(() => {
           popoutJtcatQso._heardThisCycle = false;
           processPopoutJtcatQso(data.results || []);
           if (popoutJtcatQso && popoutJtcatQso.phase === phaseBefore && popoutJtcatQso.phase !== 'done') {
-            if (popoutJtcatQso._heardThisCycle) {
-              popoutJtcatQso.txRetries = 0;
-            } else {
-              popoutJtcatQso.txRetries = (popoutJtcatQso.txRetries || 0) + 1;
-              const max = (popoutJtcatQso.phase === 'cq') ? JTCAT_MAX_CQ_RETRIES : JTCAT_MAX_QSO_RETRIES;
-              if (popoutJtcatQso.txRetries >= max) {
-                console.log('[JTCAT Multi] Popout TX retry limit — giving up');
-                engine._txEnabled = false;
-                engine.setTxMessage('');
-                if (engine._txActive) engine.txComplete();
-                popoutJtcatQso = null;
-                popoutBroadcastQso();
-                if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
-                  jtcatPopoutWin.webContents.send('jtcat-qso-state', { phase: 'error', error: 'No response — TX stopped' });
-                }
+            const inRunMode = jtcatFullAutoCq && jtcatFullAutoCqOwner === 'popout';
+            const stoppedCall = popoutJtcatQso.call || '';
+            const outcome = _jtcatStateMachine.decideRetryOutcome({
+              phase: popoutJtcatQso.phase, txRetries: popoutJtcatQso.txRetries, heard: popoutJtcatQso._heardThisCycle,
+              maxCq: JTCAT_MAX_CQ_RETRIES, maxQso: jtcatMaxQsoRetries(), runMode: inRunMode,
+            });
+            popoutJtcatQso.txRetries = outcome.retries;
+            if (outcome.action === 'rearm') {
+              if (stoppedCall) jtcatAutoCqWorkedSession.add(stoppedCall);
+              rearmCq('popout');
+            } else if (outcome.action === 'abort') {
+              console.log('[JTCAT Multi] Popout TX retry limit — giving up');
+              engine._txEnabled = false;
+              engine.setTxMessage('');
+              if (engine._txActive) engine.txComplete();
+              popoutJtcatQso = null;
+              popoutBroadcastQso();
+              if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
+                jtcatPopoutWin.webContents.send('jtcat-qso-state', { phase: 'error', error: 'No response — TX stopped' });
               }
             }
           } else if (popoutJtcatQso && popoutJtcatQso.phase !== phaseBefore) {
             popoutJtcatQso.txRetries = 0;
+            jtcatFullAutoCqLastActivity = Date.now();
           }
           popoutBroadcastQso();
         }

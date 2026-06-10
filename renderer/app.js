@@ -12938,6 +12938,8 @@ async function openSettingsDialog(tab) {
   if (modeRadio) modeRadio.checked = true;
   // Pi access (The Net easter egg) — unlock gated features if previously authorized
   if (typeof applyPiAccess === 'function') applyPiAccess(!!s.piAccess);
+  // ULTRACAT mode (tier-2 easter egg) — reveal Full Auto CQ controls if unlocked
+  if (typeof applyUltracat === 'function') applyUltracat(!!s.ultracat);
   // Restore settings tab (or navigate to specified tab)
   if (settingsSearch) settingsSearch.value = '';
   const targetTab = _openSettingsTab || localStorage.getItem('settings-active-tab') || 'summary';
@@ -18683,36 +18685,63 @@ function applyPiAccess(_unlocked) {
   if (jtcatBtn) jtcatBtn.classList.remove('hidden');
 }
 
+// --- ULTRACAT mode (The Net easter egg, tier 2) ---
+// The original pi-access features went public, so the CTRL+SHIFT+click π
+// gesture now unlocks ULTRACAT: the hidden Full Auto CQ / auto-sequence
+// controls in the JTCAT popout. State is machine-scoped (settings.ultracat)
+// and pushed to the popout so its .ultracat-gated controls reveal live.
+const ultracatOverlay = document.getElementById('ultracat-overlay');
+let ultracatUnlocked = false;
+
+function applyUltracat(unlocked) {
+  ultracatUnlocked = !!unlocked;
+  document.body.classList.toggle('ultracat', ultracatUnlocked);
+  for (const el of document.querySelectorAll('.ultracat-gated')) {
+    el.classList.toggle('hidden', !ultracatUnlocked);
+  }
+  // Tell main so it can forward to the JTCAT popout (live reveal/hide).
+  if (window.api && typeof window.api.jtcatSetUltracat === 'function') {
+    window.api.jtcatSetUltracat(ultracatUnlocked);
+  }
+}
+
+let _ultracatOverlayTimer = null;
+function flashUltracatOverlay(revoked) {
+  if (!ultracatOverlay) return;
+  ultracatOverlay.classList.toggle('revoked', !!revoked);
+  const sub = ultracatOverlay.querySelector('.ultracat-sub');
+  if (sub) sub.textContent = revoked ? 'ACCESS: REVOKED' : 'ACCESS: AUTHORIZED';
+  // showModal() puts the overlay in the top layer — ABOVE the open Settings
+  // dialog (also modal), which a plain z-index can't reach. close() returns
+  // focus to Settings underneath.
+  try {
+    if (!ultracatOverlay.open) ultracatOverlay.showModal();
+  } catch { /* not a <dialog> / already open — ignore */ }
+  void ultracatOverlay.offsetWidth; // restart CSS animations
+  clearTimeout(_ultracatOverlayTimer);
+  _ultracatOverlayTimer = setTimeout(() => {
+    try { ultracatOverlay.close(); } catch { /* ignore */ }
+  }, revoked ? 1400 : 2200);
+}
+
 piAccessEl.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();
   const mod = e.ctrlKey || e.metaKey;
   if (!mod || !e.shiftKey) return;
-  // Ctrl+Alt+Shift+Click (Cmd+Alt+Shift on Mac) -> revoke access
-  if (e.altKey && piUnlocked) {
-    const txt = piOverlay.querySelector('.pi-overlay-text');
-    txt.textContent = 'ACCESS: REVOKED';
-    txt.style.color = '#ff1744';
-    txt.style.textShadow = '0 0 10px #ff1744, 0 0 30px #ff174480';
-    piOverlay.classList.remove('hidden');
-    setTimeout(() => {
-      piOverlay.classList.add('hidden');
-      txt.textContent = 'ACCESS: AUTHORIZED';
-      txt.style.color = '';
-      txt.style.textShadow = '';
-    }, 1800);
-    applyPiAccess(false);
-    window.api.saveSettings({ piAccess: false });
+  // Ctrl+Alt+Shift+Click (Cmd+Alt+Shift on Mac) -> revoke ULTRACAT
+  if (e.altKey) {
+    if (!ultracatUnlocked) return;
+    applyUltracat(false);
+    window.api.saveSettings({ ultracat: false });
+    flashUltracatOverlay(true);
     return;
   }
-  // Ctrl+Shift+Click (Cmd+Shift on Mac) -> grant access
-  if (piUnlocked) return;
-  piOverlay.classList.remove('hidden');
-  setTimeout(() => {
-    piOverlay.classList.add('hidden');
-  }, 1800);
-  applyPiAccess(true);
-  window.api.saveSettings({ piAccess: true });
+  // Ctrl+Shift+Click (Cmd+Shift on Mac) -> unlock ULTRACAT
+  if (ultracatUnlocked) return; // already in; revoke is the way out
+  applyUltracat(true);
+  window.api.saveSettings({ ultracat: true });
+  flashUltracatOverlay(false);
 });
 
 // MIDI hot-plug: re-enumerate when devices change
