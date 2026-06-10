@@ -3004,11 +3004,9 @@
       <legend>Sign Out</legend>
       <button type="button" id="cloud-signout-btn" class="btn">Sign Out of POTACAT Cloud</button>
     </fieldset>
-    </div><!-- /.settings-scroll-area -->
-    <div class="dialog-buttons">
-      <button id="settings-save">Save</button>
-      <button id="settings-cancel">Cancel</button>
-    </div>
+    <!-- Footer scrolls WITH the content (last child of the scroll area) so the
+         only pinned bottom element is the small Save/Cancel bar below — keeps
+         Save visible on every screen size without scrolling. K3SBP 2026-06-10. -->
     <div class="settings-footer" style="position:relative;">
       <!-- Two-column layout: ECHOCAT promo on the left (~40%), the
            existing byline / coffee / links cluster on the right (~60%),
@@ -3057,6 +3055,11 @@
         </div>
       </div>
       <span id="pi-access" class="pi-access">&pi;</span>
+    </div>
+    </div><!-- /.settings-scroll-area -->
+    <div class="dialog-buttons">
+      <button id="settings-save">Save</button>
+      <button id="settings-cancel">Cancel</button>
     </div>
     </div><!-- /.settings-shell -->
   </dialog>
