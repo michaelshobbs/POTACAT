@@ -660,9 +660,16 @@
   if (settingsDialog) {
     observer.observe(settingsDialog, { attributes: true, attributeFilter: ['open'] });
   }
-  cloudFieldsets.forEach(fs => {
-    observer.observe(fs, { attributes: true, attributeFilter: ['class'] });
-  });
+  // Observe ONLY the first cloud fieldset's class for the tab-visible toggle.
+  // Watching every cloud fieldset re-fired this observer whenever
+  // refreshStatus()/showAccount() toggled a `hidden` class on a cloud fieldset
+  // (e.g. the Sign Out fieldset), looping refreshStatus and making the
+  // "Cloud QSOs" count blink --/225. switchSettingsTab sets `tab-visible` on
+  // ALL cloud fieldsets including [0], so [0] alone is a sufficient signal and
+  // it's never mutated by refreshStatus. K3SBP 2026-06-10.
+  if (cloudFieldsets[0]) {
+    observer.observe(cloudFieldsets[0], { attributes: true, attributeFilter: ['class'] });
+  }
 
   // Initial load
   setTimeout(() => { loadCloudSettings(); refreshStatus(); }, 2000);
