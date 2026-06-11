@@ -17196,19 +17196,23 @@ app.whenReady().then(() => {
       }
     } catch {}
     // Pick the host for the QR. Reuses RemoteServer.getLocalIPs() so the
-    // pairing flow stays in sync with the network UI in Settings: same
-    // detection, same ordering, same Tailscale awareness. The helper
-    // already returns Tailscale interfaces first and surfaces the
-    // MagicDNS hostname when present, which is what we want for the QR
-    // — a stable name that survives IP changes and works for users
-    // pairing over a Tailnet from anywhere. Falls back to the IP if no
-    // MagicDNS name. Falls back to 127.0.0.1 only if the machine has
-    // literally no non-internal IPv4 interfaces.
+    // pairing flow stays in sync with the network UI in Settings.
+    // PRIMARY host = LAN address: the Tailscale MagicDNS name only
+    // resolves for phones already ON the tailnet, and most phones
+    // pairing for the first time aren't — leading with the ts.net name
+    // dead-ended pairing entirely with "no server found with the
+    // specified hostname" (HI3NLER 2026-06-11; the getLocalIPs sort
+    // puts Tailscale first, so ips[0] was the MagicDNS name on every
+    // Tailscale-equipped desktop). Tailnet reachability is preserved
+    // via the separate tsHost param embedded below. Falls back to the
+    // Tailscale name only when there is no LAN interface at all, and
+    // to 127.0.0.1 only with no non-internal IPv4 interfaces.
     const os = require('os');
     const ips = RemoteServer.getLocalIPs();
     let host = '127.0.0.1';
     if (ips.length > 0) {
-      host = ips[0].tailscaleHostname || ips[0].address;
+      const lan = ips.find((ip) => !ip.tailscale);
+      host = lan ? lan.address : (ips[0].tailscaleHostname || ips[0].address);
     }
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
@@ -17340,7 +17344,13 @@ app.whenReady().then(() => {
     } catch {}
     const ips = RemoteServer.getLocalIPs();
     let host = '127.0.0.1';
-    if (ips.length > 0) host = ips[0].tailscaleHostname || ips[0].address;
+    if (ips.length > 0) {
+      // LAN-first, same reasoning as the QR flow above — the ts.net
+      // name is unresolvable for phones not on the tailnet (HI3NLER
+      // 2026-06-11); tsHost below carries the tailnet dial.
+      const lan = ips.find((ip) => !ip.tailscale);
+      host = lan ? lan.address : (ips[0].tailscaleHostname || ips[0].address);
+    }
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
     const hostname = (() => { try { return require('os').hostname(); } catch { return 'POTACAT'; } })();
