@@ -5644,7 +5644,9 @@ async function _remoteRadiosRefreshList() {
     const d = Math.floor(ms / (24 * 3600 * 1000));
     if (d > 1) return 'expires in ' + d + 'd';
     const h = Math.floor(ms / (3600 * 1000));
-    return 'expires in ' + h + 'h';
+    if (h >= 1) return 'expires in ' + h + 'h';
+    // Guest Passes run on hours, not days — show minutes under an hour.
+    return 'expires in ' + Math.max(1, Math.floor(ms / 60000)) + 'm';
   };
 
   listEl.innerHTML = targets.map(t => {
@@ -5658,7 +5660,13 @@ async function _remoteRadiosRefreshList() {
     })();
     const expBadgeRaw = fmtExpiry(t.expiresAt);
     let trustBadgeHtml = '';
-    if (t.trust === 'account' || t.accountLinked) trustBadgeHtml = '<span class="rr-badge account">🔗 Account-linked</span>';
+    if (t.kind === 'pass') {
+      // Guest Pass session — show the guardrails right on the row.
+      const caps = [t.privilegeClass ? String(t.privilegeClass).toUpperCase() : null,
+                    t.maxPowerW ? t.maxPowerW + 'W max' : null].filter(Boolean).join(' · ');
+      trustBadgeHtml = '<span class="rr-badge guest">🎟 Guest Pass' + (caps ? ' — ' + _esc(caps) : '') + '</span>';
+    }
+    else if (t.trust === 'account' || t.accountLinked) trustBadgeHtml = '<span class="rr-badge account">🔗 Account-linked</span>';
     else if (t.trust === 'trusted' || t.trusted) trustBadgeHtml = '<span class="rr-badge trusted">🔒 Trusted</span>';
     else trustBadgeHtml = '<span class="rr-badge guest">Guest</span>';
     const expBadgeHtml = expBadgeRaw ? '<span class="rr-badge leg">' + _esc(expBadgeRaw) + '</span>' : '<span class="rr-badge leg">no expiry</span>';
@@ -5667,8 +5675,15 @@ async function _remoteRadiosRefreshList() {
       if (isActive && status.state === 'connected') return '<b>Connected.</b> Last used ' + _esc(fmtAge(t.lastConnectedAt));
       if (isActive && status.state === 'connecting') return '<b>Connecting&hellip;</b>';
       if (isActive && status.state === 'authing') return '<b>Authenticating&hellip;</b>';
-      if (isActive && status.state === 'auth-fail') return '<b>Auth failed.</b> Token may have expired — re-pair from your shack.';
+      if (isActive && status.state === 'auth-fail') {
+        return t.kind === 'pass'
+          ? '<b>Pass refused.</b> It may have expired or been revoked — ask the owner for a fresh link.'
+          : '<b>Auth failed.</b> Token may have expired — re-pair from your shack.';
+      }
       if (isActive && status.state === 'disconnected') return '<b>Reconnecting&hellip;</b>';
+      if (t.kind === 'pass' && t.expiresAt != null && t.expiresAt <= Date.now()) {
+        return '<b>Session ended.</b> Ask the owner for a fresh pass to reconnect.';
+      }
       return 'Last connected ' + _esc(fmtAge(t.lastConnectedAt));
     })();
     const actionBtnHtml = (() => {
@@ -5759,23 +5774,42 @@ async function _remoteRadiosRemove(id) {
     rrPasteStatus.classList.toggle('hidden', !msg);
     rrPasteStatus.style.color = isErr ? 'var(--accent-red)' : 'var(--text-secondary)';
   }
+  // One box, any credential: a potacat://pair link (paired-device token), a
+  // Guest Pass share URL / potacat://pass link, or a bare 4-word pass code.
+  function _rrLooksLikeGuestPass(s) {
+    if (/^potacat:\/?\/?pass\//i.test(s)) return true;
+    if (/guest-pass\.html/i.test(s)) return true;
+    return /^[a-z]+(-[a-z]+){2,3}$/i.test(s); // bare 4-word (or legacy 3-word) code
+  }
   async function _remoteRadiosPaste() {
     const url = (rrPasteInput && rrPasteInput.value || '').trim();
     if (!url) return;
-    if (!/^potacat:\/\/pair\?/i.test(url)) {
-      _remoteRadiosPasteStatus("That doesn't look like a pair link — it should start with potacat://pair?", true);
-      return;
-    }
-    _remoteRadiosPasteStatus('Redeeming pair link…', false);
     try {
-      const r = window.api.pairRedeemUrl ? await window.api.pairRedeemUrl(url) : { ok: false, error: 'unsupported build' };
-      if (r && r.ok) {
-        _remoteRadiosPasteStatus('✓ Paired. Added to your shacks below.', false);
-        if (rrPasteInput) rrPasteInput.value = '';
-        _remoteRadiosRefreshList();
+      if (/^potacat:\/\/pair\?/i.test(url)) {
+        _remoteRadiosPasteStatus('Redeeming pair link…', false);
+        const r = window.api.pairRedeemUrl ? await window.api.pairRedeemUrl(url) : { ok: false, error: 'unsupported build' };
+        if (r && r.ok) {
+          _remoteRadiosPasteStatus('✓ Paired. Added to your shacks below.', false);
+          if (rrPasteInput) rrPasteInput.value = '';
+        } else {
+          _remoteRadiosPasteStatus('Could not redeem: ' + ((r && r.error) || 'all paths failed'), true);
+        }
+      } else if (_rrLooksLikeGuestPass(url)) {
+        _remoteRadiosPasteStatus('Redeeming Guest Pass…', false);
+        const r = window.api.guestPassRedeem ? await window.api.guestPassRedeem(url) : { ok: false, error: 'unsupported build' };
+        if (r && r.ok) {
+          const until = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '?';
+          _remoteRadiosPasteStatus('✓ Guest Pass active — connecting to ' + (r.owner || r.name) + '. ' +
+            (r.maxPowerW ? r.maxPowerW + 'W max · ' : '') + 'until ' + until + '.', false);
+          if (rrPasteInput) rrPasteInput.value = '';
+        } else {
+          _remoteRadiosPasteStatus('Could not redeem: ' + ((r && r.error) || 'unknown error'), true);
+        }
       } else {
-        _remoteRadiosPasteStatus('Could not redeem: ' + ((r && r.error) || 'all paths failed'), true);
+        _remoteRadiosPasteStatus("That doesn't look like a pair link or a Guest Pass — paste a potacat://pair link, a guest-pass URL, or the 4-word pass code.", true);
+        return;
       }
+      _remoteRadiosRefreshList();
     } catch (err) {
       _remoteRadiosPasteStatus('Could not redeem: ' + (err.message || err), true);
     }
@@ -5983,11 +6017,36 @@ if (window.api && window.api.onRemoteClientDisplaced) {
       chip.style.background = '#e94560';
       chip.style.color = '#fff';
       chip.title = 'Auth failed (' + (state.reason || 'expired') + ') — open Remote Radios to re-pair';
+    } else if (state.state === 'pass-ended') {
+      chip.textContent = '🎟 Guest Pass ended';
+      chip.style.background = '#e94560';
+      chip.style.color = '#fff';
+      chip.title = 'Guest Pass session ended (' + (state.reason || 'expired') + ') — back on the local rig';
     }
   };
   chip.addEventListener('click', _remoteRadiosOpen);
   if (window.api && window.api.onRemoteClientStatus) {
     window.api.onRemoteClientStatus(setChip);
+    // Loud, app-wide notice when a Guest Pass session ends — the user may
+    // be nowhere near the Remote Radios dialog when the clock runs out.
+    window.api.onRemoteClientStatus((s) => {
+      if (s && s.state === 'pass-ended' && typeof showLogToast === 'function') {
+        showLogToast('Guest Pass session ended (' + (s.reason || 'expired') + ') — switched back to your local rig.', { warn: true, duration: 8000 });
+      }
+    });
+  }
+  // Guest Pass redeemed via a potacat://pass/ deep link (landing-page
+  // button) — surface the outcome even with no dialog open.
+  if (window.api && window.api.onGuestPassRedeemed) {
+    window.api.onGuestPassRedeemed((r) => {
+      if (typeof showLogToast !== 'function') return;
+      if (r && r.ok) {
+        const until = r.expiresAt ? new Date(r.expiresAt).toLocaleTimeString() : '?';
+        showLogToast('🎟 Guest Pass active — connecting to ' + (r.owner || r.name) + ' (until ' + until + ').', { duration: 6000 });
+      } else {
+        showLogToast('Guest Pass failed: ' + ((r && r.error) || 'unknown error'), { warn: true, duration: 8000 });
+      }
+    });
   }
   // Hydrate on load.
   if (window.api && window.api.connectionTargetsGetStatus) {

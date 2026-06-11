@@ -1668,6 +1668,21 @@ function ensureRemoteClient() {
     }
     sendCatLog(`[architecture-b] log-error from host: reason=${payload.reason} call=${payload.qso && payload.qso.callsign || '?'}`);
   });
+  // Guest Pass session ended (expiry / revoke / owner stop). Mark the
+  // target row expired so the Remote Radios list reflects it, drop back
+  // to the local rig, and tell the renderer why. K3SBP 2026-06-11.
+  remoteClient.on('pass-ended', ({ reason }) => {
+    sendCatLog(`[guest-pass] session ended by host: ${reason}`);
+    target.expiresAt = Date.now();
+    settings.activeTargetId = null;
+    saveSettings(settings);
+    tearDownRemoteClient();
+    try { connectCat(); } catch {}
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('remote-client-status', { state: 'pass-ended', reason });
+      win.webContents.send('connection-targets-updated', settings.connectionTargets);
+    }
+  });
   remoteClient.connect();
 }
 
@@ -13197,6 +13212,19 @@ function handleProtocolUrl(url) {
         console.error('[pair-link] redemption threw:', err);
         sendCatLog('[pair-link] REJECTED: ' + (err.message || err));
       });
+    } else if (action === 'pass') {
+      // Guest Pass deep link — the landing page's "Open in ECHOCAT app"
+      // CTA (potacat://pass/<code>) now works on desktop too: redeem and
+      // auto-connect as a guest. K3SBP 2026-06-11.
+      redeemGuestPass(url).then(r => {
+        if (r && !r.ok) sendCatLog('[guest-pass] REJECTED: ' + r.error);
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('guest-pass-redeemed', r);
+        }
+      }).catch(err => {
+        console.error('[guest-pass] redemption threw:', err);
+        sendCatLog('[guest-pass] REJECTED: ' + (err.message || err));
+      });
     }
   } catch (err) {
     console.error('Failed to parse protocol URL:', url, err);
@@ -13288,6 +13316,109 @@ async function redeemPairLinkUrl(rawUrl) {
     });
   }
   throw lastErr || new Error('all dial legs failed');
+}
+
+// ─── Guest Pass intake (desktop as guest) ──────────────────────────────────
+// Lets this desktop redeem a "Share My Rig" Guest Pass and operate the
+// owner's shack with PassEnforcement guardrails — the same flow the iOS app
+// runs. Three intake forms, all funnelled through extractGuestPassCode():
+//   potacat://pass/<code>                                   (landing-page CTA)
+//   https://api.potacat.com/guest-pass.html?code=<code>     (the share URL)
+//   <code>                                                  (bare 4-word code)
+// Redeem mints a 64-hex session id + the owner's tunnel host; RemoteClient
+// then auths with {mode:'pass', passCode, sessionId}. K3SBP 2026-06-11.
+
+const { extractGuestPassCode } = require('./lib/guest-pass');
+
+/**
+ * Redeem a Guest Pass against the cloud and switch this desktop into
+ * remote-client mode on the owner's shack. Authed /redeem when signed in to
+ * POTACAT Cloud (better audit trail), /redeem-anonymous otherwise — falling
+ * back to anonymous if the authed call is rejected. Upserts a kind:'pass'
+ * connectionTargets row and auto-activates it.
+ */
+async function redeemGuestPass(rawInput) {
+  const code = extractGuestPassCode(rawInput);
+  if (!code) return { ok: false, error: 'Not a recognizable Guest Pass code or link' };
+
+  const post = async (path, bearer) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (bearer) headers['Authorization'] = 'Bearer ' + bearer;
+    const res = await fetch(`https://api.potacat.com/v1/passes/${encodeURIComponent(code)}${path}`, {
+      method: 'POST', headers, body: '{}',
+    });
+    let body = null;
+    try { body = await res.json(); } catch {}
+    return { status: res.status, body };
+  };
+
+  sendCatLog(`[guest-pass] Redeeming ${code} (${settings.cloudAccessToken ? 'signed-in' : 'anonymous'})…`);
+  let r;
+  try {
+    if (settings.cloudAccessToken) {
+      r = await post('/redeem', settings.cloudAccessToken);
+      if (r.status === 401 || r.status === 403) {
+        sendCatLog(`[guest-pass] authed redeem refused (HTTP ${r.status}) — retrying anonymously`);
+        r = await post('/redeem-anonymous', null);
+      }
+    } else {
+      r = await post('/redeem-anonymous', null);
+    }
+  } catch (err) {
+    return { ok: false, error: 'Cloud unreachable: ' + (err.message || err) };
+  }
+
+  if (r.status === 404) return { ok: false, error: 'Pass not found, expired, or revoked' };
+  if (r.status === 403) return { ok: false, error: (r.body && r.body.error) || 'This pass requires signing in to POTACAT Cloud first (the owner didn’t allow anonymous guests)' };
+  if (r.status !== 200 || !r.body) return { ok: false, error: (r.body && r.body.error) || ('Redeem failed (HTTP ' + r.status + ')') };
+
+  const { session_id, owner_cloud_host, owner_callsign, pass_profile } = r.body;
+  if (!session_id || !/^[a-f0-9]{64}$/.test(String(session_id))) {
+    return { ok: false, error: 'Cloud returned an invalid session token' };
+  }
+  if (!owner_cloud_host) {
+    return { ok: false, error: 'Pass owner has no Cloud Tunnel host — ask them to enable POTACAT Cloud Tunnel' };
+  }
+
+  const owner = (owner_callsign || (pass_profile && pass_profile.owner_callsign) || 'Shack').toUpperCase();
+  const expiresAtIso = pass_profile && pass_profile.expires_at;
+  const expiresAt = expiresAtIso ? Date.parse(expiresAtIso) : null;
+  const row = {
+    id: 'gp-' + code,
+    kind: 'pass',
+    name: owner + ' (Guest Pass)',
+    serviceName: owner,
+    rigModel: '',
+    fingerprint: '',
+    deviceToken: null,
+    passCode: code,
+    passSessionId: String(session_id),
+    lanHost: '', tsHost: '',
+    cloudHost: String(owner_cloud_host),
+    pairedAt: Date.now(),
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
+    trust: 'pass',
+    ownerCallsign: owner,
+    maxPowerW: pass_profile ? pass_profile.max_power_w : null,
+    privilegeClass: pass_profile ? pass_profile.privilege_class : null,
+    lastConnectedAt: null,
+    lastReachableLeg: null,
+  };
+  if (!Array.isArray(settings.connectionTargets)) settings.connectionTargets = [];
+  settings.connectionTargets = settings.connectionTargets.filter(t => t.id !== row.id);
+  settings.connectionTargets.push(row);
+
+  // Auto-activate: quiesce local CAT (it's the OWNER's rig now) and dial.
+  settings.activeTargetId = row.id;
+  saveSettings(settings);
+  try { if (cat) { cat.disconnect && cat.disconnect(); } } catch {}
+  ensureRemoteClient();
+
+  sendCatLog(`[guest-pass] OK: ${owner} via ${row.cloudHost} (class=${row.privilegeClass || '?'} maxW=${row.maxPowerW || '?'} expires=${expiresAtIso || '?'})`);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('connection-targets-updated', settings.connectionTargets);
+  }
+  return { ok: true, name: row.name, owner, expiresAt: row.expiresAt, maxPowerW: row.maxPowerW, privilegeClass: row.privilegeClass };
 }
 
 /**
@@ -17421,6 +17552,7 @@ app.whenReady().then(() => {
     const list = Array.isArray(settings.connectionTargets) ? settings.connectionTargets : [];
     return list.map(t => ({
       id: t.id,
+      kind: t.kind || 'paired',
       name: t.name,
       serviceName: t.serviceName || t.name,
       rigModel: t.rigModel || '',
@@ -17431,6 +17563,9 @@ app.whenReady().then(() => {
       pairedAt: t.pairedAt || null,
       expiresAt: t.expiresAt || null,
       trust: t.trust || 'guest',
+      ownerCallsign: t.ownerCallsign || '',
+      maxPowerW: t.maxPowerW || null,
+      privilegeClass: t.privilegeClass || null,
       lastConnectedAt: t.lastConnectedAt || null,
       lastReachableLeg: t.lastReachableLeg || null,
     }));
@@ -17450,6 +17585,17 @@ app.whenReady().then(() => {
     try {
       await redeemPairLinkUrl(url);
       return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  // Guest Pass intake — accepts potacat://pass/<code>, the
+  // guest-pass.html?code=… share URL, or a bare 4-word code. Redeems via
+  // the cloud and auto-connects this desktop as a guest. K3SBP 2026-06-11.
+  ipcMain.handle('guest-pass-redeem', async (_e, input) => {
+    try {
+      return await redeemGuestPass(input);
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : String(err) };
     }

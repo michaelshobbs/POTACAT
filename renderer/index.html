@@ -3256,16 +3256,19 @@
     </h3>
 
     <p class="remote-radios-intro">
-      Switch this desktop between your local rig and a remote shack. On your
-      shack, use <b>Summary &rarr; Pair another desktop&hellip;</b> to generate a
-      pair link, then paste it below on this computer.
+      Switch this desktop between your local rig and a remote shack.
+      <b>Your own shack:</b> Summary &rarr; Pair another desktop&hellip; generates a
+      pair link. <b>A friend's shack:</b> their Share My Rig Guest Pass link or
+      4-word code works here too. Paste either below.
     </p>
 
     <!-- Paste-a-link path: redeems directly in main (no potacat:// OS
-         protocol handler needed). K3SBP 2026-06-10. -->
+         protocol handler needed). Accepts pair links AND Guest Pass
+         links / codes. K3SBP 2026-06-11. -->
+    <div class="remote-radios-list-header" style="margin-bottom:4px;"><span>➕ Add a remote radio</span></div>
     <div class="remote-radios-paste-row" style="display:flex;gap:6px;margin-bottom:10px;">
-      <input type="text" id="remote-radios-paste-input" placeholder="potacat://pair?…  (paste the link from your shack)" autocomplete="off" spellcheck="false" style="flex:1;">
-      <button type="button" id="remote-radios-paste-btn" class="remote-radios-action">Pair</button>
+      <input type="text" id="remote-radios-paste-input" placeholder="potacat://pair link, Guest Pass link, or 4-word pass code" autocomplete="off" spellcheck="false" style="flex:1;">
+      <button type="button" id="remote-radios-paste-btn" class="remote-radios-action">Connect</button>
     </div>
     <p id="remote-radios-paste-status" class="help-text hidden" style="margin:-4px 0 8px;"></p>
 
