@@ -17744,7 +17744,13 @@ app.whenReady().then(() => {
     let Bonjour;
     try { Bonjour = require('bonjour-service').default; }
     catch { return []; }
-    const bonjour = new Bonjour();
+    // Error callback is mandatory: bonjour-service's default is
+    // `(err) => { throw err; }`, so an async 5353 bind error (macOS
+    // mDNSResponder, another scanner) would crash the whole app. Browsing
+    // is best-effort — log and return whatever was found.
+    const onMdnsError = (err) => sendCatLog('[discover-shacks] mDNS error: ' + (err && err.message || err));
+    const bonjour = new Bonjour(undefined, onMdnsError);
+    try { if (bonjour.server && bonjour.server.mdns) bonjour.server.mdns.on('error', onMdnsError); } catch {}
     const found = new Map(); // host:port → record
     const browser = bonjour.find({ type: 'potacat' });
     browser.on('up', (svc) => {
