@@ -13784,7 +13784,9 @@ app.whenReady().then(() => {
     // #46a: wire remoteServer's pass auth-mode handlers.
     // Validator: re-checks pass status via public cloud endpoint.
     // Auth callback: triggers PassEnforcement.loadPass() if idle,
-    // accepts same-pass re-attach, rejects mismatch.
+    // accepts same-pass re-attach, supersedes a stale session when no
+    // guest is connected, and rejects mismatch only while another
+    // guest is live (single-pass invariant).
     if (remoteServer) {
       remoteServer.setPassValidator(async (code, sessionToken) => {
         // Phase 3 (cloud mig 009): every WS pass-auth attempt is
@@ -13820,16 +13822,55 @@ app.whenReady().then(() => {
           return null;
         }
       });
+      // Grace timer: when the last pass-authed client drops, give the
+      // guest 60s to reconnect (WS blip, app relaunch) before ending
+      // the enforcement session. Without this the session lingered for
+      // the pass's full TTL after the guest closed their app — gating
+      // the owner's own CAT and refusing every new pass with "Another
+      // pass session is already active" (Casey 2026-06-10).
+      let passClientDisconnectTimer = null;
+      const clearPassDisconnectTimer = () => {
+        if (passClientDisconnectTimer) {
+          clearTimeout(passClientDisconnectTimer);
+          passClientDisconnectTimer = null;
+        }
+      };
+      remoteServer.on('pass-client-disconnected', ({ code }) => {
+        clearPassDisconnectTimer();
+        passClientDisconnectTimer = setTimeout(() => {
+          passClientDisconnectTimer = null;
+          const st = passEnforcement.getState();
+          if ((st === 'active' || st === 'expiring') && !remoteServer.hasActivePassClient()) {
+            sendCatLog(`[pass] guest gone 60s with no reconnect — ending enforcement session for ${code}`);
+            passEnforcement.endPass('disconnected');
+          }
+        }, 60_000);
+      });
       remoteServer.setPassAuthCallback(async (code, _sessionId) => {
+        clearPassDisconnectTimer();
         const state = passEnforcement.getState();
         if (state === 'idle') {
           await passEnforcement.loadPass(code);
-        } else {
-          const cur = passEnforcement.getSessionStatus();
-          if (cur.code !== code) {
-            throw new Error('Another pass session is already active on this station');
-          }
+          return;
         }
+        const cur = passEnforcement.getSessionStatus();
+        // Same-pass re-attach: reconnect after a WS blip or an app
+        // relaunch resume. The enforcement session is already correct.
+        if (cur.code === code) return;
+        // Different pass. Refuse only when a guest is actually
+        // CONNECTED under the current pass — that's the single-pass
+        // invariant. A lingering session with nobody attached (guest
+        // closed their app; grace timer hasn't fired yet) is stale:
+        // supersede it with the newly validated pass.
+        if (remoteServer.hasActivePassClient()) {
+          throw new Error('Another pass session is already active on this station');
+        }
+        sendCatLog(`[pass] superseding stale session ${cur.code} (no guest connected) with ${code}`);
+        passEnforcement.endPass('superseded');
+        // endPass settles to idle on the next tick (setImmediate) —
+        // wait for it before loading the new pass.
+        await new Promise((resolve) => setImmediate(resolve));
+        await passEnforcement.loadPass(code);
       });
     }
   } catch (err) {
@@ -19404,6 +19445,21 @@ app.whenReady().then(() => {
     // 2026-05-28.) Voice TX from the phone sets _remoteTxState via
     // handleRemotePtt, so real transmit audio still flows.
     if (!_isEffectivelyTransmitting()) return;
+    // The mic stream is for VOICE TX only. During an engine-driven digital
+    // TX (FT8/FT4 reply, Tune tone) the dax_tx envelope comes from
+    // sendTxAudio — letting the (typically silent) phone-mic chunks through
+    // interleaved silence with the FT8 packets on the same stream/packet
+    // counter: garbled on-air signal + TX-buffer backlog that polluted the
+    // next RX slot. _isEffectivelyTransmitting() can't tell voice from
+    // digital TX, so gate explicitly. (K3SBP 2026-06-11.)
+    if (smartSdrAudio._txInFlight) return;
+    if (ft8Engine && ft8Engine._txActive) return;
+    if (jtcatManager) {
+      for (const id of jtcatManager.sliceIds) {
+        const eng = jtcatManager.getEngine(id);
+        if (eng && eng._txActive) return;
+      }
+    }
     let samples;
     if (buf instanceof Float32Array) samples = buf;
     else if (ArrayBuffer.isView(buf) || buf instanceof ArrayBuffer) samples = new Float32Array(buf);
