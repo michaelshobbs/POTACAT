@@ -2054,6 +2054,11 @@ dialog {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 100px;
+  /* Flex column so the footer (margin-top:auto, below) drops to the bottom of
+     the viewport on short tabs instead of floating mid-dialog. Fieldsets keep
+     their natural height (flex-shrink:0) and scroll normally when they overflow. */
+  display: flex;
+  flex-direction: column;
   /* Reserve scrollbar gutter so async content (audio device enumeration,
      opening the rig editor, etc.) can't trigger a "scrollbar appears ->
      content shifts a few px" reflow. On tiling Wayland compositors like
@@ -2102,14 +2107,13 @@ dialog {
 .settings-shell {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   grid-template-areas:
     "header  header"
     "conn    conn"
     "tabs    search"
     "tabs    content"
-    "tabs    buttons"
-    "footer  footer";
+    "tabs    buttons";
   column-gap: 20px;
   row-gap: 4px;
 }
@@ -2159,11 +2163,15 @@ dialog {
   grid-area: buttons;
   margin-top: 8px;
 }
-.settings-shell > .settings-footer {
-  grid-area: footer;
-  margin-top: 12px;
-  border-top: 1px solid var(--border-secondary);
+/* Footer now lives at the bottom of the scroll area (scrolls with content) so
+   the Save/Cancel bar is the only pinned bottom element. margin-top:auto drops
+   it to the bottom of the viewport on short tabs; fieldsets don't compress. */
+.settings-scroll-area > fieldset { flex-shrink: 0; }
+.settings-scroll-area > .settings-footer {
+  flex-shrink: 0;
+  margin-top: auto;
   padding-top: 10px;
+  border-top: 1px solid var(--border-secondary);
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -3597,9 +3605,10 @@ dialog {
     border-top: 1px solid var(--border-secondary);
     margin-top: 0;
   }
-  .settings-shell > .settings-footer {
+  .settings-scroll-area > .settings-footer {
     font-size: 10px;
-    margin-top: 6px;
+    /* keep margin-top:auto from the base rule so the footer stays at the
+       bottom of the scroll area on short screens too */
   }
 }
 

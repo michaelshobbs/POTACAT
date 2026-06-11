@@ -5644,7 +5644,9 @@ async function _remoteRadiosRefreshList() {
     const d = Math.floor(ms / (24 * 3600 * 1000));
     if (d > 1) return 'expires in ' + d + 'd';
     const h = Math.floor(ms / (3600 * 1000));
-    return 'expires in ' + h + 'h';
+    if (h >= 1) return 'expires in ' + h + 'h';
+    // Guest Passes run on hours, not days — show minutes under an hour.
+    return 'expires in ' + Math.max(1, Math.floor(ms / 60000)) + 'm';
   };
 
   listEl.innerHTML = targets.map(t => {
@@ -5658,7 +5660,13 @@ async function _remoteRadiosRefreshList() {
     })();
     const expBadgeRaw = fmtExpiry(t.expiresAt);
     let trustBadgeHtml = '';
-    if (t.trust === 'account' || t.accountLinked) trustBadgeHtml = '<span class="rr-badge account">🔗 Account-linked</span>';
+    if (t.kind === 'pass') {
+      // Guest Pass session — show the guardrails right on the row.
+      const caps = [t.privilegeClass ? String(t.privilegeClass).toUpperCase() : null,
+                    t.maxPowerW ? t.maxPowerW + 'W max' : null].filter(Boolean).join(' · ');
+      trustBadgeHtml = '<span class="rr-badge guest">🎟 Guest Pass' + (caps ? ' — ' + _esc(caps) : '') + '</span>';
+    }
+    else if (t.trust === 'account' || t.accountLinked) trustBadgeHtml = '<span class="rr-badge account">🔗 Account-linked</span>';
     else if (t.trust === 'trusted' || t.trusted) trustBadgeHtml = '<span class="rr-badge trusted">🔒 Trusted</span>';
     else trustBadgeHtml = '<span class="rr-badge guest">Guest</span>';
     const expBadgeHtml = expBadgeRaw ? '<span class="rr-badge leg">' + _esc(expBadgeRaw) + '</span>' : '<span class="rr-badge leg">no expiry</span>';
@@ -5667,8 +5675,15 @@ async function _remoteRadiosRefreshList() {
       if (isActive && status.state === 'connected') return '<b>Connected.</b> Last used ' + _esc(fmtAge(t.lastConnectedAt));
       if (isActive && status.state === 'connecting') return '<b>Connecting&hellip;</b>';
       if (isActive && status.state === 'authing') return '<b>Authenticating&hellip;</b>';
-      if (isActive && status.state === 'auth-fail') return '<b>Auth failed.</b> Token may have expired — re-pair from your shack.';
+      if (isActive && status.state === 'auth-fail') {
+        return t.kind === 'pass'
+          ? '<b>Pass refused.</b> It may have expired or been revoked — ask the owner for a fresh link.'
+          : '<b>Auth failed.</b> Token may have expired — re-pair from your shack.';
+      }
       if (isActive && status.state === 'disconnected') return '<b>Reconnecting&hellip;</b>';
+      if (t.kind === 'pass' && t.expiresAt != null && t.expiresAt <= Date.now()) {
+        return '<b>Session ended.</b> Ask the owner for a fresh pass to reconnect.';
+      }
       return 'Last connected ' + _esc(fmtAge(t.lastConnectedAt));
     })();
     const actionBtnHtml = (() => {
@@ -5747,6 +5762,60 @@ async function _remoteRadiosRemove(id) {
 
   const localBtn = document.getElementById('remote-radios-local-btn');
   if (localBtn) localBtn.addEventListener('click', _remoteRadiosDisconnect);
+
+  // Paste-a-pair-link path. Redeems directly in main (window.api.pairRedeemUrl)
+  // — no dependency on the potacat:// OS protocol handler being registered.
+  const rrPasteBtn = document.getElementById('remote-radios-paste-btn');
+  const rrPasteInput = document.getElementById('remote-radios-paste-input');
+  const rrPasteStatus = document.getElementById('remote-radios-paste-status');
+  function _remoteRadiosPasteStatus(msg, isErr) {
+    if (!rrPasteStatus) return;
+    rrPasteStatus.textContent = msg || '';
+    rrPasteStatus.classList.toggle('hidden', !msg);
+    rrPasteStatus.style.color = isErr ? 'var(--accent-red)' : 'var(--text-secondary)';
+  }
+  // One box, any credential: a potacat://pair link (paired-device token), a
+  // Guest Pass share URL / potacat://pass link, or a bare 4-word pass code.
+  function _rrLooksLikeGuestPass(s) {
+    if (/^potacat:\/?\/?pass\//i.test(s)) return true;
+    if (/guest-pass\.html/i.test(s)) return true;
+    return /^[a-z]+(-[a-z]+){2,3}$/i.test(s); // bare 4-word (or legacy 3-word) code
+  }
+  async function _remoteRadiosPaste() {
+    const url = (rrPasteInput && rrPasteInput.value || '').trim();
+    if (!url) return;
+    try {
+      if (/^potacat:\/\/pair\?/i.test(url)) {
+        _remoteRadiosPasteStatus('Redeeming pair link…', false);
+        const r = window.api.pairRedeemUrl ? await window.api.pairRedeemUrl(url) : { ok: false, error: 'unsupported build' };
+        if (r && r.ok) {
+          _remoteRadiosPasteStatus('✓ Paired. Added to your shacks below.', false);
+          if (rrPasteInput) rrPasteInput.value = '';
+        } else {
+          _remoteRadiosPasteStatus('Could not redeem: ' + ((r && r.error) || 'all paths failed'), true);
+        }
+      } else if (_rrLooksLikeGuestPass(url)) {
+        _remoteRadiosPasteStatus('Redeeming Guest Pass…', false);
+        const r = window.api.guestPassRedeem ? await window.api.guestPassRedeem(url) : { ok: false, error: 'unsupported build' };
+        if (r && r.ok) {
+          const until = r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '?';
+          _remoteRadiosPasteStatus('✓ Guest Pass active — connecting to ' + (r.owner || r.name) + '. ' +
+            (r.maxPowerW ? r.maxPowerW + 'W max · ' : '') + 'until ' + until + '.', false);
+          if (rrPasteInput) rrPasteInput.value = '';
+        } else {
+          _remoteRadiosPasteStatus('Could not redeem: ' + ((r && r.error) || 'unknown error'), true);
+        }
+      } else {
+        _remoteRadiosPasteStatus("That doesn't look like a pair link or a Guest Pass — paste a potacat://pair link, a guest-pass URL, or the 4-word pass code.", true);
+        return;
+      }
+      _remoteRadiosRefreshList();
+    } catch (err) {
+      _remoteRadiosPasteStatus('Could not redeem: ' + (err.message || err), true);
+    }
+  }
+  if (rrPasteBtn) rrPasteBtn.addEventListener('click', _remoteRadiosPaste);
+  if (rrPasteInput) rrPasteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _remoteRadiosPaste(); } });
 
   // More-menu entry point.
   const openBtn = document.getElementById('view-remote-radios-btn');
@@ -5948,11 +6017,36 @@ if (window.api && window.api.onRemoteClientDisplaced) {
       chip.style.background = '#e94560';
       chip.style.color = '#fff';
       chip.title = 'Auth failed (' + (state.reason || 'expired') + ') — open Remote Radios to re-pair';
+    } else if (state.state === 'pass-ended') {
+      chip.textContent = '🎟 Guest Pass ended';
+      chip.style.background = '#e94560';
+      chip.style.color = '#fff';
+      chip.title = 'Guest Pass session ended (' + (state.reason || 'expired') + ') — back on the local rig';
     }
   };
   chip.addEventListener('click', _remoteRadiosOpen);
   if (window.api && window.api.onRemoteClientStatus) {
     window.api.onRemoteClientStatus(setChip);
+    // Loud, app-wide notice when a Guest Pass session ends — the user may
+    // be nowhere near the Remote Radios dialog when the clock runs out.
+    window.api.onRemoteClientStatus((s) => {
+      if (s && s.state === 'pass-ended' && typeof showLogToast === 'function') {
+        showLogToast('Guest Pass session ended (' + (s.reason || 'expired') + ') — switched back to your local rig.', { warn: true, duration: 8000 });
+      }
+    });
+  }
+  // Guest Pass redeemed via a potacat://pass/ deep link (landing-page
+  // button) — surface the outcome even with no dialog open.
+  if (window.api && window.api.onGuestPassRedeemed) {
+    window.api.onGuestPassRedeemed((r) => {
+      if (typeof showLogToast !== 'function') return;
+      if (r && r.ok) {
+        const until = r.expiresAt ? new Date(r.expiresAt).toLocaleTimeString() : '?';
+        showLogToast('🎟 Guest Pass active — connecting to ' + (r.owner || r.name) + ' (until ' + until + ').', { duration: 6000 });
+      } else {
+        showLogToast('Guest Pass failed: ' + ((r && r.error) || 'unknown error'), { warn: true, duration: 8000 });
+      }
+    });
   }
   // Hydrate on load.
   if (window.api && window.api.connectionTargetsGetStatus) {
@@ -19289,22 +19383,24 @@ async function _welcomeRemotePasteLink() {
     return;
   }
   _welcomeRemoteStatus('Redeeming pair link…', null);
-  // The renderer can't dial the shack itself (no Node sockets). Hand
-  // off to main via the same protocol-URL path that handles email
-  // clicks — the URL flow goes through redeemPairLinkUrl, fires
-  // 'pair-link-redeemed' on success.
+  // Redeem DIRECTLY in main via IPC — the renderer can't dial sockets, but
+  // main can. Do NOT bounce through window.api.openExternal: that re-hands
+  // the URL to the OS protocol handler, which only works if potacat:// is
+  // registered with Windows (the installer registers it; a dev build does
+  // not), so the paste box silently did nothing on dev/unregistered machines.
+  // redeemPairLinkUrl still fires 'pair-link-redeemed' for the inline status;
+  // the returned result gives us an immediate error if the dial failed.
   try {
-    // Open via OS so the protocol handler runs. This works because
-    // main is registered for potacat:// and single-instance — the
-    // URL routes back into our running process.
-    if (window.api && window.api.openExternal) {
-      window.api.openExternal(url);
-    } else {
-      // Fallback: assign location (rare path; openExternal should always be there).
-      location.href = url;
+    if (window.api && window.api.pairRedeemUrl) {
+      const r = await window.api.pairRedeemUrl(url);
+      if (r && r.ok === false) {
+        _welcomeRemoteStatus('Could not redeem the link: ' + (r.error || 'all paths failed'), 'error');
+      }
+    } else if (window.api && window.api.openExternal) {
+      window.api.openExternal(url); // legacy fallback
     }
   } catch (err) {
-    _welcomeRemoteStatus('Could not open the link: ' + (err.message || err), 'error');
+    _welcomeRemoteStatus('Could not redeem the link: ' + (err.message || err), 'error');
   }
 }
 
@@ -22690,12 +22786,7 @@ function renderJtcatDecodes() {
 // (FN20), reports (-12, +05, R-05), and acks (RR73/RRR/73/CQ/DE) when
 // picking the target call from a tail-end-style decode.
 function _looksLikeCallsign(tok) {
-  if (!tok || tok.length < 3 || tok.length > 11) return false;
-  if (/^(CQ|DE|RR73|RRR|73|TU|TNX|QRZ)$/i.test(tok)) return false;
-  if (/^R?[+-]\d{2}$/.test(tok)) return false;          // signal report
-  if (/^[A-R]{2}\d{2}([A-X]{2})?$/i.test(tok)) return false; // grid 4 or 6
-  if (!/[A-Z]/i.test(tok) || !/\d/.test(tok)) return false;
-  return /^[A-Z0-9/]+$/i.test(tok);
+  return JtcatParser.looksLikeCallsign(tok); // shared single source — renderer/jtcat-parser.js
 }
 
 function onJtcatDecodeClick(e) {
@@ -22711,22 +22802,26 @@ function onJtcatDecodeClick(e) {
   jtcatRxFreqLabel.textContent = df + ' Hz';
   if (jtcatRunning) window.api.jtcatSetRxFreq(df);
 
-  // If it's a CQ, start a QSO (reply to their CQ)
-  var cqMatch = upper.match(/^CQ\s+(?:(\w+)\s+)?([A-Z0-9/]+)\s+([A-R]{2}\d{2})/);
-  if (cqMatch) {
-    var theirCall = cqMatch[2];
-    var theirGrid = cqMatch[3];
-    jtcatStartQso(theirCall, theirGrid, df);
+  // If it's a CQ, start a QSO (reply to their CQ). Shared parser handles
+  // grid-less directed/contest/event CQs ("CQ POTA W1AW", "CQ NA K1ABC") and
+  // numeric serials — the old grid-required regex silently ignored them.
+  if (JtcatParser.isCqText(upper)) {
+    var pc = JtcatParser.parseCq(upper);
+    if (pc.call) jtcatStartQso(pc.call, pc.grid, df);
   }
   // If it's directed at me (MYCALL THEIRCALL PAYLOAD), pick up the QSO
   else if (myCall) {
     var parts = upper.split(/\s+/);
+    // Compare on base calls so a portable/hashed rendering of my own call
+    // still counts as "addressed to me".
+    var meN = JtcatParser.normalizeCall(myCall);
+    var p0 = JtcatParser.normalizeCall(parts[0] || '');
     // Tail-end / call-anyone: <TO> <FROM> <payload> where neither is us.
     // WSJT-X behavior: clicking such a decode targets the SENDER (FROM —
     // the right-hand callsign). Without this branch the desktop popout
     // only responded to CQ-prefixed decodes or messages addressed to us,
     // which is what NA7C/Ted reported as a deal-breaker. K3SBP 2026-05-29.
-    if (parts.length >= 2 && parts[0] !== myCall && parts[0] !== 'CQ' && _looksLikeCallsign(parts[1]) && parts[1] !== myCall) {
+    if (parts.length >= 2 && p0 !== meN && parts[0] !== 'CQ' && _looksLikeCallsign(parts[1]) && JtcatParser.normalizeCall(parts[1]) !== meN) {
       jtcatStartQso(parts[1], '', df);
       jtcatTxFreq = df;
       jtcatTxFreqInput.value = df;
@@ -22735,10 +22830,10 @@ function onJtcatDecodeClick(e) {
       renderJtcatDecodes();
       return;
     }
-    if (parts.length >= 2 && parts[0] === myCall) {
+    if (parts.length >= 2 && meN && p0 === meN) {
       var fromCall = parts[1];
       var payload = parts[2] || '';
-      var grid = /^[A-R]{2}[0-9]{2}$/.test(payload) ? payload : '';
+      var grid = /^[A-R]{2}[0-9]{2}([A-X]{2})?$/i.test(payload) ? payload : '';
       var rptMatch = payload.match(/^R?([+-]\d{2})$/);
       var hasRR73 = payload === 'RR73' || payload === 'RRR' || payload === '73';
       var snr = parseInt(row.dataset.db, 10) || 0;
@@ -23391,11 +23486,10 @@ function jtcatMapPlotDecode(d) {
   var parts = text.split(/\s+/);
 
   if (text.startsWith('CQ ')) {
-    // CQ [DX] CALL GRID — register the CQ caller
-    var idx = 1;
-    if (parts.length > 3 && parts[1].length <= 4 && !/[0-9]/.test(parts[1])) idx = 2;
-    var call = parts[idx] || '';
-    var grid = parts[idx + 1] || '';
+    // CQ [MODIFIER]* CALL [GRID] — register the CQ caller (shared parser).
+    var pc = JtcatParser.parseCq(text);
+    var call = pc.call;
+    var grid = pc.grid;
     jtcatMapRegisterStation(call, grid);
     // Mark CQ callers green
     var stn = jtcatMapStations[call];
@@ -23636,8 +23730,8 @@ window.api.onJtcatDecode(function(data) {
       results: jtcatDecodes,
     });
   }
-  jtcatSyncStatus.textContent = 'Sync: OK';
-  jtcatSyncStatus.classList.add('jtcat-synced');
+  // NOTE: sync status is NOT set here. Decodes arriving says nothing about the
+  // PC clock — the real status comes from the NTP monitor (onJtcatClock below).
   // Plot decodes on JTCAT map
   jtcatDecodes.forEach(function(d) { jtcatMapPlotDecode(d); });
   jtcatMapClearOld();
@@ -23652,14 +23746,106 @@ window.api.onJtcatCycle(function(data) {
 // Spectrum/waterfall is rendered directly from AnalyserNode in jtcatWaterfallLoop()
 
 window.api.onJtcatStatus(function(data) {
-  if (data.state === 'running') {
+  if (data && data.state === 'stopped') applyJtcatClock(null);
+});
+
+// --- Real clock-sync indicator + notice banner ---
+// Driven by the NTP offset monitor in main (jtcat-clock). FT8 is time-locked,
+// so a PC clock off by more than ~1 s silently kills decoding even though the
+// audio and waterfall look perfect. Replaces the old fake "Sync: OK" that lit
+// up on every decode cycle. (K3SBP 2026-06-10.)
+var jtcatClockBanner  = document.getElementById('jtcat-clock-banner');
+var jtcatClockMsg     = document.getElementById('jtcat-clock-msg');
+var jtcatClockSyncBtn = document.getElementById('jtcat-clock-sync');
+var jtcatClockSetBtn  = document.getElementById('jtcat-clock-settings');
+var jtcatClockReBtn   = document.getElementById('jtcat-clock-recheck');
+var jtcatClockBannerHideTimer = null;
+
+function fmtJtcatOffset(ms) {
+  return (ms > 0 ? '+' : '') + (ms / 1000).toFixed(1) + 's';
+}
+
+function applyJtcatClock(d) {
+  if (!jtcatSyncStatus) return;
+  jtcatSyncStatus.classList.remove('jtcat-synced');
+  jtcatSyncStatus.style.color = '';
+  if (jtcatClockBanner) jtcatClockBanner.classList.add('hidden');
+
+  if (!d) { jtcatSyncStatus.textContent = 'Sync: \u2014'; return; }
+
+  if (d.level === 'unknown') {
+    jtcatSyncStatus.textContent = 'Sync: ? (no NTP)';
+    jtcatSyncStatus.style.color = '#888';
+    jtcatSyncStatus.title = 'Could not reach an NTP server to measure clock offset' + (d.error ? ' (' + d.error + ')' : '');
+    return;
+  }
+
+  var off = fmtJtcatOffset(d.offsetMs || 0);
+  jtcatSyncStatus.title = 'PC clock offset vs ' + (d.server || 'NTP') + ': ' + off;
+
+  if (d.level === 'ok') {
     jtcatSyncStatus.textContent = 'Sync: OK';
     jtcatSyncStatus.classList.add('jtcat-synced');
-  } else if (data.state === 'stopped') {
-    jtcatSyncStatus.textContent = 'Sync: \u2014';
-    jtcatSyncStatus.classList.remove('jtcat-synced');
+    // The clock was just corrected and the engine re-baselined live \u2014 confirm
+    // it so the user knows decoding resumed without a restart.
+    if (d.rebaselined && jtcatClockBanner && jtcatClockMsg) {
+      jtcatClockMsg.textContent = '\u2713 Clock corrected \u2014 FT8 timing re-baselined, decoding resumed.';
+      jtcatClockBanner.style.background = '#1a5a2a';
+      jtcatClockBanner.style.borderBottom = '2px solid #4ecca3';
+      jtcatClockBanner.classList.remove('hidden');
+      clearTimeout(jtcatClockBannerHideTimer);
+      jtcatClockBannerHideTimer = setTimeout(function () { jtcatClockBanner.classList.add('hidden'); }, 6000);
+    }
+    return;
   }
-});
+
+  var bad = d.level === 'bad';
+  jtcatSyncStatus.textContent = 'Sync: ' + off + (bad ? ' \u2715' : ' \u26a0');
+  jtcatSyncStatus.style.color = bad ? '#e94560' : '#f0a500';
+  if (jtcatClockBanner && jtcatClockMsg) {
+    jtcatClockMsg.textContent = bad
+      ? '\u26a0 PC clock is ' + off + ' off UTC \u2014 FT8 will NOT decode until you fix it.'
+      : '\u26a0 PC clock is ' + off + ' off UTC \u2014 decoding may be unreliable. Sync recommended.';
+    jtcatClockBanner.style.background   = bad ? '#5a1a1a' : '#5a4a1a';
+    jtcatClockBanner.style.borderBottom = '2px solid ' + (bad ? '#e94560' : '#f0a500');
+    jtcatClockBanner.classList.remove('hidden');
+  }
+}
+
+if (window.api.onJtcatClock) window.api.onJtcatClock(applyJtcatClock);
+
+if (jtcatClockSetBtn && window.api.jtcatOpenTimeSettings) {
+  jtcatClockSetBtn.addEventListener('click', function() { window.api.jtcatOpenTimeSettings(); });
+}
+if (jtcatClockReBtn && window.api.jtcatCheckClock) {
+  jtcatClockReBtn.addEventListener('click', function() {
+    if (jtcatClockMsg) jtcatClockMsg.textContent = 'Checking clock\u2026';
+    window.api.jtcatCheckClock().then(function(c) { if (c) applyJtcatClock(c); });
+  });
+}
+if (jtcatClockSyncBtn && window.api.jtcatSyncClock) {
+  jtcatClockSyncBtn.addEventListener('click', function() {
+    if (jtcatClockMsg) jtcatClockMsg.textContent = 'Syncing clock\u2026';
+    window.api.jtcatSyncClock().then(function(res) {
+      if (res && res.clock) applyJtcatClock(res.clock);
+      if (res && res.sync && !res.sync.success && jtcatClockMsg) {
+        jtcatClockMsg.textContent = '\u26a0 ' + (res.sync.message || 'Sync failed') + ' \u2014 use \u201cTime settings\u2026\u201d.';
+      }
+    });
+  });
+}
+// Click the status chip itself to force a re-check.
+if (jtcatSyncStatus && window.api.jtcatCheckClock) {
+  jtcatSyncStatus.style.cursor = 'pointer';
+  jtcatSyncStatus.addEventListener('click', function() {
+    window.api.jtcatCheckClock().then(function(c) { if (c) applyJtcatClock(c); });
+  });
+}
+// The engine may already be running before this view first paints, so grab the
+// monitor's last measurement instead of waiting for the next broadcast.
+if (window.api.jtcatGetClock) {
+  window.api.jtcatGetClock().then(function(c) { if (c) applyJtcatClock(c); });
+}
 
 // --- JTCAT TX Audio Playback ---
 var jtcatTxAudioCtx = null;

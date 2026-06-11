@@ -169,6 +169,8 @@ const { PotaSync } = require('./lib/pota-sync');
 const { WsjtxClient, extractCallsigns, encodeHeartbeat, encodeLoggedAdif, encodeQsoLogged } = require('./lib/wsjtx');
 const { PskrClient } = require('./lib/pskreporter');
 const { Ft8Engine } = require('./lib/ft8-engine');
+const { checkClockOffset, syncSystemClock } = require('./lib/ntp');
+const JtcatParser = require('./renderer/jtcat-parser'); // shared FT8 message classifier (also a browser global in the renderers)
 const { RemoteServer } = require('./lib/remote-server');
 const { RemoteClient } = require('./lib/remote-client');
 // Linux-only ALSA bridge. On non-Linux, alsa.isAvailable() returns false
@@ -358,8 +360,10 @@ function _writeJsonAtomic(p, obj) {
 function loadSettings() {
   const global = _readJsonSafe(SETTINGS_PATH, null);
   if (!global) {
-    // Truly fresh install: return defaults, no profile yet.
-    return { grid: 'FN20jb', catTarget: null, enablePota: true, enableSota: false, firstRun: true, watchlist: 'K3SBP' };
+    // Truly fresh install: return defaults, no profile yet. RBN + PSKReporter
+    // Propagation default ON so the "where am I heard" view has data out of the
+    // box (both activate once myCallsign is set). K3SBP 2026-06-10.
+    return { grid: 'FN20jb', catTarget: null, enablePota: true, enableSota: false, enableRbn: true, enablePskrMap: true, firstRun: true, watchlist: 'K3SBP' };
   }
   // Migration path: legacy settings.json (no activeProfile) gets migrated
   // when it has a myCallsign. We do this lazily on first save rather than
@@ -1663,6 +1667,21 @@ function ensureRemoteClient() {
       win.webContents.send('log-error', payload);
     }
     sendCatLog(`[architecture-b] log-error from host: reason=${payload.reason} call=${payload.qso && payload.qso.callsign || '?'}`);
+  });
+  // Guest Pass session ended (expiry / revoke / owner stop). Mark the
+  // target row expired so the Remote Radios list reflects it, drop back
+  // to the local rig, and tell the renderer why. K3SBP 2026-06-11.
+  remoteClient.on('pass-ended', ({ reason }) => {
+    sendCatLog(`[guest-pass] session ended by host: ${reason}`);
+    target.expiresAt = Date.now();
+    settings.activeTargetId = null;
+    saveSettings(settings);
+    tearDownRemoteClient();
+    try { connectCat(); } catch {}
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('remote-client-status', { state: 'pass-ended', reason });
+      win.webContents.send('connection-targets-updated', settings.connectionTargets);
+    }
   });
   remoteClient.connect();
 }
@@ -3824,21 +3843,11 @@ function matchesAutoCqFilter(text, filterMode) {
   return false;
 }
 
+// Delegates to the shared parser (renderer/jtcat-parser.js) so the auto-CQ
+// responder, the popout, app.js, and the tests all agree on "CQ [MODIFIER]*
+// CALL [GRID]" — including grid-less directed/contest CQs and numeric serials.
 function parseCqMessage(text) {
-  const parts = (text || '').toUpperCase().split(/\s+/).filter(Boolean);
-  // CQ [MODIFIER]* CALLSIGN [GRID]. Modifiers (POTA, SOTA, DX, NA, EU, ...)
-  // are letter-only — they never match callsign shape. Match the first
-  // callsign-shaped token after CQ instead of the previous "if length>3
-  // and parts[1] looks like a modifier" heuristic, which broke for shorter
-  // messages like "CQ POTA W1AW" (no grid). The old code treated POTA as
-  // the callsign and replied with "POTA MYCALL MYGRID". (IU7RAL report.)
-  const isCallsign = (s) => /^[A-Z0-9]{1,3}[0-9][A-Z]{1,4}$/.test((s || '').split('/')[0]);
-  let callIdx = -1;
-  for (let i = 1; i < parts.length; i++) {
-    if (isCallsign(parts[i])) { callIdx = i; break; }
-  }
-  if (callIdx === -1) callIdx = 1; // nothing callsign-shaped — keep prior fallback
-  return { call: parts[callIdx] || '', grid: parts[callIdx + 1] || '' };
+  return JtcatParser.parseCq(text);
 }
 
 function broadcastAutoCqState() {
@@ -4226,6 +4235,9 @@ function startJtcat(mode) {
       }
     }
 
+    // Stamp the authoritative callsign so renderers classify against the
+    // current call, never a stale cached copy. K3SBP 2026-06-10.
+    data.myCall = (settings.myCallsign || '').toUpperCase();
     if (win && !win.isDestroyed()) {
       win.webContents.send('jtcat-decode', data);
     }
@@ -4427,6 +4439,14 @@ function startJtcat(mode) {
       jtcatPopoutWin.webContents.send('jtcat-status', data);
     }
     if (remoteServer && remoteServer.hasClient()) remoteServer.broadcastJtcatStatus(data);
+    // FT8/FT4 are time-locked: the decoder only searches a ~±2.5 s window
+    // around the slot boundary it derives from the OS clock, so a PC clock
+    // more than ~1 s off UTC silently zeroes out decodes while audio + the
+    // waterfall still look perfect (K3SBP 2026-06-10: +10.8 s CMOS drift,
+    // "Sync: OK" but 0 decodes). Measure the real NTP offset while the
+    // engine runs and surface it to the JTCAT views as a genuine warning.
+    if (data.state === 'running') startJtcatClockMonitor();
+    else if (data.state === 'stopped') stopJtcatClockMonitor();
   });
 
   ft8Engine.on('tx-start', (data) => {
@@ -4517,6 +4537,65 @@ function startJtcat(mode) {
 
   ft8Engine.start();
   console.log('[JTCAT] Engine started, mode:', mode || 'FT8');
+}
+
+// --- JTCAT clock-offset monitor -----------------------------------------
+// Measures the local clock vs NTP (lib/ntp.js) and pushes a real sync status
+// to the JTCAT views. Replaces the old fake "Sync: OK" that the renderers lit
+// up on every decode cycle regardless of the actual clock. Thresholds chosen
+// to match FT8's decode tolerance: <1 s is fine, 1–2 s is marginal, >2 s means
+// decodes will fail outright.
+let jtcatClockTimer = null;
+let jtcatLastClock = null;
+const JTCAT_CLOCK_POLL_MS = 5 * 60 * 1000;
+
+function classifyClockOffset(offsetMs) {
+  const abs = Math.abs(offsetMs);
+  if (abs < 1000) return 'ok';
+  if (abs < 2000) return 'warn';
+  return 'bad';
+}
+
+function broadcastJtcatClock(payload) {
+  if (win && !win.isDestroyed()) win.webContents.send('jtcat-clock', payload);
+  if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('jtcat-clock', payload);
+  if (jtcatMapPopoutWin && !jtcatMapPopoutWin.isDestroyed()) jtcatMapPopoutWin.webContents.send('jtcat-clock', payload);
+}
+
+async function runJtcatClockCheck() {
+  const prevLevel = jtcatLastClock && jtcatLastClock.level;
+  try {
+    const res = await checkClockOffset();
+    const level = classifyClockOffset(res.offset);
+    jtcatLastClock = { offsetMs: res.offset, server: res.server, level, ok: level === 'ok', checkedAt: Date.now() };
+  } catch (e) {
+    // NTP unreachable (offline, firewall). Don't claim the clock is bad —
+    // just report unknown so we don't nag a user whose clock is actually fine.
+    jtcatLastClock = { offsetMs: null, server: null, level: 'unknown', ok: false, error: e.message, checkedAt: Date.now() };
+  }
+  // The clock just came back into spec (the user fixed it / w32tm resync took
+  // effect). The running engine carries stale slot-timing + latency-calibration
+  // state from the bad-clock period, so RX wouldn't recover until an app
+  // restart. Re-baseline it live instead — no restart needed. This covers all
+  // three entry points: the 5-min poll, the manual "Recheck", and the recheck
+  // fired right after "Sync now". K3SBP 2026-06-10.
+  if (jtcatLastClock.level === 'ok' && (prevLevel === 'bad' || prevLevel === 'warn') &&
+      ft8Engine && ft8Engine._running && typeof ft8Engine.reBaseline === 'function') {
+    ft8Engine.reBaseline();
+    jtcatLastClock.rebaselined = true;
+  }
+  broadcastJtcatClock(jtcatLastClock);
+  return jtcatLastClock;
+}
+
+function startJtcatClockMonitor() {
+  if (jtcatClockTimer) return;
+  runJtcatClockCheck();
+  jtcatClockTimer = setInterval(runJtcatClockCheck, JTCAT_CLOCK_POLL_MS);
+}
+
+function stopJtcatClockMonitor() {
+  if (jtcatClockTimer) { clearInterval(jtcatClockTimer); jtcatClockTimer = null; }
 }
 
 // --- JTCAT Tune (WSJT-X-style steady-tone for power/ALC tuning) ---
@@ -13133,6 +13212,19 @@ function handleProtocolUrl(url) {
         console.error('[pair-link] redemption threw:', err);
         sendCatLog('[pair-link] REJECTED: ' + (err.message || err));
       });
+    } else if (action === 'pass') {
+      // Guest Pass deep link — the landing page's "Open in ECHOCAT app"
+      // CTA (potacat://pass/<code>) now works on desktop too: redeem and
+      // auto-connect as a guest. K3SBP 2026-06-11.
+      redeemGuestPass(url).then(r => {
+        if (r && !r.ok) sendCatLog('[guest-pass] REJECTED: ' + r.error);
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('guest-pass-redeemed', r);
+        }
+      }).catch(err => {
+        console.error('[guest-pass] redemption threw:', err);
+        sendCatLog('[guest-pass] REJECTED: ' + (err.message || err));
+      });
     }
   } catch (err) {
     console.error('Failed to parse protocol URL:', url, err);
@@ -13224,6 +13316,109 @@ async function redeemPairLinkUrl(rawUrl) {
     });
   }
   throw lastErr || new Error('all dial legs failed');
+}
+
+// ─── Guest Pass intake (desktop as guest) ──────────────────────────────────
+// Lets this desktop redeem a "Share My Rig" Guest Pass and operate the
+// owner's shack with PassEnforcement guardrails — the same flow the iOS app
+// runs. Three intake forms, all funnelled through extractGuestPassCode():
+//   potacat://pass/<code>                                   (landing-page CTA)
+//   https://api.potacat.com/guest-pass.html?code=<code>     (the share URL)
+//   <code>                                                  (bare 4-word code)
+// Redeem mints a 64-hex session id + the owner's tunnel host; RemoteClient
+// then auths with {mode:'pass', passCode, sessionId}. K3SBP 2026-06-11.
+
+const { extractGuestPassCode } = require('./lib/guest-pass');
+
+/**
+ * Redeem a Guest Pass against the cloud and switch this desktop into
+ * remote-client mode on the owner's shack. Authed /redeem when signed in to
+ * POTACAT Cloud (better audit trail), /redeem-anonymous otherwise — falling
+ * back to anonymous if the authed call is rejected. Upserts a kind:'pass'
+ * connectionTargets row and auto-activates it.
+ */
+async function redeemGuestPass(rawInput) {
+  const code = extractGuestPassCode(rawInput);
+  if (!code) return { ok: false, error: 'Not a recognizable Guest Pass code or link' };
+
+  const post = async (path, bearer) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (bearer) headers['Authorization'] = 'Bearer ' + bearer;
+    const res = await fetch(`https://api.potacat.com/v1/passes/${encodeURIComponent(code)}${path}`, {
+      method: 'POST', headers, body: '{}',
+    });
+    let body = null;
+    try { body = await res.json(); } catch {}
+    return { status: res.status, body };
+  };
+
+  sendCatLog(`[guest-pass] Redeeming ${code} (${settings.cloudAccessToken ? 'signed-in' : 'anonymous'})…`);
+  let r;
+  try {
+    if (settings.cloudAccessToken) {
+      r = await post('/redeem', settings.cloudAccessToken);
+      if (r.status === 401 || r.status === 403) {
+        sendCatLog(`[guest-pass] authed redeem refused (HTTP ${r.status}) — retrying anonymously`);
+        r = await post('/redeem-anonymous', null);
+      }
+    } else {
+      r = await post('/redeem-anonymous', null);
+    }
+  } catch (err) {
+    return { ok: false, error: 'Cloud unreachable: ' + (err.message || err) };
+  }
+
+  if (r.status === 404) return { ok: false, error: 'Pass not found, expired, or revoked' };
+  if (r.status === 403) return { ok: false, error: (r.body && r.body.error) || 'This pass requires signing in to POTACAT Cloud first (the owner didn’t allow anonymous guests)' };
+  if (r.status !== 200 || !r.body) return { ok: false, error: (r.body && r.body.error) || ('Redeem failed (HTTP ' + r.status + ')') };
+
+  const { session_id, owner_cloud_host, owner_callsign, pass_profile } = r.body;
+  if (!session_id || !/^[a-f0-9]{64}$/.test(String(session_id))) {
+    return { ok: false, error: 'Cloud returned an invalid session token' };
+  }
+  if (!owner_cloud_host) {
+    return { ok: false, error: 'Pass owner has no Cloud Tunnel host — ask them to enable POTACAT Cloud Tunnel' };
+  }
+
+  const owner = (owner_callsign || (pass_profile && pass_profile.owner_callsign) || 'Shack').toUpperCase();
+  const expiresAtIso = pass_profile && pass_profile.expires_at;
+  const expiresAt = expiresAtIso ? Date.parse(expiresAtIso) : null;
+  const row = {
+    id: 'gp-' + code,
+    kind: 'pass',
+    name: owner + ' (Guest Pass)',
+    serviceName: owner,
+    rigModel: '',
+    fingerprint: '',
+    deviceToken: null,
+    passCode: code,
+    passSessionId: String(session_id),
+    lanHost: '', tsHost: '',
+    cloudHost: String(owner_cloud_host),
+    pairedAt: Date.now(),
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
+    trust: 'pass',
+    ownerCallsign: owner,
+    maxPowerW: pass_profile ? pass_profile.max_power_w : null,
+    privilegeClass: pass_profile ? pass_profile.privilege_class : null,
+    lastConnectedAt: null,
+    lastReachableLeg: null,
+  };
+  if (!Array.isArray(settings.connectionTargets)) settings.connectionTargets = [];
+  settings.connectionTargets = settings.connectionTargets.filter(t => t.id !== row.id);
+  settings.connectionTargets.push(row);
+
+  // Auto-activate: quiesce local CAT (it's the OWNER's rig now) and dial.
+  settings.activeTargetId = row.id;
+  saveSettings(settings);
+  try { if (cat) { cat.disconnect && cat.disconnect(); } } catch {}
+  ensureRemoteClient();
+
+  sendCatLog(`[guest-pass] OK: ${owner} via ${row.cloudHost} (class=${row.privilegeClass || '?'} maxW=${row.maxPowerW || '?'} expires=${expiresAtIso || '?'})`);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('connection-targets-updated', settings.connectionTargets);
+  }
+  return { ok: true, name: row.name, owner, expiresAt: row.expiresAt, maxPowerW: row.maxPowerW, privilegeClass: row.privilegeClass };
 }
 
 /**
@@ -13720,7 +13915,9 @@ app.whenReady().then(() => {
     // #46a: wire remoteServer's pass auth-mode handlers.
     // Validator: re-checks pass status via public cloud endpoint.
     // Auth callback: triggers PassEnforcement.loadPass() if idle,
-    // accepts same-pass re-attach, rejects mismatch.
+    // accepts same-pass re-attach, supersedes a stale session when no
+    // guest is connected, and rejects mismatch only while another
+    // guest is live (single-pass invariant).
     if (remoteServer) {
       remoteServer.setPassValidator(async (code, sessionToken) => {
         // Phase 3 (cloud mig 009): every WS pass-auth attempt is
@@ -13756,16 +13953,55 @@ app.whenReady().then(() => {
           return null;
         }
       });
+      // Grace timer: when the last pass-authed client drops, give the
+      // guest 60s to reconnect (WS blip, app relaunch) before ending
+      // the enforcement session. Without this the session lingered for
+      // the pass's full TTL after the guest closed their app — gating
+      // the owner's own CAT and refusing every new pass with "Another
+      // pass session is already active" (Casey 2026-06-10).
+      let passClientDisconnectTimer = null;
+      const clearPassDisconnectTimer = () => {
+        if (passClientDisconnectTimer) {
+          clearTimeout(passClientDisconnectTimer);
+          passClientDisconnectTimer = null;
+        }
+      };
+      remoteServer.on('pass-client-disconnected', ({ code }) => {
+        clearPassDisconnectTimer();
+        passClientDisconnectTimer = setTimeout(() => {
+          passClientDisconnectTimer = null;
+          const st = passEnforcement.getState();
+          if ((st === 'active' || st === 'expiring') && !remoteServer.hasActivePassClient()) {
+            sendCatLog(`[pass] guest gone 60s with no reconnect — ending enforcement session for ${code}`);
+            passEnforcement.endPass('disconnected');
+          }
+        }, 60_000);
+      });
       remoteServer.setPassAuthCallback(async (code, _sessionId) => {
+        clearPassDisconnectTimer();
         const state = passEnforcement.getState();
         if (state === 'idle') {
           await passEnforcement.loadPass(code);
-        } else {
-          const cur = passEnforcement.getSessionStatus();
-          if (cur.code !== code) {
-            throw new Error('Another pass session is already active on this station');
-          }
+          return;
         }
+        const cur = passEnforcement.getSessionStatus();
+        // Same-pass re-attach: reconnect after a WS blip or an app
+        // relaunch resume. The enforcement session is already correct.
+        if (cur.code === code) return;
+        // Different pass. Refuse only when a guest is actually
+        // CONNECTED under the current pass — that's the single-pass
+        // invariant. A lingering session with nobody attached (guest
+        // closed their app; grace timer hasn't fired yet) is stale:
+        // supersede it with the newly validated pass.
+        if (remoteServer.hasActivePassClient()) {
+          throw new Error('Another pass session is already active on this station');
+        }
+        sendCatLog(`[pass] superseding stale session ${cur.code} (no guest connected) with ${code}`);
+        passEnforcement.endPass('superseded');
+        // endPass settles to idle on the next tick (setImmediate) —
+        // wait for it before loading the new pass.
+        await new Promise((resolve) => setImmediate(resolve));
+        await passEnforcement.loadPass(code);
       });
     }
   } catch (err) {
@@ -15898,6 +16134,21 @@ app.whenReady().then(() => {
     // replying with our grid to their CQ). Old `data.rr73` / `data.report`
     // are kept as fallbacks for any caller that hasn't been updated yet.
     // Chris N4RDX sequencing report 2026-04-29.
+    // Authoritative re-classification: derive the step + target call from the
+    // RAW decode text against OUR configured callsign. This is immune to a
+    // stale/empty/format-mismatched callsign cache in the popout or phone —
+    // the original "reply to my CQ → grid instead of report" bug. Only runs
+    // when the caller sent the raw text (newer popout); older callers fall
+    // through to their precomputed data.nextStep. K3SBP 2026-06-10.
+    if (data.text && myCall) {
+      const action = JtcatParser.inferReplyStep({ text: data.text }, myCall);
+      if (action) {
+        data.nextStep = action.step;
+        data.call = action.call;
+        if (action.theirGrid != null) data.theirGrid = action.theirGrid;
+        if (action.theirReport != null) data.theirReport = action.theirReport;
+      }
+    }
     let nextStep = data.nextStep;
     if (!nextStep) {
       if (data.rr73) nextStep = 'send-73';
@@ -17076,19 +17327,23 @@ app.whenReady().then(() => {
       }
     } catch {}
     // Pick the host for the QR. Reuses RemoteServer.getLocalIPs() so the
-    // pairing flow stays in sync with the network UI in Settings: same
-    // detection, same ordering, same Tailscale awareness. The helper
-    // already returns Tailscale interfaces first and surfaces the
-    // MagicDNS hostname when present, which is what we want for the QR
-    // — a stable name that survives IP changes and works for users
-    // pairing over a Tailnet from anywhere. Falls back to the IP if no
-    // MagicDNS name. Falls back to 127.0.0.1 only if the machine has
-    // literally no non-internal IPv4 interfaces.
+    // pairing flow stays in sync with the network UI in Settings.
+    // PRIMARY host = LAN address: the Tailscale MagicDNS name only
+    // resolves for phones already ON the tailnet, and most phones
+    // pairing for the first time aren't — leading with the ts.net name
+    // dead-ended pairing entirely with "no server found with the
+    // specified hostname" (HI3NLER 2026-06-11; the getLocalIPs sort
+    // puts Tailscale first, so ips[0] was the MagicDNS name on every
+    // Tailscale-equipped desktop). Tailnet reachability is preserved
+    // via the separate tsHost param embedded below. Falls back to the
+    // Tailscale name only when there is no LAN interface at all, and
+    // to 127.0.0.1 only with no non-internal IPv4 interfaces.
     const os = require('os');
     const ips = RemoteServer.getLocalIPs();
     let host = '127.0.0.1';
     if (ips.length > 0) {
-      host = ips[0].tailscaleHostname || ips[0].address;
+      const lan = ips.find((ip) => !ip.tailscale);
+      host = lan ? lan.address : (ips[0].tailscaleHostname || ips[0].address);
     }
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
@@ -17220,7 +17475,13 @@ app.whenReady().then(() => {
     } catch {}
     const ips = RemoteServer.getLocalIPs();
     let host = '127.0.0.1';
-    if (ips.length > 0) host = ips[0].tailscaleHostname || ips[0].address;
+    if (ips.length > 0) {
+      // LAN-first, same reasoning as the QR flow above — the ts.net
+      // name is unresolvable for phones not on the tailnet (HI3NLER
+      // 2026-06-11); tsHost below carries the tailnet dial.
+      const lan = ips.find((ip) => !ip.tailscale);
+      host = lan ? lan.address : (ips[0].tailscaleHostname || ips[0].address);
+    }
     const port = remoteServer._port || 7300;
     const wsUrl = `wss://${host}:${port}`;
     const hostname = (() => { try { return require('os').hostname(); } catch { return 'POTACAT'; } })();
@@ -17291,6 +17552,7 @@ app.whenReady().then(() => {
     const list = Array.isArray(settings.connectionTargets) ? settings.connectionTargets : [];
     return list.map(t => ({
       id: t.id,
+      kind: t.kind || 'paired',
       name: t.name,
       serviceName: t.serviceName || t.name,
       rigModel: t.rigModel || '',
@@ -17301,9 +17563,42 @@ app.whenReady().then(() => {
       pairedAt: t.pairedAt || null,
       expiresAt: t.expiresAt || null,
       trust: t.trust || 'guest',
+      ownerCallsign: t.ownerCallsign || '',
+      maxPowerW: t.maxPowerW || null,
+      privilegeClass: t.privilegeClass || null,
       lastConnectedAt: t.lastConnectedAt || null,
       lastReachableLeg: t.lastReachableLeg || null,
     }));
+  });
+
+  // Redeem a pasted potacat://pair?… link DIRECTLY — no OS protocol handler.
+  // The paste box used to bounce the URL through shell.openExternal, which
+  // only works if Windows has potacat:// registered (the installer does, a
+  // dev `npm start` build does not), so pasting a link did nothing on dev /
+  // unregistered machines. Main can dial sockets, so just redeem it here.
+  // redeemPairLinkUrl still fires the 'pair-link-redeemed' event for the UI;
+  // we also return a result for immediate feedback. K3SBP 2026-06-10.
+  ipcMain.handle('pair-redeem-url', async (_e, url) => {
+    if (!url || !/^potacat:\/\/pair\?/i.test(String(url))) {
+      return { ok: false, error: 'Not a potacat://pair link' };
+    }
+    try {
+      await redeemPairLinkUrl(url);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  // Guest Pass intake — accepts potacat://pass/<code>, the
+  // guest-pass.html?code=… share URL, or a bare 4-word code. Redeems via
+  // the cloud and auto-connects this desktop as a guest. K3SBP 2026-06-11.
+  ipcMain.handle('guest-pass-redeem', async (_e, input) => {
+    try {
+      return await redeemGuestPass(input);
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle('connection-targets-rename', (_e, id, newName) => {
@@ -19268,6 +19563,25 @@ app.whenReady().then(() => {
   });
   ipcMain.on('jtcat-tx-complete', () => { if (ft8Engine) ft8Engine.txComplete(); });
 
+  // Clock sync (lib/ntp.js). check = measure NTP offset now and rebroadcast;
+  // sync = attempt w32tm /resync (needs admin), then re-measure; open-time-
+  // settings = pop the Windows Date & Time panel where the user can hit "Sync
+  // now" without elevation.
+  ipcMain.handle('jtcat-get-clock', () => jtcatLastClock);
+  ipcMain.handle('jtcat-check-clock', async () => await runJtcatClockCheck());
+  ipcMain.handle('jtcat-sync-clock', async () => {
+    const sync = await syncSystemClock();
+    // Give the clock a moment to settle before re-measuring.
+    await new Promise(r => setTimeout(r, 1500));
+    const clock = await runJtcatClockCheck();
+    return { sync, clock };
+  });
+  ipcMain.handle('jtcat-open-time-settings', async () => {
+    const { shell } = require('electron');
+    if (process.platform === 'win32') return shell.openExternal('ms-settings:dateandtime');
+    return false;
+  });
+
   // DAX TX direct chunks from remote-audio.html (iOS phone mic → WebRTC →
   // renderer downsample → IPC chunk → here → VITA-49 to radio). Bypasses
   // the Windows DAX TX device + DAX program for SSB / FM / AM voice when
@@ -19287,6 +19601,21 @@ app.whenReady().then(() => {
     // 2026-05-28.) Voice TX from the phone sets _remoteTxState via
     // handleRemotePtt, so real transmit audio still flows.
     if (!_isEffectivelyTransmitting()) return;
+    // The mic stream is for VOICE TX only. During an engine-driven digital
+    // TX (FT8/FT4 reply, Tune tone) the dax_tx envelope comes from
+    // sendTxAudio — letting the (typically silent) phone-mic chunks through
+    // interleaved silence with the FT8 packets on the same stream/packet
+    // counter: garbled on-air signal + TX-buffer backlog that polluted the
+    // next RX slot. _isEffectivelyTransmitting() can't tell voice from
+    // digital TX, so gate explicitly. (K3SBP 2026-06-11.)
+    if (smartSdrAudio._txInFlight) return;
+    if (ft8Engine && ft8Engine._txActive) return;
+    if (jtcatManager) {
+      for (const id of jtcatManager.sliceIds) {
+        const eng = jtcatManager.getEngine(id);
+        if (eng && eng._txActive) return;
+      }
+    }
     let samples;
     if (buf instanceof Float32Array) samples = buf;
     else if (ArrayBuffer.isView(buf) || buf instanceof ArrayBuffer) samples = new Float32Array(buf);

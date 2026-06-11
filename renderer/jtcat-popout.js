@@ -311,9 +311,8 @@ function _applyPopoutTheme(payload) {
     var text = (d.text || '').toUpperCase();
     var parts = text.split(/\s+/);
     if (text.startsWith('CQ ')) {
-      var idx = 1;
-      if (parts.length > 3 && parts[1].length <= 4 && !/[0-9]/.test(parts[1])) idx = 2;
-      var call = parts[idx] || '', grid = parts[idx + 1] || '';
+      var pc = JtcatParser.parseCq(text);
+      var call = pc.call, grid = pc.grid;
       registerStation(call, grid);
       var stn = stations[call];
       if (stn) stn.marker.setStyle({ fillColor: '#4ecca3', color: '#4ecca3' });
@@ -423,59 +422,18 @@ function _applyPopoutTheme(payload) {
   //
   // Returns { step, call, theirGrid?, theirReport? } or null when the
   // message isn't actionable (not a CQ, not addressed to us).
+  // Classifier + callsign-shape now live in the shared renderer/jtcat-parser.js
+  // (window.JtcatParser), the single source of truth shared with app.js,
+  // main.js, and the test suite. These thin delegators keep the existing call
+  // sites readable. NOTE: main.js re-derives the step authoritatively from the
+  // raw text + the configured callsign (see jtcat-popout-reply), so this local
+  // classification only drives popout UI (retune-vs-reply, My Activity).
   function inferReplyStep(decode, myCall) {
-    var text = (decode.text || '').toUpperCase();
-    var parts = text.split(/\s+/);
-    var me = (myCall || '').toUpperCase();
-
-    if (text.indexOf('CQ ') === 0) {
-      var callIdx = 1;
-      if (parts.length > 3 && parts[1].length <= 4 && !/[0-9]/.test(parts[1])) callIdx = 2;
-      var call = parts[callIdx] || '';
-      var theirGrid = parts[callIdx + 1] || '';
-      if (!call) return null;
-      return { step: 'reply-cq', call: call, theirGrid: theirGrid };
-    }
-
-    if (parts.length >= 2 && me && parts[0] === me && parts[1]) {
-      var fromCall = parts[1];
-      var payload = parts[2] || '';
-
-      if (payload === 'RR73' || payload === 'RRR' || payload === '73') {
-        return { step: 'send-73', call: fromCall };
-      }
-      // Step 4: their R-prefixed report — we send RR73 next.
-      var rRpt = payload.match(/^R([+-]\d{2})$/);
-      if (rRpt) return { step: 'send-rr73', call: fromCall, theirReport: rRpt[1] };
-      // Step 3: plain signal report — we send R+ourReport next.
-      var plainRpt = payload.match(/^([+-]\d{2})$/);
-      if (plainRpt) return { step: 'send-r-report', call: fromCall, theirReport: plainRpt[1] };
-      // Step 2: they replied to our CQ with their grid — we send a signal report next.
-      if (/^[A-R]{2}[0-9]{2}$/i.test(payload)) {
-        return { step: 'send-report', call: fromCall, theirGrid: payload };
-      }
-      // Anything else directed at us — fall back to a fresh-reply pattern.
-      return { step: 'reply-cq', call: fromCall };
-    }
-
-    // Tail-end / call-anyone: <TO> <FROM> <payload> where neither is us.
-    // WSJT-X behavior is to target the SENDER (FROM — right-hand callsign).
-    // Without this the popout only responded to CQs or messages addressed
-    // to us; NA7C reported that as a deal-breaker. K3SBP 2026-05-29.
-    if (parts.length >= 2 && parts[0] !== 'CQ' && parts[0] !== me && parts[1] && parts[1] !== me && _jpLooksLikeCallsign(parts[1])) {
-      return { step: 'reply-cq', call: parts[1] };
-    }
-
-    return null;
+    return JtcatParser.inferReplyStep(decode, myCall);
   }
 
   function _jpLooksLikeCallsign(tok) {
-    if (!tok || tok.length < 3 || tok.length > 11) return false;
-    if (/^(CQ|DE|RR73|RRR|73|TU|TNX|QRZ)$/i.test(tok)) return false;
-    if (/^R?[+-]\d{2}$/.test(tok)) return false;
-    if (/^[A-R]{2}\d{2}([A-X]{2})?$/i.test(tok)) return false;
-    if (!/[A-Z]/i.test(tok) || !/\d/.test(tok)) return false;
-    return /^[A-Z0-9/]+$/i.test(tok);
+    return JtcatParser.looksLikeCallsign(tok);
   }
 
   function onDecodeRowClick(d) {
@@ -497,6 +455,9 @@ function _applyPopoutTheme(payload) {
 
     window.api.jtcatReply({
       call: action.call,
+      // Raw decode text — main re-derives the step from this against the
+      // configured callsign, so a stale popout call can't pick the wrong line.
+      text: d.text,
       df: d.df || 1500,
       slot: d.slot,
       sliceId: d.sliceId,
@@ -642,9 +603,15 @@ function _applyPopoutTheme(payload) {
 
   // --- Event handlers ---
   window.api.onJtcatDecode(function(data) {
+    // Keep our cached callsign current from the authoritative copy main stamps
+    // on every batch, so classification never runs against a stale/empty call
+    // (the original "reply to my CQ → grid instead of report" trigger).
+    if (data && data.myCall) myCallsign = data.myCall.toUpperCase();
     renderDecodes(data);
-    syncEl.textContent = 'Sync: OK';
-    syncEl.classList.add('jtcat-synced');
+    // NOTE: do NOT set "Sync: OK" here. Decodes arriving says nothing about
+    // the PC clock — the real sync status comes from the NTP monitor via
+    // onJtcatClock below. (K3SBP 2026-06-10: old code lit "Sync: OK" on every
+    // cycle even with the clock 10 s off UTC and 0 decodes.)
   });
 
   // Spot-list highlight push from the main renderer. Rebuild the Map, then
@@ -695,8 +662,102 @@ function _applyPopoutTheme(payload) {
   });
 
   window.api.onJtcatStatus(function(data) {
-    syncEl.textContent = 'Sync: ' + (data.sync || '--');
+    // Engine stopped — clear the sync readout (no meaningful offset to show).
+    if (data && data.state === 'stopped') applyClock(null);
   });
+
+  // --- Real clock-sync indicator + notice banner ---
+  // Driven by the NTP offset monitor in main (jtcat-clock). FT8 is time-locked,
+  // so a PC clock off by more than ~1 s silently kills decoding even though the
+  // audio and waterfall look perfect.
+  var clockBanner   = document.getElementById('jp-clock-banner');
+  var clockMsg      = document.getElementById('jp-clock-msg');
+  var clockSyncBtn  = document.getElementById('jp-clock-sync');
+  var clockSetBtn   = document.getElementById('jp-clock-settings');
+  var clockReBtn    = document.getElementById('jp-clock-recheck');
+  var clockBannerHideTimer = null;
+
+  function fmtOffset(ms) {
+    return (ms > 0 ? '+' : '') + (ms / 1000).toFixed(1) + 's';
+  }
+
+  function applyClock(d) {
+    if (!syncEl) return;
+    syncEl.classList.remove('jtcat-synced');
+    syncEl.style.color = '';
+    if (clockBanner) clockBanner.classList.add('hidden');
+
+    if (!d) { syncEl.textContent = 'Sync: —'; return; }
+
+    if (d.level === 'unknown') {
+      // NTP unreachable — don't claim bad, just show we couldn't check.
+      syncEl.textContent = 'Sync: ? (no NTP)';
+      syncEl.style.color = '#888';
+      syncEl.title = 'Could not reach an NTP server to measure clock offset' + (d.error ? ' (' + d.error + ')' : '');
+      return;
+    }
+
+    var off = fmtOffset(d.offsetMs || 0);
+    syncEl.title = 'PC clock offset vs ' + (d.server || 'NTP') + ': ' + off;
+
+    if (d.level === 'ok') {
+      syncEl.textContent = 'Sync: OK';
+      syncEl.classList.add('jtcat-synced');
+      if (d.rebaselined && clockBanner && clockMsg) {
+        clockMsg.textContent = '✓ Clock corrected — FT8 timing re-baselined, decoding resumed.';
+        clockBanner.style.background = '#1a5a2a';
+        clockBanner.style.borderBottom = '2px solid #4ecca3';
+        clockBanner.classList.remove('hidden');
+        clearTimeout(clockBannerHideTimer);
+        clockBannerHideTimer = setTimeout(function () { clockBanner.classList.add('hidden'); }, 6000);
+      }
+      return;
+    }
+
+    // warn / bad — light the indicator and raise the banner.
+    var bad = d.level === 'bad';
+    syncEl.textContent = 'Sync: ' + off + (bad ? ' ✕' : ' ⚠');
+    syncEl.style.color = bad ? '#e94560' : '#f0a500';
+    if (clockBanner && clockMsg) {
+      clockMsg.textContent = bad
+        ? '⚠ PC clock is ' + off + ' off UTC — FT8 will NOT decode until you fix it.'
+        : '⚠ PC clock is ' + off + ' off UTC — decoding may be unreliable. Sync recommended.';
+      clockBanner.style.background    = bad ? '#5a1a1a' : '#5a4a1a';
+      clockBanner.style.borderBottom  = '2px solid ' + (bad ? '#e94560' : '#f0a500');
+      clockBanner.classList.remove('hidden');
+    }
+  }
+
+  if (window.api.onJtcatClock) window.api.onJtcatClock(applyClock);
+
+  if (clockSetBtn && window.api.jtcatOpenTimeSettings) {
+    clockSetBtn.addEventListener('click', function() { window.api.jtcatOpenTimeSettings(); });
+  }
+  if (clockReBtn && window.api.jtcatCheckClock) {
+    clockReBtn.addEventListener('click', function() {
+      if (clockMsg) clockMsg.textContent = 'Checking clock…';
+      window.api.jtcatCheckClock().then(function(c) { if (c) applyClock(c); });
+    });
+  }
+  if (clockSyncBtn && window.api.jtcatSyncClock) {
+    clockSyncBtn.addEventListener('click', function() {
+      if (clockMsg) clockMsg.textContent = 'Syncing clock…';
+      window.api.jtcatSyncClock().then(function(res) {
+        if (res && res.clock) applyClock(res.clock);
+        if (res && res.sync && !res.sync.success && clockMsg) {
+          // w32tm failed (usually: not Administrator). Tell the user, and the
+          // "Time settings…" button is right there as the no-admin path.
+          clockMsg.textContent = '⚠ ' + (res.sync.message || 'Sync failed') + ' — use “Time settings…”.';
+        }
+      });
+    });
+  }
+
+  // Fetch whatever the monitor last measured (the engine may already have been
+  // running before this popout opened, so we won't get a fresh broadcast).
+  if (window.api.jtcatGetClock) {
+    window.api.jtcatGetClock().then(function(c) { if (c) applyClock(c); });
+  }
 
   // PTT mode indicator (CAT vs VOX)
   var pttModeEl = document.getElementById('jp-ptt-mode');
@@ -909,6 +970,10 @@ function _applyPopoutTheme(payload) {
   modeSelect.addEventListener('change', function() {
     updateBandFreqs();
     window.api.jtcatSetMode(modeSelect.value);
+    // Persist the mode so reopening JTCAT comes back in FT4/FT2 instead of
+    // silently reverting to FT8 (which left the radio parked on the FT8 sub-
+    // band and looked like "FT4 never decodes"). K3SBP 2026-06-10.
+    window.api.saveSettings({ jtcatLastMode: modeSelect.value });
     // Retune to the active band's new frequency for the selected mode
     var activeBtn = document.querySelector('.jtcat-band-btn.active');
     if (activeBtn) selectBand(activeBtn, true);
@@ -1458,6 +1523,12 @@ function _applyPopoutTheme(payload) {
 
   // Auto-restore last band, tune, and start decoding
   window.api.getSettings().then(function(s) {
+    // Restore the last mode FIRST so the band buttons carry the correct
+    // (FT4/FT2) sub-band frequencies before we match/select a band below.
+    if (s.jtcatLastMode === 'FT4' || s.jtcatLastMode === 'FT2') {
+      modeSelect.value = s.jtcatLastMode;
+      updateBandFreqs();
+    }
     var lastFreq = s.jtcatLastBandFreq || 14074;
     var bandBtn = document.querySelector('.jtcat-band-btn[data-freq="' + lastFreq + '"]');
     // If no exact match, find the band button closest to the requested frequency
