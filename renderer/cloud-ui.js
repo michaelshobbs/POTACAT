@@ -554,11 +554,11 @@
         if (result.error) {
           alert('Download failed: ' + result.error);
         } else if (!result.canceled) {
-          alert('Cloud log saved to: ' + result.filePath);
+          alert('Cloud backup saved to: ' + result.filePath);
         }
       } finally {
         downloadAdifBtn.disabled = false;
-        downloadAdifBtn.textContent = 'Download Cloud Log (ADIF)';
+        downloadAdifBtn.textContent = 'Download Cloud Backup (.adi)';
       }
     });
   }
