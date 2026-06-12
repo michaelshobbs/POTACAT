@@ -135,13 +135,18 @@
         "rpm"
       ],
       "category": "Utility",
-      "appArmorProfile": "build/linux-apparmor-profile",
       "extraResources": [
         {
           "from": "resources/cloudflared/linux/cloudflared",
           "to": "cloudflared"
         }
       ]
+    },
+    "deb": {
+      "appArmorProfile": "build/linux-apparmor-profile"
+    },
+    "rpm": {
+      "appArmorProfile": "build/linux-apparmor-profile"
     },
     "protocols": [
       {
