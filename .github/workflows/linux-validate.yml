@@ -15,12 +15,19 @@ on:
         description: "Short note about what's being validated (shows in run history)"
         required: false
         type: string
+      artifact_run_id:
+        description: "Reuse artifacts from a previous run id (skips the ~10 min build; smoke-only iteration)"
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-linux-validate:
+    if: inputs.artifact_run_id == ''
     # 22.04 (glibc 2.35) so validation matches the release runner — the
     # alsa_native addon needs to load on Raspberry Pi OS Bookworm
     # (glibc 2.36), which means it can only require symbols <= 2.35.
@@ -151,12 +158,17 @@ jobs:
   # first seconds of Chromium startup.
   sandbox-smoke:
     needs: build-linux-validate
+    if: always() && (needs.build-linux-validate.result == 'success' || inputs.artifact_run_id != '')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: potacat-linux-validation
           path: dist
+          # When artifact_run_id is set, pull from that prior run instead
+          # of this one (smoke-only iteration without the 10-min build).
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Install runtime deps
         run: |
@@ -194,8 +206,8 @@ jobs:
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a "$BIN" --headless || rc=$?
           echo "exit code: $rc"
+          echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
-          cat ~/.config/POTACAT/startup.log
           # Fully sandboxed — the fallback must NOT have fired.
           ! grep -F '[sandbox] WARNING' ~/.config/POTACAT/startup.log
 
@@ -207,8 +219,8 @@ jobs:
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a "$BIN" --headless || rc=$?
           echo "exit code: $rc"
+          echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
-          cat ~/.config/POTACAT/startup.log
           grep -F '[sandbox] WARNING' ~/.config/POTACAT/startup.log
           sudo sysctl -w kernel.unprivileged_userns_clone=1
 
@@ -219,6 +231,6 @@ jobs:
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a dist/POTACAT-*.AppImage --headless || rc=$?
           echo "exit code: $rc"
+          echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
-          cat ~/.config/POTACAT/startup.log
           grep -F '[sandbox] WARNING' ~/.config/POTACAT/startup.log
