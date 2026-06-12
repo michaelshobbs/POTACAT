@@ -205,6 +205,9 @@ jobs:
           # 25s kill (rc 124) = Chromium got past sandbox init.
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a "$BIN" --headless || rc=$?
+          # timeout kills xvfb-run but the Electron child survives and
+          # would hold port 7300 into the next scenario (EADDRINUSE).
+          pkill -f '/opt/POTACAT' || true; sleep 2
           echo "exit code: $rc"
           echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
@@ -218,6 +221,7 @@ jobs:
           BIN=$(find /opt -maxdepth 2 -type f \( -name 'POTACAT' -o -name 'potacat' \) | head -1)
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a "$BIN" --headless || rc=$?
+          pkill -f '/opt/POTACAT' || true; sleep 2
           echo "exit code: $rc"
           echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
@@ -230,6 +234,7 @@ jobs:
           chmod +x dist/POTACAT-*.AppImage
           rm -rf ~/.config/POTACAT
           rc=0; timeout 25s xvfb-run -a dist/POTACAT-*.AppImage --headless || rc=$?
+          pkill -f 'potacat.bin|POTACAT' || true; sleep 2
           echo "exit code: $rc"
           echo "--- startup.log ---"; cat ~/.config/POTACAT/startup.log || echo "(no startup.log — JS never ran)"
           [ "$rc" = "124" ]
