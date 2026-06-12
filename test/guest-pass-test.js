@@ -51,7 +51,7 @@ section('RemoteClient — pass-mode auth message');
     id: 'gp-otter-newt-mosaic-rooster', kind: 'pass', name: 'K3SBP (Guest Pass)',
     passCode: 'otter-newt-mosaic-rooster',
     passSessionId: 'a'.repeat(64),
-    cloudHost: 'k3sbp.cloud.potacat.com',
+    cloudHost: 'k3sbp.potacat.com',
   };
   const c = new RemoteClient(passTarget, { clientVersion: 'test' });
   c._ws = { readyState: 1, send: (s) => sent.push(JSON.parse(s)), close: () => {} };
@@ -68,7 +68,7 @@ section('RemoteClient — pass-mode auth message');
 section('RemoteClient — paired-target auth unchanged');
 {
   const sent = [];
-  const pairedTarget = { id: 'ct_x', name: 'Shack', deviceToken: 'DEV-TOKEN-123', cloudHost: 'x.cloud.potacat.com' };
+  const pairedTarget = { id: 'ct_x', name: 'Shack', deviceToken: 'DEV-TOKEN-123', cloudHost: 'x.potacat.com' };
   const c = new RemoteClient(pairedTarget, { clientVersion: 'test' });
   c._ws = { readyState: 1, send: (s) => sent.push(JSON.parse(s)), close: () => {} };
   c._handleMessage(JSON.stringify({ type: 'auth-mode', mode: 'token' }));

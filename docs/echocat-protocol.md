@@ -366,7 +366,7 @@ The mobile app scans it to bootstrap a paired-device record.
 | `token` | yes | One-time pairing token minted by `remoteServer.createPairingToken()`. Short-lived (5 min default; 60 min when shared via messaging). |
 | `fp` | yes | SHA-256 fingerprint of the desktop's TLS cert. The phone pins this for the LAN connection. |
 | `name` | yes | `os.hostname()` of the desktop — shown in the phone's paired-device list. |
-| `cloudHost` | **optional** *(added 2026-06-01 for POTACAT Cloud)* | The CF-tunneled hostname, e.g. `K3SBP.cloud.potacat.com`. Present only when the desktop has POTACAT Cloud enabled and the tunnel is provisioned (file `userData/cloud-tunnel.json` exists with `enabled:true`). Phone uses LAN first; falls back to `wss://<cloudHost>` over CA-signed TLS (skip pinning on this hostname only — LAN keeps pinning). Absent ⇒ LAN-only pairing. |
+| `cloudHost` | **optional** *(added 2026-06-01 for POTACAT Cloud)* | The CF-tunneled hostname, e.g. `k3sbp.potacat.com` (the pattern is `<callsign>.potacat.com`; always returned by the cloud /provision endpoint, never constructed client-side). Present only when the desktop has POTACAT Cloud enabled and the tunnel is provisioned (file `userData/cloud-tunnel.json` exists with `enabled:true`). Phone uses LAN first; falls back to `wss://<cloudHost>` over CA-signed TLS (skip pinning on this hostname only — LAN keeps pinning). Absent ⇒ LAN-only pairing. |
 
 Mobile parsing: treat `cloudHost` as optional and forward-compatible. New
 fields may appear in future builds — existing fields will never change
