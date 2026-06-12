@@ -30,6 +30,11 @@ function startServer(behavior) {
   const srv = http.createServer((req, res) => {
     if (req.url === '/v1/auth/refresh' && req.method === 'POST') {
       behavior.refreshCalls++;
+      if (behavior.refreshFails) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'refresh token revoked' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ accessToken: 'FRESH-TOKEN', refreshToken: 'FRESH-REFRESH' }));
       return;
@@ -45,6 +50,11 @@ function startServer(behavior) {
       if (behavior.mode === '500') {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'boom' }));
+        return;
+      }
+      if (behavior.mode === '404') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'User not found' }));
         return;
       }
       if (behavior.mode === 'disconnect-midstream') {
@@ -133,6 +143,31 @@ function makeClient(port, opts = {}) {
     try { await client.downloadAdif(dest); } catch (e) { err = e; }
     check(err && /HTTP 500/.test(err.message), 'HTTP 500 rejects with the status');
     check(!fs.existsSync(dest) && !fs.existsSync(dest + '.download'), '500 leaves no files behind');
+  }
+
+  // ── account deleted server-side ──────────────────────────────────
+  {
+    behavior.mode = '404'; behavior.exportCalls = [];
+    const dest = path.join(tmpDir, 'gone.adi');
+    const client = makeClient(port, { accessToken: 'FRESH-TOKEN' });
+    let err = null;
+    try { await client.downloadAdif(dest); } catch (e) { err = e; }
+    check(err && err.message === 'ACCOUNT_NOT_FOUND', '404 rejects as ACCOUNT_NOT_FOUND (re-sign-in signal)');
+    check(!fs.existsSync(dest) && !fs.existsSync(dest + '.download'), '404 leaves no files behind');
+  }
+
+  // ── expired token AND failed refresh ─────────────────────────────
+  {
+    behavior.mode = 'expired-then-ok'; behavior.exportCalls = [];
+    behavior.refreshCalls = 0; behavior.refreshFails = true;
+    const dest = path.join(tmpDir, 'norefresh.adi');
+    const client = makeClient(port); // stale token, refresh will 401
+    let err = null;
+    try { await client.downloadAdif(dest); } catch (e) { err = e; }
+    behavior.refreshFails = false;
+    check(err && /^Token refresh failed/.test(err.message),
+      'failed refresh surfaces as Token refresh failed (re-sign-in signal)');
+    check(behavior.exportCalls.length === 1, 'no second export attempt when the refresh fails');
   }
 
   // ── signed out ───────────────────────────────────────────────────

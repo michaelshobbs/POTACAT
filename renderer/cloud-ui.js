@@ -553,6 +553,9 @@
         const result = await window.api.cloudDownloadAdif();
         if (result.error) {
           alert('Download failed: ' + result.error);
+          // Account deleted / session unrecoverable — drop to the sign-in
+          // form (keep the stale-token sign-out link as the escape hatch).
+          if (result.needsSignIn) showLogin(true);
         } else if (!result.canceled) {
           alert('Cloud backup saved to: ' + result.filePath);
         }
