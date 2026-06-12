@@ -3004,35 +3004,32 @@
       <legend>Sign Out</legend>
       <button type="button" id="cloud-signout-btn" class="btn">Sign Out of POTACAT Cloud</button>
     </fieldset>
-    <!-- Footer scrolls WITH the content (last child of the scroll area) so the
-         only pinned bottom element is the small Save/Cancel bar below — keeps
-         Save visible on every screen size without scrolling. K3SBP 2026-06-10. -->
-    <div class="settings-footer" style="position:relative;">
-      <!-- Two-column layout: ECHOCAT promo on the left (~40%), the
-           existing byline / coffee / links cluster on the right (~60%),
-           right-aligned so the dialog edge is the natural anchor.
-           Badge artwork is trademark Apple / Google — download from the
-           official sources (see assets/README-app-badges.md) and drop the
-           two files at:
-              assets/app-store-badge.svg
-              assets/google-play-badge.png
-           If a file is missing, the <img> alt text degrades to the
-           original two-line text label.
-           Casey 2026-06-08. -->
+    </div><!-- /.settings-scroll-area -->
+    <!-- Pinned bottom bar (grid-area: footer, spans both shell columns).
+         ECHOCAT promo + version/byline/links + Save/Cancel stay visible on
+         every tab without scrolling — Casey 2026-06-12 ("sticky in the same
+         bar as Report a Bug / Save / Cancel"). Reverts the 2026-06-10
+         scroll-with-content move.
+         Badge artwork is the official trademark Apple / Google art at
+         assets/app-store-badge.svg + assets/google-play-badge.png
+         (provenance + refresh instructions: assets/README-app-badges.md).
+         If a file goes missing, the <img> degrades to its alt text. -->
+    <div class="settings-footer">
       <div class="settings-footer-cols">
         <div class="settings-footer-left">
           <div class="settings-echocat-title">Download ECHOCAT on your phone and tablet</div>
           <div class="settings-echocat-badges">
-            <a class="settings-echocat-badge" data-external="1"
+            <a class="settings-echocat-badge-link" data-external="1"
                href="https://apps.apple.com/us/app/echocat-ham-radio-remote/id6766321194"
                aria-label="Download ECHOCAT on the App Store">
-              <span class="settings-echocat-badge-sub">Download on the</span>
-              <span class="settings-echocat-badge-main">App Store</span>
+              <img class="settings-echocat-badge-img settings-echocat-badge-img-appstore"
+                   src="../assets/app-store-badge.svg" alt="Download on the App Store">
             </a>
-            <span class="settings-echocat-badge settings-echocat-badge-disabled" aria-disabled="true"
+            <span class="settings-echocat-badge-link settings-echocat-badge-disabled" aria-disabled="true"
                   aria-label="ECHOCAT for Android coming soon">
-              <span class="settings-echocat-badge-sub">Coming Soon</span>
-              <span class="settings-echocat-badge-main">Google Play</span>
+              <img class="settings-echocat-badge-img settings-echocat-badge-img-play"
+                   src="../assets/google-play-badge.png" alt="Get it on Google Play">
+              <span class="settings-echocat-badge-overlay">Coming Soon</span>
             </span>
           </div>
         </div>
@@ -3053,13 +3050,12 @@
             <a href="#" id="check-update-link">Check for Updates</a>
           </div>
         </div>
+        <div class="dialog-buttons">
+          <button id="settings-save">Save</button>
+          <button id="settings-cancel">Cancel</button>
+        </div>
       </div>
       <span id="pi-access" class="pi-access">&pi;</span>
-    </div>
-    </div><!-- /.settings-scroll-area -->
-    <div class="dialog-buttons">
-      <button id="settings-save">Save</button>
-      <button id="settings-cancel">Cancel</button>
     </div>
     </div><!-- /.settings-shell -->
   </dialog>

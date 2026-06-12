@@ -63,6 +63,8 @@
       "assets/icon-256.png",
       "assets/icon-light.png",
       "assets/cty.dat",
+      "assets/app-store-badge.svg",
+      "assets/google-play-badge.png",
       "data/**/*",
       "scripts/test-alsa.js",
       "scripts/launcher.js",
