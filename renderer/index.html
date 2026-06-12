@@ -2702,7 +2702,7 @@
             <label class="checkbox-label" style="margin-top:6px;"><input type="checkbox" id="set-remote-stun"> Enable STUN (audio without VPN)</label>
             <span class="help-text" style="margin-left:12px;display:block;">Uses Google's public STUN server to discover your public IP, enabling WebRTC audio across the internet without a VPN. Only needed if you can't use Tailscale or both devices aren't on the same network.</span>
             <label class="checkbox-label" style="margin-top:8px;"><input type="checkbox" id="set-allow-pair-requests" checked> Allow tap-to-pair from the local network</label>
-            <span class="help-text" style="margin-left:12px;display:block;">When the POTACAT mobile app sees your desktop on the LAN, tapping the discovered card sends a pair request and pops an Approve/Deny window here. Turn off if you share a network with strangers (libraries, coffee shops). POTACAT Cloud Tunnel exposure always blocks tap-to-pair regardless of this switch.</span>
+            <span class="help-text" style="margin-left:12px;display:block;">When the POTACAT mobile app sees your desktop on the LAN, tapping the discovered card sends a pair request and pops an Approve/Deny window here. Works only for devices on your local network — requests arriving through the POTACAT Cloud Tunnel are always refused. Turn off if you share a network with strangers (libraries, coffee shops).</span>
           </div>
           <div>
             <label for="set-echocat-pair-host" style="font-size:12px;font-weight:600;display:block;margin-bottom:3px;">Pair host override</label>
@@ -3314,6 +3314,12 @@
       Add another device — phone, tablet, laptop, or another POTACAT — to
       control this shack. Scan the QR on a phone or tablet, or copy the URL
       and open it in POTACAT on the other device.
+    </p>
+    <p class="help-text" style="margin-top:-4px;">
+      Other ways to pair: <b>tap-to-pair</b> (phone app finds this desktop on
+      your home Wi-Fi — an Approve window pops here; same network only), or
+      <b>Cloud account</b> (sign in to POTACAT Cloud on both devices and pick
+      this shack in the app — no QR, no popup).
     </p>
 
     <div class="pair-device-warning">
