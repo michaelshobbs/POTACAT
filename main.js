@@ -1407,11 +1407,45 @@ function sendCatLog(msg) {
   if (win && !win.isDestroyed()) win.webContents.send('cat-log', line);
 }
 
-// PstRotator UDP rotor control
+// Rotor control — two backends behind one sendRotorBearing() entry point:
+//   'pstrotator' (default) — fire-and-forget UDP XML to PstRotator
+//   'rotorez'              — direct serial to a Rotor-EZ / RotorCard /
+//                            Hy-Gain DCU-1 controller (lib/rotorez.js)
 const dgram = require('dgram');
+const { RotorEzClient } = require('./lib/rotorez');
 let rotorSocket = null;
+let rotorEz = null;
+
+// Create/destroy/re-point the Rotor-EZ serial client to match settings.
+// Called at startup, on save-settings (rotor keys), and lazily from
+// sendRotorBearing as a safety net. Connecting is async — doing it here
+// rather than on first QSY means the port is already open when the
+// first bearing goes out.
+function syncRotorEz() {
+  const want = !!settings.enableRotor
+    && settings.rotorType === 'rotorez'
+    && !!settings.rotorSerialPath;
+  if (!want) {
+    if (rotorEz) { rotorEz.disconnect(); rotorEz = null; }
+    return;
+  }
+  if (rotorEz && rotorEz._path === settings.rotorSerialPath) return; // already on this port
+  if (!rotorEz) {
+    rotorEz = new RotorEzClient();
+    rotorEz.on('log', (m) => sendCatLog(m));
+    rotorEz.on('settled', ({ bearing, target, arrived }) => {
+      sendCatLog(`Rotor-EZ settled at ${bearing}° (target ${target}°${arrived ? '' : ' — NOT reached'})`);
+    });
+  }
+  rotorEz.connect(settings.rotorSerialPath);
+}
 
 function sendRotorBearing(azimuth) {
+  if ((settings.rotorType || 'pstrotator') === 'rotorez') {
+    syncRotorEz();
+    if (rotorEz) rotorEz.rotate(azimuth); // RotorEzClient logs its own traffic
+    return;
+  }
   if (!rotorSocket) rotorSocket = dgram.createSocket('udp4');
   const host = settings.rotorHost || '127.0.0.1';
   const port = settings.rotorPort || 12040;
@@ -11493,6 +11527,9 @@ function createWindow() {
     }
     refreshSpots();
     fetchAllSolar();
+    // Open the Rotor-EZ serial port now (if configured) so the first
+    // auto-rotate doesn't race the async port open.
+    syncRotorEz();
     // Auto-send DXCC data if enabled and ADIF path is set
     if (settings.enableDxcc) {
       sendDxccData();
@@ -18869,6 +18906,11 @@ app.whenReady().then(() => {
       } else {
         disconnectPskrMap();
       }
+    }
+
+    // Open/close/re-point the Rotor-EZ serial client when its config changes
+    if (has('enableRotor') || has('rotorType') || has('rotorSerialPath')) {
+      syncRotorEz();
     }
 
     // Push updated settings to ECHOCAT phone

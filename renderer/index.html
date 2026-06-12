@@ -1245,7 +1245,7 @@
                    in app.js continues to drive visibility. -->
               <label class="summary-quick-row hidden" id="quick-rotor-label">
                 <input type="checkbox" id="quick-rotor">
-                <span>PSTRotator</span>
+                <span>Rotor</span>
               </label>
               <!-- Vestigial divider element preserved for any code that
                    toggles it alongside the rotor label. -->
@@ -2019,22 +2019,40 @@
       <legend>Antenna</legend>
       <label class="checkbox-label"><input type="checkbox" id="set-show-bearing"> Show Beam Heading</label>
       <span class="help-text" style="margin-left:12px;display:block;">Compass bearing from your QTH to each spot</span>
-      <label class="checkbox-label"><input type="checkbox" id="set-enable-rotor"> PstRotator rotor control</label>
+      <label class="checkbox-label"><input type="checkbox" id="set-enable-rotor"> Rotor control (PstRotator / Rotor-EZ)</label>
       <div id="rotor-config" class="radio-sub hidden">
+        <label style="margin-bottom:4px;">Rotor:
+          <select id="set-rotor-type" style="width:220px;">
+            <option value="pstrotator">PstRotator (UDP)</option>
+            <option value="rotorez">Rotor-EZ / DCU-1 (serial)</option>
+          </select>
+        </label>
         <label style="margin-bottom:4px;">Rotate:
           <select id="set-rotor-mode" style="width:160px;">
             <option value="auto">Auto (rotate on every QSY)</option>
             <option value="manual">Manual (click bearing to rotate)</option>
           </select>
         </label>
-        <span class="help-text" style="font-size:12px;">Sends beam heading to PstRotator via UDP. In Manual mode, click the bearing value in the spot table to turn the antenna.</span>
-        <label>Host:
-          <input type="text" id="set-rotor-host" placeholder="127.0.0.1" value="127.0.0.1" style="width:140px;">
-        </label>
-        <label>Port:
-          <input type="number" id="set-rotor-port" value="12040" min="1" max="65535" style="width:80px;">
-        </label>
-        <span class="help-text" style="display:block;margin-top:4px;">Default port is 12040. Use 12042, 12044, 12046 for additional rotators.</span>
+        <span class="help-text" style="font-size:12px;">In Manual mode, click the bearing value in the spot table to turn the antenna.</span>
+        <div id="rotor-pst-config">
+          <span class="help-text" style="font-size:12px;">Sends beam heading to PstRotator via UDP.</span>
+          <label>Host:
+            <input type="text" id="set-rotor-host" placeholder="127.0.0.1" value="127.0.0.1" style="width:140px;">
+          </label>
+          <label>Port:
+            <input type="number" id="set-rotor-port" value="12040" min="1" max="65535" style="width:80px;">
+          </label>
+          <span class="help-text" style="display:block;margin-top:4px;">Default port is 12040. Use 12042, 12044, 12046 for additional rotators.</span>
+        </div>
+        <div id="rotor-ez-config" class="hidden">
+          <span class="help-text" style="font-size:12px;">Drives an Idiom Press / Ham Supply Rotor-EZ or RotorCard board — or a Hy-Gain DCU-1 — directly over its serial port (4800 8N1). The port can't be shared with the rig.</span>
+          <label>Serial port:
+            <select id="set-rotor-ez-port" style="width:240px;"></select>
+          </label>
+          <label>Manual port path (if not listed):
+            <input type="text" id="set-rotor-ez-port-manual" placeholder="COM9 or /dev/ttyUSB0" style="width:180px;">
+          </label>
+        </div>
       </div>
       <label class="checkbox-label"><input type="checkbox" id="set-enable-ag"> 4O3A Antenna Genius</label>
       <div id="ag-config" class="radio-sub hidden">

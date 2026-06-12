@@ -634,9 +634,14 @@ const setEnableSplit = document.getElementById('set-enable-split');
 const setEnableAtu = document.getElementById('set-enable-atu');
 const setEnableRotor = document.getElementById('set-enable-rotor');
 const rotorConfig = document.getElementById('rotor-config');
+const setRotorType = document.getElementById('set-rotor-type');
 const setRotorMode = document.getElementById('set-rotor-mode');
 const setRotorHost = document.getElementById('set-rotor-host');
 const setRotorPort = document.getElementById('set-rotor-port');
+const rotorPstConfig = document.getElementById('rotor-pst-config');
+const rotorEzConfig = document.getElementById('rotor-ez-config');
+const setRotorEzPort = document.getElementById('set-rotor-ez-port');
+const setRotorEzPortManual = document.getElementById('set-rotor-ez-port-manual');
 const setEnableAg = document.getElementById('set-enable-ag');
 const agConfig = document.getElementById('ag-config');
 const setAgHost = document.getElementById('set-ag-host');
@@ -3831,10 +3836,49 @@ setEnablePskrMap.addEventListener('change', () => {
   pskrMapConfig.classList.toggle('hidden', !setEnablePskrMap.checked);
 });
 
-// PstRotator checkbox toggles rotor config visibility
+// Rotor checkbox toggles rotor config visibility
 setEnableRotor.addEventListener('change', () => {
   rotorConfig.classList.toggle('hidden', !setEnableRotor.checked);
+  if (setEnableRotor.checked) applyRotorTypeVisibility();
 });
+
+// Rotor type (PstRotator UDP vs Rotor-EZ serial) swaps the sub-config
+// blocks and lazily populates the COM-port picker — same pattern as the
+// rig editor's port dropdown.
+function applyRotorTypeVisibility() {
+  const isEz = setRotorType && setRotorType.value === 'rotorez';
+  if (rotorPstConfig) rotorPstConfig.classList.toggle('hidden', isEz);
+  if (rotorEzConfig) rotorEzConfig.classList.toggle('hidden', !isEz);
+  if (isEz) populateRotorEzPorts();
+}
+
+async function populateRotorEzPorts(savedPath) {
+  if (!setRotorEzPort) return;
+  const saved = savedPath !== undefined ? savedPath : (setRotorEzPort.dataset.saved || '');
+  let ports = [];
+  try { ports = await window.api.listPorts(); } catch { /* keep empty list */ }
+  setRotorEzPort.innerHTML = '';
+  const detectedPaths = new Set();
+  for (const p of ports) {
+    detectedPaths.add(p.path);
+    const opt = document.createElement('option');
+    opt.value = p.path;
+    opt.textContent = `${p.path} — ${p.friendlyName}`;
+    if (saved === p.path) opt.selected = true;
+    setRotorEzPort.appendChild(opt);
+  }
+  // Saved path not currently plugged in — keep it selectable so a save
+  // doesn't silently re-point the rotor to whatever enumerates first.
+  if (saved && !detectedPaths.has(saved)) {
+    const opt = document.createElement('option');
+    opt.value = saved;
+    opt.textContent = `${saved} — (not detected)`;
+    opt.selected = true;
+    setRotorEzPort.appendChild(opt);
+  }
+}
+
+if (setRotorType) setRotorType.addEventListener('change', applyRotorTypeVisibility);
 // Antenna Genius checkbox toggles config visibility
 setEnableAg.addEventListener('change', () => {
   agConfig.classList.toggle('hidden', !setEnableAg.checked);
@@ -12675,10 +12719,14 @@ async function openSettingsDialog(tab) {
   setTuneClick.checked = s.tuneClick === true;
   setEnableRotor.checked = s.enableRotor === true;
   if (s.enableRotor) rotorConfigured = true;
+  if (setRotorType) setRotorType.value = s.rotorType || 'pstrotator';
   if (setRotorMode) setRotorMode.value = s.rotorMode || 'auto';
   setRotorHost.value = s.rotorHost || '127.0.0.1';
   setRotorPort.value = s.rotorPort || 12040;
+  if (setRotorEzPort) setRotorEzPort.dataset.saved = s.rotorSerialPath || '';
+  if (setRotorEzPortManual) setRotorEzPortManual.value = '';
   rotorConfig.classList.toggle('hidden', !s.enableRotor);
+  if (s.enableRotor) applyRotorTypeVisibility(); // populates the EZ port list from dataset.saved
   setEnableAg.checked = s.enableAntennaGenius === true;
   setAgHost.value = s.agHost || '';
   setAgRadioPort.value = s.agRadioPort || '1';
@@ -13390,9 +13438,18 @@ settingsSave.addEventListener('click', async () => {
   const hideWorkedEnabled = setHideWorked.checked;
   const tuneClickEnabled = setTuneClick.checked;
   const rotorEnabledVal = setEnableRotor.checked;
+  const rotorTypeVal = setRotorType ? setRotorType.value : 'pstrotator';
   const rotorModeVal = setRotorMode ? setRotorMode.value : 'auto';
   const rotorHostVal = setRotorHost.value.trim() || '127.0.0.1';
   const rotorPortVal = parseInt(setRotorPort.value, 10) || 12040;
+  // Manual path wins over the dropdown (same precedence as the rig
+  // editor). Falls back to the loaded value (dataset.saved) so saving
+  // while the PstRotator type is selected — dropdown never populated —
+  // doesn't wipe a previously configured serial path.
+  const rotorSerialPathVal = (setRotorEzPortManual && setRotorEzPortManual.value.trim())
+    || (setRotorEzPort && setRotorEzPort.value)
+    || (setRotorEzPort && setRotorEzPort.dataset.saved)
+    || '';
   const agEnabled = setEnableAg.checked;
   const agHostVal = setAgHost.value.trim();
   const agRadioPortVal = parseInt(setAgRadioPort.value, 10) || 1;
@@ -13558,9 +13615,11 @@ settingsSave.addEventListener('click', async () => {
     hideWorked: hideWorkedEnabled,
     tuneClick: tuneClickEnabled,
     enableRotor: rotorEnabledVal,
+    rotorType: rotorTypeVal,
     rotorMode: rotorModeVal,
     rotorHost: rotorHostVal,
     rotorPort: rotorPortVal,
+    rotorSerialPath: rotorSerialPathVal,
     enableAntennaGenius: agEnabled,
     agHost: agHostVal,
     agRadioPort: agRadioPortVal,
