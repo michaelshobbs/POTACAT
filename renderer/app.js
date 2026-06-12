@@ -6022,6 +6022,11 @@ if (window.api && window.api.onRemoteClientDisplaced) {
       chip.style.background = '#e94560';
       chip.style.color = '#fff';
       chip.title = 'Guest Pass session ended (' + (state.reason || 'expired') + ') — back on the local rig';
+    } else if (state.state === 'revoked') {
+      chip.textContent = '🔗 pairing revoked';
+      chip.style.background = '#e94560';
+      chip.style.color = '#fff';
+      chip.title = 'The shack operator revoked this desktop\'s pairing (' + (state.reason || 'revoked') + ') — back on the local rig';
     }
   };
   chip.addEventListener('click', _remoteRadiosOpen);
@@ -6032,6 +6037,9 @@ if (window.api && window.api.onRemoteClientDisplaced) {
     window.api.onRemoteClientStatus((s) => {
       if (s && s.state === 'pass-ended' && typeof showLogToast === 'function') {
         showLogToast('Guest Pass session ended (' + (s.reason || 'expired') + ') — switched back to your local rig.', { warn: true, duration: 8000 });
+      }
+      if (s && s.state === 'revoked' && typeof showLogToast === 'function') {
+        showLogToast('The shack operator revoked this desktop\'s pairing — switched back to your local rig.', { warn: true, duration: 8000 });
       }
     });
   }

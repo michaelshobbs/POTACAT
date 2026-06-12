@@ -1730,6 +1730,23 @@ function ensureRemoteClient() {
       win.webContents.send('connection-targets-updated', settings.connectionTargets);
     }
   });
+  // The shack operator revoked this desktop's pairing mid-session
+  // (`revoked` + close 4004 — see docs/echocat-protocol.md). The device
+  // token is gone, so fall back to the local rig and mark the target
+  // expired so Remote Radios shows it needs a re-pair. Same cleanup
+  // shape as pass-ended above. 2026-06-12.
+  remoteClient.on('revoked', ({ reason }) => {
+    sendCatLog(`[remote] pairing revoked by the shack operator: ${reason}`);
+    target.expiresAt = Date.now();
+    settings.activeTargetId = null;
+    saveSettings(settings);
+    tearDownRemoteClient();
+    try { connectCat(); } catch {}
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('remote-client-status', { state: 'revoked', reason });
+      win.webContents.send('connection-targets-updated', settings.connectionTargets);
+    }
+  });
   remoteClient.connect();
 }
 

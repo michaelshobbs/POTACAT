@@ -66,8 +66,22 @@ Format: each row is `name — direction — purpose`. Directions:
 | `auth-ok` | S→C | Auth succeeded. Bundles initial feature flags and settings. Per-device-token auths also include `expiresAt` (epoch ms or `null` for no-expiry — trusted / account-linked devices), `accountLinked` (bool — pair came in via Cloud-attested flow), and `trusted` (bool — operator marked the device "my own"). Absent for the legacy single-shared-token path and Guest Pass auth. |
 | `auth-fail` | S→C | Auth rejected with `reason`. New reason in v1.9: `"expired"` — paired device's sliding 180-day token elapsed without a reconnect; client should route to the re-pair UI. |
 | `kicked` | S→C | Server bumped this client because another connected. Carries `byPlatform`, `byVersion`, `byHost` so the displaced client can render a friendly "another device took over" banner instead of a mystery disconnect. |
+| `revoked` | S→C | The shack operator revoked this device's pairing **while it was connected** (Settings → paired devices → Revoke). Carries `reason` (display string). Sent immediately before the server closes the socket with code `4004`. Unlike `kicked`, the device token no longer exists — the client must drop to its unpaired state and must **not** auto-reconnect (a reconnect gets a terminal `auth-fail`; the server can't distinguish revoked from never-paired once the record is deleted). Only the matching per-device pairing is kicked; legacy shared-token and Guest Pass sessions are unaffected (pass revocation has its own `pass-ended` flow). New 2026-06-12. |
 | `pong` | S→C | Reply to `ping` for connection health checks. |
 | `ping` | C→S | Latency / liveness probe. |
+
+#### WebSocket close codes
+
+Application close codes (mirrored in `CLOSE_CODES` in
+`lib/echocat-protocol.js` and mobile's `src/protocol/echocatProtocol.ts`
+— keep the two in sync):
+
+| Code | Name | Meaning |
+|---|---|---|
+| `4001` | `PROTOCOL_VERSION_UNSUPPORTED` | Peer's protocol major is too far ahead/behind to talk. |
+| `4002` | `HANDSHAKE_INVALID` | Malformed `hello`. |
+| `4003` | `AUTH_FAILED_TERMINAL` | Auth rejected and retrying won't help — stop reconnecting. |
+| `4004` | `AUTH_REVOKED` | Operator revoked this device's pairing mid-session. Preceded by a `revoked` message. Don't reconnect. Older clients that don't know `4004` ignore the `revoked` message, treat the close as generic, reconnect once, and land on a terminal `auth-fail` — degraded but safe. |
 
 ### Spots and sources
 
