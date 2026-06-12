@@ -3074,8 +3074,11 @@ async function saveBannerQso() {
     try {
       const parkData = await window.api.getPark(potaRef);
       if (parkData) {
-        const locParts = (parkData.locationDesc || '').split('-');
-        if (locParts.length >= 2) parkLocState = locParts.slice(1).join('-');
+        // Single-state park fills STATE directly; a multi-state park
+        // ("US-WI,US-MI") prompts — the activator is only in one (WG9I).
+        const states = parkStatesFromLocationLocal(parkData.locationDesc);
+        if (states.length === 1) parkLocState = states[0];
+        else if (states.length > 1) parkLocState = await promptParkState(potaRef, parkData.locationDesc);
         parkLocGrid = parkData.grid || '';
       }
     } catch {}
@@ -8568,6 +8571,59 @@ function showTuneArc(lat, lon, freq, source) {
   }
 }
 
+// POTA locationDesc → state codes. Parks spanning states list several
+// comma-separated designators ("US-WI,US-MI"); the old split('-') parse
+// wrote garbage like "WI,US-MI" into the log's STATE field (WG9I,
+// 2026-06-12). Mirror of parkStatesFromLocation in lib/pota.js (no
+// require() in the renderer) — keep the two in sync.
+function parkStatesFromLocationLocal(locationDesc) {
+  const out = [];
+  for (const part of String(locationDesc || '').split(',')) {
+    const seg = part.trim();
+    const dash = seg.indexOf('-');
+    const st = dash >= 0 ? seg.slice(dash + 1).trim() : '';
+    if (st && out.indexOf(st) < 0) out.push(st);
+  }
+  return out;
+}
+
+// Multi-state park: ask the operator which state the activator is in
+// before the QSO saves (WG9I's ask — "the user should probably be
+// prompted"). One button per location designator + Leave Blank; ESC =
+// blank. Resolves with the bare state code ('' for blank).
+function promptParkState(parkRef, locationDesc) {
+  return new Promise((resolve) => {
+    const dlg = document.getElementById('park-state-dialog');
+    if (!dlg || typeof dlg.showModal !== 'function') return resolve('');
+    const text = document.getElementById('park-state-text');
+    const opts = document.getElementById('park-state-options');
+    const blankBtn = document.getElementById('park-state-blank');
+    const designators = String(locationDesc || '').split(',').map(s => s.trim()).filter(Boolean);
+    text.textContent = parkRef + ' spans ' + designators.join(', ')
+      + ' — which state was the activator in? This fills the STATE field of your log entry.';
+    opts.innerHTML = '';
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      try { dlg.close(); } catch { /* already closed */ }
+      resolve(val);
+    };
+    for (const d of designators) {
+      const dash = d.indexOf('-');
+      const st = dash >= 0 ? d.slice(dash + 1).trim() : d;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = d;
+      btn.addEventListener('click', () => finish(st));
+      opts.appendChild(btn);
+    }
+    blankBtn.onclick = () => finish('');
+    dlg.addEventListener('close', () => finish(''), { once: true });
+    dlg.showModal();
+  });
+}
+
 // Lightweight Maidenhead conversion for the renderer (no require of Node module)
 function gridToLatLonLocal(grid) {
   if (!grid || grid.length < 4) return null;
@@ -11404,9 +11460,12 @@ logSaveBtn.addEventListener('click', async () => {
       try {
         const parkData = await window.api.getPark(potaRef);
         if (parkData) {
-          // locationDesc is e.g. "US-ME", "VE-ON" — extract state portion after dash
-          const locParts = (parkData.locationDesc || '').split('-');
-          if (locParts.length >= 2) parkLocState = locParts.slice(1).join('-');
+          // locationDesc is "US-ME", "VE-ON", or comma-separated for parks
+          // spanning states ("US-WI,US-MI") — single state fills STATE,
+          // multiple prompts the operator (WG9I).
+          const states = parkStatesFromLocationLocal(parkData.locationDesc);
+          if (states.length === 1) parkLocState = states[0];
+          else if (states.length > 1) parkLocState = await promptParkState(potaRef, parkData.locationDesc);
           parkLocGrid = parkData.grid || '';
         }
       } catch {}

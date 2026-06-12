@@ -180,7 +180,7 @@ process.stderr?.on('error', () => {});
 // Allow AudioContext to play without user gesture (required for JTCAT audio capture in Chromium 142+)
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 const { execFile, spawn } = require('child_process');
-const { fetchSpots: fetchPotaSpots } = require('./lib/pota');
+const { fetchSpots: fetchPotaSpots, parkStatesFromLocation } = require('./lib/pota');
 const { fetchSpots: fetchSotaSpots, fetchSummitCoordsBatch, summitCache, loadAssociations, getAssociationName, SotaUploader } = require('./lib/sota');
 const sotaUploader = new SotaUploader();
 const { CatClient, RigctldClient, CivClient, listSerialPorts } = require('./lib/cat');
@@ -8090,8 +8090,11 @@ function connectRemote() {
       if (sig === 'POTA' && sigInfo) {
         const park = getParkDb(parksMap, sigInfo);
         if (park) {
-          const locParts = (park.locationDesc || '').split('-');
-          if (locParts.length >= 2) parkLocState = locParts.slice(1).join('-');
+          // Multi-state parks ("US-WI,US-MI") get NO state here — the
+          // activator is only in one of them and we can't prompt the
+          // phone operator mid-log (WG9I). Desktop log paths prompt.
+          const states = parkStatesFromLocation(park.locationDesc);
+          if (states.length === 1) parkLocState = states[0];
           parkLocGrid = park.grid || '';
         }
       }

@@ -3079,6 +3079,18 @@
     </div><!-- /.settings-shell -->
   </dialog>
 
+  <!-- Multi-state park state picker — a POTA park can span several states
+       ("US-WI,US-MI"); the activator is only in one, so logging from such
+       a park asks which to put in the log's STATE field (WG9I). -->
+  <dialog id="park-state-dialog">
+    <h3>Which State?</h3>
+    <p id="park-state-text" class="help-text" style="margin-bottom:12px;max-width:420px;"></p>
+    <div id="park-state-options" class="dialog-buttons" style="justify-content:flex-start;flex-wrap:wrap;margin-top:0;"></div>
+    <div class="dialog-buttons">
+      <button type="button" id="park-state-blank">Leave Blank</button>
+    </div>
+  </dialog>
+
   <!-- Cloud Tunnel diagnostics dialog -->
   <dialog id="tunnel-diag-dialog">
     <h3 style="display:flex;justify-content:space-between;align-items:baseline;">Cloud Tunnel Diagnostics <span style="font-size:11px;font-weight:normal;color:#666;">ESC to close</span></h3>
