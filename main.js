@@ -8880,8 +8880,16 @@ function connectRemote() {
         remoteServer.forcePttRelease();
         handleRemotePtt(false);
       }
-      // Tell phone whether to use STUN before WebRTC negotiation begins
-      remoteServer.sendToClient({ type: 'stun-config', useStun: !!settings.remoteStun });
+      // Tell phone whether to use STUN before WebRTC negotiation begins.
+      // Default ON (only an explicit false disables it): STUN is required
+      // for any WebRTC audio that isn't a direct LAN/Tailscale path — with
+      // it off, a Cloud-Tunnel client gathers only host candidates and
+      // gets rig control but NO audio (K6RBJ 2026-06-13). STUN is additive
+      // (host candidates still win on LAN), so this can't regress a
+      // working direct connection. NOTE: STUN alone still won't traverse
+      // CGNAT/symmetric NAT (e.g. cellular) — that needs a TURN relay
+      // (see the cloud-audio-turn-relay work item).
+      remoteServer.sendToClient({ type: 'stun-config', useStun: settings.remoteStun !== false });
       // Phone requested audio — create or restart hidden audio window
       startRemoteAudio();
       return;
@@ -9246,7 +9254,7 @@ function _buildAudioBridgeConfig() {
   return {
     inputDeviceId:  settings.remoteAudioInput  || '',
     outputDeviceId: settings.remoteAudioOutput || '',
-    useStun:        !!settings.remoteStun,
+    useStun:        settings.remoteStun !== false, // default ON — see stun-config note above
     audioSource:    settings.audioSource || 'dax',
     daxTxDirect,
     // TX EQ + compressor — applied in the bridge renderer to mic audio

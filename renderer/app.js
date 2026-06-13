@@ -13184,7 +13184,7 @@ async function openSettingsDialog(tab) {
     setSsbOverData.checked = !isFlexForSsb;
   }
   setRemoteCwEnabled.checked = !!s.remoteCwEnabled;
-  setRemoteStun.checked = !!s.remoteStun;
+  setRemoteStun.checked = s.remoteStun !== false; // default ON (needed for cloud/WebRTC audio)
   if (setAudioSource) setAudioSource.value = (s.audioSource === 'smartsdr') ? 'smartsdr' : 'dax';
   // TX EQ — load saved state into the Settings dialog. Live updates go
   // through window.api.setTxEq() so toggling the checkbox / dropdown
