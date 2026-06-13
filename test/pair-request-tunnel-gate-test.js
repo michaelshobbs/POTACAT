@@ -23,12 +23,12 @@ function check(cond, label) {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function request(port, path, method, bodyObj) {
+function request(port, path, method, bodyObj, extraHeaders) {
   return new Promise((resolve) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
     const req = https.request({
       host: '127.0.0.1', port, path, method,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, extraHeaders || {}),
       rejectUnauthorized: false,
     }, (res) => {
       let data = '';
@@ -77,11 +77,17 @@ const pairReq = (port, requestId) =>
     check(popups.length === 0, 'blocked request raised no Approve popup');
   }
 
-  // 2. The catch-all still gates a NON-allowlisted path under exposure.
+  // 2. The catch-all stub gates a NON-allowlisted path — but only for
+  //    requests that came via the tunnel (CF edge headers), NOT direct/
+  //    loopback ones. (2026-06-13: serving the stub to LAN/loopback was
+  //    the web-UI regression; see test/tunnel-webui-gate-test.js.)
   {
-    const r = await request(port, '/api/ptt/toggle', 'GET');
-    check(r.status === 503 && /text\/html/.test(r.ctype),
-      'a non-allowlisted path still gets the 503 tunnel stub (allowlist is narrow)');
+    const viaTunnel = await request(port, '/api/ptt/toggle', 'GET', null, { 'cf-ray': '8a-EWR' });
+    check(viaTunnel.status === 503 && /text\/html/.test(viaTunnel.ctype),
+      'non-allowlisted path over the tunnel (CF headers) gets the 503 stub');
+    const direct = await request(port, '/api/ptt/toggle', 'GET');
+    check(!(direct.status === 503 && /text\/html/.test(direct.ctype)),
+      'non-allowlisted path direct/loopback is NOT stubbed (web-UI fix)');
   }
 
   // 3. Genuine same-LAN phone is ALLOWED even while the tunnel is up
