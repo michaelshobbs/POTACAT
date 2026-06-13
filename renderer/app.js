@@ -6772,8 +6772,12 @@ function _buildEchocatCardHTML(tunnel, tail, devices, web) {
   const tunnelBtn = tunnelEffectivelyOn
     ? '<button type="button" data-act="tunnel-off">Turn off tunnel</button>'
     : '<button type="button" class="primary" data-act="tunnel-on">Turn on Cloud Tunnel</button>';
-  const body = _buildEchocatWebHTML(web)
-    + '<div class="summary-line" style="margin-top:10px;">' + _esc(detail) + '</div>'
+  // Order (Casey 2026-06-13): the remote-access status line first
+  // ("Available remotely via POTACAT Cloud Tunnel" / "…local network
+  // only"), THEN the browser block (On your WiFi / Away from home),
+  // then devices + actions.
+  const body = '<div class="summary-line">' + _esc(detail) + '</div>'
+    + _buildEchocatWebHTML(web)
     + '<div class="summary-sub" style="margin-top:6px;font-weight:600;">My devices</div>'
     + '<div class="summary-device-list">' + _summaryDeviceListHTML(devices) + '</div>'
     + '<div class="summary-card-actions">'

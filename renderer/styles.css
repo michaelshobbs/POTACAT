@@ -3500,7 +3500,7 @@ dialog {
   border: 1px solid color-mix(in srgb, var(--source-pota, #4ecca3) 35%, transparent);
   border-radius: 6px;
   padding: 8px 10px;
-  margin-bottom: 4px;
+  margin: 8px 0 4px; /* sits below the remote-access status line */
 }
 .echo-web-head {
   display: flex;
