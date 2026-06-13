@@ -6648,10 +6648,26 @@ async function _renderSummaryEchocat() {
     // covers, so it shouldn't headline the "open in a browser" block.
     const lan = (ips || []).filter((ip) => !ip.tailscale);
     const list = (lan.length ? lan : (ips || [])).map((ip) => ip.address);
+    // Tailscale URL for off-network browser access (the LAN IP only
+    // works at home). Prefer the MagicDNS hostname — the Tailscale-
+    // issued cert is valid for it, so no cert warning; fall back to the
+    // 100.x IP only when MagicDNS is off. Casey 2026-06-13.
+    let tailscaleUrl = '';
+    let tailscaleCertValid = false;
+    const tsHost = (tail && tail.installed && tail.loggedIn && tail.hostname) ? String(tail.hostname) : '';
+    if (tsHost) {
+      tailscaleUrl = 'https://' + tsHost + ':' + port;
+      tailscaleCertValid = true;
+    } else {
+      const tsIp = (ips || []).find((ip) => ip.tailscale);
+      if (tsIp) tailscaleUrl = 'https://' + tsIp.address + ':' + port;
+    }
     web = {
       addresses: list,
       port,
       token: (s.remoteRequireToken !== false) ? (s.remoteToken || '') : '',
+      tailscaleUrl,
+      tailscaleCertValid,
     };
   } catch {}
   const html = _buildEchocatCardHTML(tunnel, tail, devices, web);
@@ -6673,25 +6689,43 @@ function _buildEchocatWebHTML(web) {
   }
   const primary = 'https://' + web.addresses[0] + ':' + web.port;
   const extras = web.addresses.slice(1).map((a) => 'https://' + a + ':' + web.port);
+  const hasTs = !!web.tailscaleUrl;
+  // One URL row: optional label, the url, a copy button.
+  const urlRow = (label, url, isPrimary) =>
+    (label ? '<div class="echo-web-rowlabel">' + label + '</div>' : '')
+    + '<div class="echo-web-urlrow">'
+    + '<code class="echo-web-url">' + _esc(url) + '</code>'
+    + '<button type="button" class="echo-web-copy' + (isPrimary ? ' primary' : '') + '" data-act="echo-copy-weburl" data-copy="' + _esc(url) + '" title="Copy link">Copy</button>'
+    + '</div>';
+  // When a Tailscale URL exists, label the two so users know which
+  // works where; the LAN one only works on the home network.
+  const lanBlock = urlRow(hasTs ? 'On your WiFi (home)' : '', primary, !hasTs);
+  const tsBlock = hasTs
+    ? urlRow('Away from home (Tailscale)', web.tailscaleUrl, true)
+      + (web.tailscaleCertValid
+        ? ''
+        : '<div class="echo-web-extra">MagicDNS is off — this uses your Tailscale IP, so you\'ll get a certificate warning. Turn on MagicDNS for a clean link.</div>')
+    : '';
   const tokenLine = web.token
     ? '<div class="echo-web-token">Token <code>' + _esc(web.token) + '</code>'
       + '<button type="button" class="echo-web-copy" data-act="echo-copy-weburl" data-copy="' + _esc(web.token) + '" title="Copy token">Copy</button></div>'
     : '';
   const extrasLine = extras.length
-    ? '<div class="echo-web-extra">Also at ' + extras.map((u) => '<code>' + _esc(u) + '</code>').join(', ') + '</div>'
+    ? '<div class="echo-web-extra">Other home addresses: ' + extras.map((u) => '<code>' + _esc(u) + '</code>').join(', ') + '</div>'
     : '';
+  const hint = hasTs
+    ? 'Use the WiFi link at home; the Tailscale link works anywhere both devices are signed into your tailnet. Must be <code>https://</code>; accept the warning the first time.'
+    : 'Type it into any phone, tablet, or computer on your home WiFi. Must be <code>https://</code>; accept the security warning the first time.';
   return '<div class="echo-web">'
     + '<div class="echo-web-head">'
     + '<span class="echo-web-title">Open in a browser</span>'
     + '<span class="echo-web-tag">no app needed</span>'
     + '</div>'
-    + '<div class="echo-web-urlrow">'
-    + '<code class="echo-web-url">' + _esc(primary) + '</code>'
-    + '<button type="button" class="echo-web-copy primary" data-act="echo-copy-weburl" data-copy="' + _esc(primary) + '" title="Copy link">Copy</button>'
-    + '</div>'
+    + lanBlock
+    + tsBlock
     + tokenLine
     + extrasLine
-    + '<div class="echo-web-hint">Type it into any phone, tablet, or computer on your home WiFi. Must be <code>https://</code>; accept the security warning the first time.</div>'
+    + '<div class="echo-web-hint">' + hint + '</div>'
     + '</div>';
 }
 

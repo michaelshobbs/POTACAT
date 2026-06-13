@@ -3523,11 +3523,19 @@ dialog {
   border-radius: 999px;
   padding: 1px 7px;
 }
+.echo-web-rowlabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 6px 0 2px;
+}
+.echo-web-rowlabel:first-of-type { margin-top: 0; }
 .echo-web-urlrow {
   display: flex;
   align-items: center;
   gap: 6px;
 }
+.echo-web-urlrow + .echo-web-urlrow { margin-top: 4px; }
 .echo-web-url {
   flex: 1 1 auto;
   min-width: 0;
