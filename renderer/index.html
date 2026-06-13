@@ -2896,6 +2896,13 @@
         <button type="button" id="cloud-tunnel-disable-btn" class="btn hidden">Disable</button>
       </div>
       <p id="cloud-tunnel-error" class="help-text hidden" style="color:var(--accent-red);margin-top:6px;"></p>
+      <!-- DNS-degraded notice (tunnel-dns-degraded-notice). Amber, not red:
+           the tunnel is nominally up but cloudflared can't refresh DNS.
+           Text comes from state.degradedReason. -->
+      <div id="cloud-tunnel-degraded" class="hidden" style="margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(212,166,74,0.12);border-left:3px solid var(--source-sota);font-size:12px;line-height:1.5;color:var(--text-secondary);">
+        <strong style="color:var(--source-sota);">⚠ Cloud Tunnel DNS trouble</strong>
+        <span id="cloud-tunnel-degraded-text"></span>
+      </div>
     </fieldset>
 
     <fieldset class="source-toggles" data-settings-tab="cloud">
