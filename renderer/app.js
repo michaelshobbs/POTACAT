@@ -6103,6 +6103,24 @@ if (window.api && window.api.onRemoteClientDisplaced) {
       }
     });
   }
+  // Phase 2 audio leg: bring up the rig-audio answerer (listen to the remote
+  // rig; mic stays muted until PTT) when connected to a remote shack, and
+  // tear it down when the link drops or we switch back to the local rig. The
+  // shack mints TURN creds and offers; the hidden answerer window plays the
+  // audio. Idempotent — start/stop only fire on a real connected→not edge.
+  if (window.api && window.api.onRemoteClientStatus && window.api.remoteClientAudioStart) {
+    let _racOn = false;
+    window.api.onRemoteClientStatus((s) => {
+      const connected = !!(s && s.state === 'connected');
+      if (connected && !_racOn) {
+        _racOn = true;
+        window.api.remoteClientAudioStart().catch(() => {});
+      } else if (!connected && _racOn) {
+        _racOn = false;
+        try { window.api.remoteClientAudioStop(); } catch (e) {}
+      }
+    });
+  }
   // Hydrate on load.
   if (window.api && window.api.connectionTargetsGetStatus) {
     window.api.connectionTargetsGetStatus().then(setChip).catch(() => {});
