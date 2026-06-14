@@ -2095,7 +2095,9 @@ async function loadVoiceMacros() {
   const outputDeviceId = s.remoteAudioOutput || '';
   const row = document.getElementById('voice-macro-row');
   row.innerHTML = '';
-  for (let i = 0; i < 5; i++) {
+  // Up to 25 macros; the bar only renders slots that have a label or
+  // recording, so empties never clutter the popout.
+  for (let i = 0; i < 25; i++) {
     if (!labels[i] && filled.indexOf(i) === -1) continue;
     const btn = document.createElement('button');
     const hasFill = filled.indexOf(i) >= 0;

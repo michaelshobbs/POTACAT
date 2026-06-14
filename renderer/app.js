@@ -17249,9 +17249,40 @@ let voiceMacroBoxVisible = localStorage.getItem('voiceMacroBoxVisible') === 'tru
     }));
   });
 })();
-const VOICE_MACRO_COUNT = 5;
+// Voice macros: up to VOICE_MACRO_MAX slots. The editor shows a number of
+// rows the user controls with a "+ Add macro" button (default ~8 — most
+// users never need more); the bar only renders slots that have a label or
+// recording, so it's independent of how many editor rows are visible.
+const VOICE_MACRO_MAX = 25;
+const VOICE_MACRO_DEFAULT_SLOTS = 8;
+const VOICE_MACRO_SLOTS_KEY = 'pota-cat-voice-macro-slots';
 const VOICE_MAX_DURATION = 30;
-let voiceMacroLabels = ['CQ', 'ID', '73', '', ''];
+let voiceMacroLabels = ['CQ', 'ID', '73'];
+
+function loadVoiceMacroSlots() {
+  var n = parseInt(localStorage.getItem(VOICE_MACRO_SLOTS_KEY), 10);
+  if (!Number.isFinite(n)) n = VOICE_MACRO_DEFAULT_SLOTS;
+  return Math.min(VOICE_MACRO_MAX, Math.max(1, n));
+}
+function saveVoiceMacroSlots(n) {
+  n = Math.min(VOICE_MACRO_MAX, Math.max(1, n));
+  try { localStorage.setItem(VOICE_MACRO_SLOTS_KEY, String(n)); } catch {}
+  return n;
+}
+// How many editor rows to show: at least the saved visible count (clamped to
+// 1..max), but never fewer than needed to reveal the highest slot that already
+// has a recording or a label — otherwise growing past the default and then
+// shrinking could hide content. Pure; unit-tested in test/voice-macros-test.js.
+function effectiveVoiceMacroSlots(savedSlots, filled, labels, max) {
+  var slots = Math.min(max, Math.max(1, savedSlots || 0));
+  for (var h = max - 1; h >= 0; h--) {
+    if ((filled && filled.indexOf(h) >= 0) || (labels && labels[h] && labels[h].length)) {
+      if (h + 1 > slots) slots = h + 1;
+      break;
+    }
+  }
+  return slots;
+}
 let voicePlayingIdx = -1;
 let voicePlaybackSource = null;
 let voicePlaybackCtx = null;
@@ -17266,7 +17297,11 @@ let voicePreviewCtx = null;
 // Load labels from settings
 (async () => {
   var s = await window.api.getSettings();
-  if (s.voiceMacroLabels) voiceMacroLabels = s.voiceMacroLabels;
+  if (s.voiceMacroLabels) voiceMacroLabels = s.voiceMacroLabels.slice();
+  // Pad to MAX so per-index writes never create sparse-array holes (which
+  // JSON.stringify turns into nulls).
+  while (voiceMacroLabels.length < VOICE_MACRO_MAX) voiceMacroLabels.push('');
+  updateVoiceMacroBar();
 })();
 
 async function updateVoiceMacroBar() {
@@ -17276,7 +17311,7 @@ async function updateVoiceMacroBar() {
   if (!voiceMacroBoxVisible) return;
   var filled = await window.api.voiceMacroList();
   voiceMacroBtns.innerHTML = '';
-  for (var i = 0; i < VOICE_MACRO_COUNT; i++) {
+  for (var i = 0; i < VOICE_MACRO_MAX; i++) {
     if (!voiceMacroLabels[i] && filled.indexOf(i) === -1) continue;
     (function(idx) {
       var btn = document.createElement('button');
@@ -17513,7 +17548,12 @@ async function renderVoiceMacroEditor() {
     try { localStorage.setItem(VOICE_MACRO_DEVICE_KEY, deviceSelect.value); } catch {}
   });
 
-  for (var i = 0; i < VOICE_MACRO_COUNT; i++) {
+  // How many slot rows to show. The user grows this with "+ Add macro"
+  // (default ~8). Never hide a slot that already has a recording or label,
+  // even if it sits past the saved visible count.
+  var slots = effectiveVoiceMacroSlots(loadVoiceMacroSlots(), filled, voiceMacroLabels, VOICE_MACRO_MAX);
+
+  for (var i = 0; i < slots; i++) {
     (function(idx) {
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:4px;align-items:center;';
@@ -17580,6 +17620,48 @@ async function renderVoiceMacroEditor() {
       voiceMacroEditor.appendChild(row);
     })(i);
   }
+
+  // Footer: grow / shrink the visible slot count. "+ Add macro" reveals one
+  // more empty row (up to VOICE_MACRO_MAX). "− Remove last" hides a trailing
+  // row only when it's empty and unlabeled, so we never let a click discard a
+  // recording. A small "N / MAX" counter sits between them.
+  var footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);';
+
+  if (slots < VOICE_MACRO_MAX) {
+    var addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.textContent = '+ Add macro';
+    addBtn.title = 'Add another voice macro slot (up to ' + VOICE_MACRO_MAX + ')';
+    addBtn.style.cssText = 'font-size:11px;padding:3px 10px;cursor:pointer;';
+    addBtn.addEventListener('click', function() {
+      saveVoiceMacroSlots(slots + 1);
+      renderVoiceMacroEditor();
+    });
+    footer.appendChild(addBtn);
+  }
+
+  var lastEmpty = filled.indexOf(slots - 1) === -1
+    && !(voiceMacroLabels[slots - 1] && voiceMacroLabels[slots - 1].length);
+  if (slots > 1 && lastEmpty) {
+    var remBtn = document.createElement('button');
+    remBtn.type = 'button';
+    remBtn.textContent = '− Remove last';
+    remBtn.title = 'Hide the last (empty) macro slot';
+    remBtn.style.cssText = 'font-size:11px;padding:3px 10px;cursor:pointer;';
+    remBtn.addEventListener('click', function() {
+      saveVoiceMacroSlots(slots - 1);
+      renderVoiceMacroEditor();
+    });
+    footer.appendChild(remBtn);
+  }
+
+  var counter = document.createElement('span');
+  counter.style.cssText = 'font-size:10px;color:var(--text-tertiary);margin-left:auto;';
+  counter.textContent = slots + ' / ' + VOICE_MACRO_MAX;
+  footer.appendChild(counter);
+
+  voiceMacroEditor.appendChild(footer);
 }
 
 // localStorage key for the user-chosen recording mic. Empty / unset =
@@ -17647,10 +17729,10 @@ if (voiceMacroRecBtn) {
       voiceMacroRecBtn.style.color = '';
       return;
     }
-    // Record into first empty or first slot
-    voiceCheckSlots(function(filled) {
+    // Record into first empty slot (or slot 0 if all full).
+    window.api.voiceMacroList().then(function(filled) {
       var idx = 0;
-      for (var i = 0; i < VOICE_MACRO_COUNT; i++) { if (filled.indexOf(i) === -1) { idx = i; break; } }
+      for (var i = 0; i < VOICE_MACRO_MAX; i++) { if (filled.indexOf(i) === -1) { idx = i; break; } }
       startVoiceRecording(idx, voiceMacroRecBtn, { textContent: '', style: {} });
       voiceMacroRecBtn.textContent = 'STOP';
       voiceMacroRecBtn.style.color = '#e94560';
