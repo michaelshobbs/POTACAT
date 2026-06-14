@@ -8903,9 +8903,21 @@ function connectRemote() {
       // working direct connection. NOTE: STUN alone still won't traverse
       // CGNAT/symmetric NAT (e.g. cellular) — that needs a TURN relay
       // (see the cloud-audio-turn-relay work item).
-      remoteServer.sendToClient({ type: 'stun-config', useStun: settings.remoteStun !== false });
-      // Phone requested audio — create or restart hidden audio window
-      startRemoteAudio();
+      // Send the STUN config immediately so the client can begin negotiating
+      // right away — and so audio still works if the relay mint is slow or
+      // unavailable. Then mint a Cloudflare TURN relay (Cloud path only) and
+      // re-send stun-config carrying the iceServers; the client adopts them
+      // (setConfiguration) before its ICE gather, and our own audio bridge
+      // picks them up from _buildAudioBridgeConfig() once the mint resolves.
+      // _mintTurnCredentials() is a fast no-op off the Cloud path, so LAN /
+      // Tailscale sessions keep starting audio with zero added latency.
+      // K3SBP 2026-06-14 (cloud-audio-turn-relay, Model A).
+      _sendStunConfig(); // immediate: useStun (+ iceServers if already fresh)
+      (async () => {
+        const ice = await _mintTurnCredentials();
+        if (ice) _sendStunConfig(); // follow-up: now carries the relay creds
+        startRemoteAudio();         // bridge OFFERER builds its PC with them
+      })();
       return;
     }
     if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
@@ -9254,6 +9266,102 @@ function broadcastRemoteRadioStatus() {
   remoteServer.broadcastRadioStatus(status);
 }
 
+// --- Cloud TURN relay credentials (cloud-audio-turn-relay) ----------------
+// CGNAT / symmetric-NAT clients (cellular, WISP) can't reach the rig audio
+// via STUN hole-punching — WebRTC media needs a TURN relay. The cloud mints
+// short-lived Cloudflare TURN ICE servers at GET /v1/turn/credentials
+// (auth-only). Per the handoff's "Model A", the DESKTOP fetches once per
+// audio session and hands the iceServers to the phone over the existing WS
+// stun-config message AND uses them in our own audio bridge — both peers use
+// the same creds (CF TURN creds authorize *use* of the relay, not a peer),
+// which keeps Guest-Pass phones (no cloud login) working. Only minted when
+// Cloud is the active path; on LAN/Tailscale we skip it. ICE still prefers a
+// direct pair when one exists, so this never needlessly relays (or bills).
+let _turnIceServers = null;   // last minted iceServers array (null = none)
+let _turnExpiresAt = 0;       // ms epoch the current grant expires
+let _turnRemintTimer = null;  // setTimeout handle for the pre-expiry re-mint
+
+function _turnCloudActive() {
+  return !!(
+    settings.remoteTurn !== false &&               // opt-out hook (default on)
+    settings.cloudAccessToken &&                    // signed in to Cloud
+    cloudTunnel && cloudTunnel.getState().enabled   // Cloud Tunnel is the path
+  );
+}
+
+// Fetch + cache TURN creds. Resolves to the iceServers array on success,
+// null on any failure (caller falls back to STUN-only). Never throws.
+async function _mintTurnCredentials() {
+  if (!_turnCloudActive()) return null;
+  const sync = cloudIpc && cloudIpc.getCloudSync();
+  if (!sync) return null;
+  try {
+    // Bound the fetch so a slow/hung cloud call can't stall audio start.
+    const resp = await Promise.race([
+      sync._authedRequest('GET', '/v1/turn/credentials'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+    ]);
+    if (!resp || !Array.isArray(resp.iceServers) || !resp.iceServers.length) {
+      sendCatLog('[TURN] mint returned no iceServers — audio stays STUN-only');
+      return null;
+    }
+    _turnIceServers = resp.iceServers;
+    // Use the ACTUAL expiry, never a hardcoded hour: a cached grant can have
+    // only minutes left (server serves cached until ~10 min before expiry).
+    _turnExpiresAt = Number(resp.expiresAt) ||
+      (Date.now() + (Number(resp.ttl) || 3600) * 1000);
+    const remainMin = Math.max(0, Math.round((_turnExpiresAt - Date.now()) / 60000));
+    sendCatLog(`[TURN] relay creds minted${resp.cached ? ' (cached)' : ''} — ${resp.iceServers.length} ICE servers, ~${remainMin} min left` +
+      (typeof resp.dailyRemainingMb === 'number' ? `, ${resp.dailyRemainingMb} MB/day left` : ''));
+    _scheduleTurnRemint();
+    return _turnIceServers;
+  } catch (err) {
+    const m = (err && err.message) || String(err);
+    if (/turn_daily_limit/.test(m)) {
+      sendCatLog('[TURN] daily relay limit reached — audio falls back to STUN-only');
+    } else {
+      sendCatLog(`[TURN] relay unavailable (${m}) — audio falls back to STUN-only`);
+    }
+    _turnIceServers = null;
+    _turnExpiresAt = 0;
+    return null;
+  }
+}
+
+// Re-mint shortly before the grant expires so a >1h session keeps a fresh
+// relay ready for the next (re)connect. We do NOT renegotiate a healthy live
+// PC — fresh creds matter only at the next ICE gather — so this just refreshes
+// the stored creds and re-pushes stun-config. The server caches per user, so
+// repeat mints are cheap.
+function _scheduleTurnRemint() {
+  _stopTurnRemint();
+  if (!_turnExpiresAt) return;
+  const fireInMs = _turnExpiresAt - Date.now() - 5 * 60 * 1000; // 5 min early
+  if (fireInMs <= 0) return; // already inside the margin; next start re-mints
+  _turnRemintTimer = setTimeout(async () => {
+    _turnRemintTimer = null;
+    if (!remoteAudioWin || remoteAudioWin.isDestroyed()) return; // no live audio
+    const ice = await _mintTurnCredentials();
+    if (ice) _sendStunConfig();
+  }, fireInMs);
+}
+
+function _stopTurnRemint() {
+  if (_turnRemintTimer) { clearTimeout(_turnRemintTimer); _turnRemintTimer = null; }
+}
+
+// Tell the client how to build its ICE config. Carries the legacy useStun
+// bool (old clients) PLUS the full iceServers array + remaining TTL when a
+// relay is minted. iceTtlMs is computed from the real expiry, not assumed.
+function _sendStunConfig() {
+  const msg = { type: 'stun-config', useStun: settings.remoteStun !== false };
+  if (_turnIceServers && _turnExpiresAt > Date.now()) {
+    msg.iceServers = _turnIceServers;
+    msg.iceTtlMs = Math.max(0, _turnExpiresAt - Date.now());
+  }
+  remoteServer.sendToClient(msg);
+}
+
 // --- Remote Audio (hidden BrowserWindow for WebRTC) ---
 // Single source of truth for the config payload sent to the audio bridge
 // renderer on every (re)start. Both the "window already open" hot path
@@ -9269,6 +9377,10 @@ function _buildAudioBridgeConfig() {
     inputDeviceId:  settings.remoteAudioInput  || '',
     outputDeviceId: settings.remoteAudioOutput || '',
     useStun:        settings.remoteStun !== false, // default ON — see stun-config note above
+    // Cloud TURN relay creds (when minted) so the desktop audio bridge — the
+    // WebRTC OFFERER — gathers a relay candidate too, not just the phone.
+    // Stale/expired creds are withheld so the bridge falls back to STUN.
+    iceServers:     (_turnIceServers && _turnExpiresAt > Date.now()) ? _turnIceServers : undefined,
     audioSource:    settings.audioSource || 'dax',
     daxTxDirect,
     // TX EQ + compressor — applied in the bridge renderer to mic audio
@@ -9366,6 +9478,9 @@ async function startRemoteAudio() {
 }
 
 function destroyRemoteAudioWindow() {
+  // No live audio → stop chasing TURN re-mints (and let stale creds lapse so
+  // the next session mints fresh). The cache means a quick reconnect is cheap.
+  _stopTurnRemint();
   if (remoteAudioWin && !remoteAudioWin.isDestroyed()) {
     try { remoteAudioWin.webContents.send('remote-audio-stop'); } catch { /* may be destroyed */ }
     try { remoteAudioWin.close(); } catch { /* ignore */ }

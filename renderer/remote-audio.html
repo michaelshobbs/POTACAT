@@ -47,8 +47,13 @@ window.api.onStartAudio(async (config) => {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
     }
 
-    // STUN enables NAT traversal for audio without VPN; empty = local/VPN only
-    const iceServers = config.useStun ? [{ urls: 'stun:stun.l.google.com:19302' }] : [];
+    // ICE servers: prefer the Cloudflare TURN relay creds the desktop minted
+    // (config.iceServers) so a CGNAT phone gets a relayed path; else fall back
+    // to plain STUN (config.useStun), else local/VPN-only. ICE still prefers a
+    // direct candidate when one exists, so TURN never needlessly relays on LAN.
+    const iceServers = (Array.isArray(config.iceServers) && config.iceServers.length)
+      ? config.iceServers
+      : (config.useStun ? [{ urls: 'stun:stun.l.google.com:19302' }] : []);
     pc = new RTCPeerConnection({ iceServers });
 
     // Apply FreeDV mute state to new stream (if engine was already active)

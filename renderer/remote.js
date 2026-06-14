@@ -1575,6 +1575,16 @@
         break;
       case 'stun-config':
         _useStun = !!msg.useStun;
+        // Cloud TURN relay creds (Model A: minted by the desktop, handed to
+        // us here). Adopt them for the next ICE gather. A useStun-only message
+        // must NOT wipe a TURN list we already hold (re-mint sends the full
+        // list; an interim useStun ping shouldn't downgrade us).
+        if (Array.isArray(msg.iceServers) && msg.iceServers.length) {
+          _turnIceServers = msg.iceServers;
+          // If audio is already live, apply before the next gather. On a
+          // healthy PC this is harmless; it takes effect on reconnect/re-gather.
+          if (pc) { try { pc.setConfiguration({ iceServers: _turnIceServers }); } catch (e) {} }
+        }
         break;
 
       case 'all-qsos':
@@ -4129,6 +4139,7 @@
 
   let micReady = false;
   var _useStun = false;
+  var _turnIceServers = null; // Cloudflare TURN relay creds from stun-config (Model A)
 
   async function startAudio() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -4193,7 +4204,12 @@
     }
     try {
       setAudioStatus('Wait...');
-      var iceServers = _useStun ? [{ urls: 'stun:stun.l.google.com:19302' }] : [];
+      // Prefer the Cloudflare TURN relay creds (so a CGNAT path gets a relay
+      // candidate); else plain STUN; else local/VPN-only. ICE still picks a
+      // direct pair when one exists, so TURN never needlessly relays on LAN.
+      var iceServers = (_turnIceServers && _turnIceServers.length)
+        ? _turnIceServers
+        : (_useStun ? [{ urls: 'stun:stun.l.google.com:19302' }] : []);
       pc = new RTCPeerConnection({ iceServers: iceServers });
       for (const track of localAudioStream.getTracks()) {
         pc.addTrack(track, localAudioStream);
