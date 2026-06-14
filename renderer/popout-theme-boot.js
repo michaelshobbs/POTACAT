@@ -9,20 +9,41 @@
 // blocking script), so it runs and sets the data-theme / data-dark-variant
 // attributes on <html> BEFORE the stylesheet paints. It mirrors the main
 // window's applyTheme() exactly: data-theme is always set; data-dark-variant
-// is set only for a non-default dark variant. Live theme toggles while a
-// popout is open still arrive via each popout's onTheme IPC.
+// is set only for a non-default dark variant.
+//
+// It also exposes window.applyPopoutTheme() so a popout's live onTheme IPC
+// (fired when the operator toggles the theme, or on did-finish-load) goes
+// through the SAME logic. That matters: the IPC payload is an object
+// { theme, variant }, and the old per-popout handlers did
+// setAttribute('data-theme', payload) — stringifying the object to
+// "[object Object]" and silently falling back to dark (the VFO popout opened
+// dark in light mode for exactly this reason). Route every onTheme through
+// window.applyPopoutTheme and the shape can't bite again.
 (function () {
-  try {
-    var q = new URLSearchParams(window.location.search || '');
-    var theme = q.get('theme') === 'light' ? 'light' : 'dark';
-    var variant = q.get('variant') || 'navy';
+  // Accept a string ('light' | 'dark') OR an object { theme, variant }.
+  function normalize(p) {
+    if (typeof p === 'string') return { theme: p === 'light' ? 'light' : 'dark', variant: 'navy' };
+    p = p || {};
+    return { theme: p.theme === 'light' ? 'light' : 'dark', variant: p.variant || 'navy' };
+  }
+
+  function applyPopoutTheme(p) {
+    var t = normalize(p);
     var el = document.documentElement;
-    el.setAttribute('data-theme', theme);
-    if (theme === 'dark' && variant && variant !== 'navy') {
-      el.setAttribute('data-dark-variant', variant);
+    el.setAttribute('data-theme', t.theme);
+    if (t.theme === 'dark' && t.variant && t.variant !== 'navy') {
+      el.setAttribute('data-dark-variant', t.variant);
     } else {
       el.removeAttribute('data-dark-variant');
     }
+  }
+
+  window.applyPopoutTheme = applyPopoutTheme;
+
+  // Apply from the loadFile query synchronously, before first paint.
+  try {
+    var q = new URLSearchParams(window.location.search || '');
+    applyPopoutTheme({ theme: q.get('theme'), variant: q.get('variant') });
   } catch (e) {
     // No query / parse failure → leave the stylesheet's default (dark).
   }
