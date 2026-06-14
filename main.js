@@ -1709,6 +1709,9 @@ function ensureRemoteClient() {
       win.webContents.send('remote-client-status', { state: 'disconnected', wasAuthed });
       if (wasAuthed) win.webContents.send('cat-status', { connected: false });
     }
+    // Tear the answerer down with the link — its peer is dead and the creds
+    // are tied to this session. A fresh connect re-starts audio explicitly.
+    stopRemoteClientAudio();
   });
   remoteClient.on('kicked', (info) => {
     if (win && !win.isDestroyed()) {
@@ -1748,6 +1751,20 @@ function ensureRemoteClient() {
   });
   remoteClient.on('tune-blocked', ({ reason }) => {
     if (win && !win.isDestroyed()) win.webContents.send('tune-blocked', reason);
+  });
+  // Phase 2 audio leg: relay the shack's WebRTC offer/ICE + TURN iceServers
+  // to the hidden answerer window (remote-audio-client.html), which builds
+  // the peer, answers, and plays the rig audio. No-op until the user starts
+  // remote-client audio. See startRemoteClientAudio().
+  remoteClient.on('signal', (data) => {
+    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
+      remoteAudioClientWin.webContents.send('rac-signal', data);
+    }
+  });
+  remoteClient.on('stun-config', (cfg) => {
+    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
+      remoteAudioClientWin.webContents.send('rac-stun-config', cfg);
+    }
   });
   remoteClient.on('alt-hosts', ({ tsHost, cloudHost }) => {
     // Persist refreshed alt hosts on the target row so reconnect
@@ -9372,6 +9389,68 @@ function _sendStunConfig() {
   }
   remoteServer.sendToClient(msg);
 }
+
+// --- Remote-client audio (desktop-as-client answerer; remote-desktop Phase 2) ---
+// When this desktop is operating ANOTHER shack (RemoteClient active), this
+// hidden window runs the WebRTC ANSWERER: it plays the remote shack's rig
+// audio and sends our mic for PTT. The shack is the offerer and treats us
+// like any client; TURN relay creds arrive via stun-config (Model A), so
+// CGNAT-on-both-ends audio relays automatically. Signaling is relayed through
+// RemoteClient (the 'signal'/'stun-config' forwarders in ensureRemoteClient).
+let remoteAudioClientWin = null;
+
+async function startRemoteClientAudio() {
+  if (!remoteClient) { sendCatLog('[remote-client-audio] no active remote shack to listen to'); return; }
+  if (process.platform === 'darwin') {
+    const { systemPreferences } = require('electron');
+    if (systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
+      try { await systemPreferences.askForMediaAccess('microphone'); } catch {}
+    }
+  }
+  if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
+    remoteAudioClientWin.webContents.send('rac-start'); // re-arm an existing window
+    return;
+  }
+  remoteAudioClientWin = new BrowserWindow({
+    width: 320, height: 200, show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-remote-audio-client.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      autoplayPolicy: 'no-user-gesture-required',
+      backgroundThrottling: false,
+    },
+  });
+  remoteAudioClientWin.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
+  // Chromium can mute getUserMedia in a never-shown window — show off-screen.
+  remoteAudioClientWin.setPosition(-9999, -9999);
+  remoteAudioClientWin.showInactive();
+  remoteAudioClientWin.loadFile(path.join(__dirname, 'renderer', 'remote-audio-client.html'));
+  remoteAudioClientWin.webContents.on('did-finish-load', () => {
+    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) remoteAudioClientWin.webContents.send('rac-start');
+  });
+  remoteAudioClientWin.on('closed', () => { remoteAudioClientWin = null; });
+  sendCatLog('[remote-client-audio] answerer started');
+}
+
+function stopRemoteClientAudio() {
+  if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
+    try { remoteAudioClientWin.webContents.send('rac-stop'); } catch {}
+    try { remoteAudioClientWin.close(); } catch {}
+  }
+  remoteAudioClientWin = null;
+}
+
+// IPC (registered once at load). app.js starts/stops listening + PTT; the
+// answerer window relays its outbound WebRTC signaling back to the shack.
+ipcMain.on('rac-out-signal', (_e, data) => { if (remoteClient && data) remoteClient.sendSignal(data); });
+ipcMain.on('rac-state', (_e, s) => { if (s && s.error) sendCatLog('[remote-client-audio] ' + s.error); });
+ipcMain.handle('remote-client-audio-start', () => { startRemoteClientAudio(); return { ok: true }; });
+ipcMain.handle('remote-client-audio-stop', () => { stopRemoteClientAudio(); return { ok: true }; });
+ipcMain.on('remote-client-audio-ptt', (_e, on) => {
+  if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) remoteAudioClientWin.webContents.send('rac-ptt', !!on);
+  if (remoteClient) remoteClient.sendPtt(!!on);
+});
 
 // --- Remote Audio (hidden BrowserWindow for WebRTC) ---
 // Single source of truth for the config payload sent to the audio bridge
