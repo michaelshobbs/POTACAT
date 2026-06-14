@@ -158,6 +158,19 @@ function waitFor(emitter, event, ms) {
   const remint = await remintP;
   check(remint && remint.iceServers && remint.iceServers[0].username === 'u2', 'mid-session re-mint stun-config reaches the client');
 
+  // ── Phase 2 voice PTT: client keys the shack rig ───────────────────
+  // The mic half (answerer.setMicEnabled) is unit-tested; here we prove the
+  // rig-key half travels client → shack through the real link.
+  console.log('\n=== Phase 2 voice PTT (client → shack rig key) ===');
+  const pttEvents = [];
+  rs.on('ptt', (e) => pttEvents.push(e.state));
+  rc.sendPtt(true);
+  await sleep(200);
+  check(pttEvents.length >= 1 && pttEvents[pttEvents.length - 1] === true, 'sendPtt(true) keys the shack rig (ptt=true)');
+  rc.sendPtt(false);
+  await sleep(200);
+  check(pttEvents[pttEvents.length - 1] === false, 'sendPtt(false) unkeys the shack rig (ptt=false)');
+
   console.log('\n=== auth rejection (wrong token) ===');
   const badTarget = { id: 's2', name: 'Bad', lanHost: `wss://127.0.0.1:${PORT}`, fingerprint, deviceToken: 'WRONG' };
   const rc2 = new RemoteClient(badTarget, {});
