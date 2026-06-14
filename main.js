@@ -6927,7 +6927,7 @@ function connectRemote() {
     // Sync voice macros to phone
     ensureVoiceMacroDir();
     const vmLabels = settings.voiceMacroLabels || [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < VOICE_MACRO_MAX; i++) {
       const p = voiceMacroPath(i);
       if (fs.existsSync(p)) {
         const audio = fs.readFileSync(p).toString('base64');
@@ -8764,7 +8764,7 @@ function connectRemote() {
     ensureVoiceMacroDir();
     if (audio) fs.writeFileSync(voiceMacroPath(idx), Buffer.from(audio, 'base64'));
     if (label != null) {
-      if (!settings.voiceMacroLabels) settings.voiceMacroLabels = ['', '', '', '', ''];
+      if (!settings.voiceMacroLabels) settings.voiceMacroLabels = new Array(VOICE_MACRO_MAX).fill('');
       settings.voiceMacroLabels[idx] = label;
       saveSettings(settings);
     }
@@ -10944,6 +10944,8 @@ function buildRosterSets() {
 const WORKED_PARKS_LOCAL_PATH = path.join(app.getPath('userData'), 'worked-parks-local.json');
 
 // Voice macro file storage (shared between desktop and ECHOCAT)
+// Up to VOICE_MACRO_MAX slots (0..MAX-1); most users use the first ~8.
+const VOICE_MACRO_MAX = 25;
 const VOICE_MACRO_DIR = path.join(app.getPath('userData'), 'voice-macros');
 function ensureVoiceMacroDir() { if (!fs.existsSync(VOICE_MACRO_DIR)) fs.mkdirSync(VOICE_MACRO_DIR, { recursive: true }); }
 function voiceMacroPath(idx) { return path.join(VOICE_MACRO_DIR, `macro-${idx}.webm`); }
@@ -20889,7 +20891,7 @@ app.whenReady().then(() => {
   ipcMain.handle('voice-macro-list', () => {
     ensureVoiceMacroDir();
     const filled = [];
-    for (let i = 0; i < 5; i++) { if (fs.existsSync(voiceMacroPath(i))) filled.push(i); }
+    for (let i = 0; i < VOICE_MACRO_MAX; i++) { if (fs.existsSync(voiceMacroPath(i))) filled.push(i); }
     return filled;
   });
 

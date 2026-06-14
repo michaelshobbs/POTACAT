@@ -7536,7 +7536,11 @@
   }
 
   // --- SSB Voice Macros ---
-  var SSB_MACRO_COUNT = 5;
+  // Desktop now authors up to 25 macros and syncs them here. The bar renders
+  // every synced slot that has a label or recording; the inline editor below
+  // only edits the first few (its rows are static HTML — so-ssb-1.. in the
+  // page), which is fine: the phone is a remote, the desktop is the author.
+  var SSB_MACRO_COUNT = 25;
   var SSB_MAX_DURATION = 30; // seconds
   var ssbMacroLabels = JSON.parse(localStorage.getItem('echocat-ssb-labels') || 'null') || ['CQ', 'ID', '73', '', ''];
   var ssbPanel = document.getElementById('ssb-panel');
