@@ -238,7 +238,7 @@ const { Ft8Engine } = require('./lib/ft8-engine');
 const { checkClockOffset, syncSystemClock } = require('./lib/ntp');
 const JtcatParser = require('./renderer/jtcat-parser'); // shared FT8 message classifier (also a browser global in the renderers)
 const { RemoteServer } = require('./lib/remote-server');
-const { RemoteClient } = require('./lib/remote-client');
+const { RemoteClient, tsWssUrl } = require('./lib/remote-client');
 // Linux-only ALSA bridge. On non-Linux, alsa.isAvailable() returns false
 // and every other call is a stable no-op — safe to require unconditionally.
 const alsa = require('./lib/alsa');
@@ -1665,6 +1665,17 @@ function ensureRemoteClient() {
     return;
   }
   tearDownRemoteClient();
+  // Entering remote-client mode: the rig lives on the shack, so stop the local
+  // CAT controller. Otherwise its serial/TCP auto-reconnect loop keeps hammering
+  // a port that isn't ours to drive — Richard KE4WLE saw endless "Opening COM3:
+  // File not found" every 2s after switching to a remote shack. connectCat()
+  // already early-returns in remote mode, but an ALREADY-running `cat` was never
+  // torn down. The user re-selects a local rig (→ connectCat) to come back.
+  if (cat) {
+    try { cat.removeAllListeners(); cat.disconnect(); } catch {}
+    cat = null;
+  }
+  killRigctld();
   remoteClient = new RemoteClient(target, {
     clientVersion: app.getVersion() || '',
     clientPlatform: 'desktop-' + process.platform,
@@ -13551,7 +13562,7 @@ async function redeemPairLinkUrl(rawUrl) {
   // because cloud-only carries the most latency).
   const candidates = [];
   if (lanHost) candidates.push({ leg: 'lan', wssUrl: lanHost, pin: fingerprint });
-  if (tsHost) candidates.push({ leg: 'tailscale', wssUrl: `wss://${tsHost}:7300`, pin: fingerprint });
+  if (tsHost) candidates.push({ leg: 'tailscale', wssUrl: tsWssUrl(tsHost), pin: fingerprint });
   if (cloudHost) candidates.push({ leg: 'cloud', wssUrl: `wss://${cloudHost}`, pin: '' }); // CA-signed CF edge
   if (candidates.length === 0) throw new Error('pair link has no host fields');
 
@@ -18197,7 +18208,7 @@ app.whenReady().then(() => {
     const shack = authz.shack;
     const candidates = [];
     if (shack.lanHost) candidates.push({ leg: 'lan', wssUrl: shack.lanHost, pin: shack.fingerprint });
-    if (shack.tsHost) candidates.push({ leg: 'tailscale', wssUrl: `wss://${shack.tsHost}:7300`, pin: shack.fingerprint });
+    if (shack.tsHost) candidates.push({ leg: 'tailscale', wssUrl: tsWssUrl(shack.tsHost), pin: shack.fingerprint });
     if (shack.cloudHost) candidates.push({ leg: 'cloud', wssUrl: `wss://${shack.cloudHost}`, pin: '' });
     if (candidates.length === 0) {
       return { error: 'Shack has no reachable hosts on file. Ask it to come online once so it can update its hosts.' };
