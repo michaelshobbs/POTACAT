@@ -4831,6 +4831,48 @@ function broadcastJtcatTuneState() {
   }
 }
 
+// True when TX audio must go straight to the radio as VITA-49 dax_tx (Flex
+// SmartSDR-Direct / DAX-free), bypassing any Windows audio device. Same gate
+// the FT8 TX path uses (ft8Engine 'tx-audio' handler).
+function jtcatDirectTxActive() {
+  return settings.audioSource === 'smartsdr' &&
+         smartSdrAudio && smartSdrAudio.connected && smartSdrAudio.txReady;
+}
+
+// Direct-dax_tx Tune tone. The renderer's startJtcatTuneAudio() plays a 1500 Hz
+// tone to a Windows OUTPUT DEVICE (settings.remoteAudioOutput) — the legacy DAX
+// program route. On the DAX-free SmartSDR-Direct path there is NO such device in
+// the loop (FT8 TX already bypasses it via smartSdrAudio.sendTxAudio), so the
+// renderer tone goes nowhere and the carrier never reaches the Flex even though
+// PTT keys. K3SBP 2026-06-15: "Flex + POTACAT doesn't send any audio on PTT."
+// Fix: stream the tone straight to dax_tx, mirroring the FT8 path.
+let _jtcatTuneTxTimer = null;
+let _jtcatTunePhase = 0;
+const JTCAT_TUNE_FREQ_HZ = 1500;   // matches WSJT-X tune tone + the renderer path
+const JTCAT_TUNE_AMP = 0.5;        // moderate steady level; operator sets drive on the rig
+function _startDirectTuneTone() {
+  if (_jtcatTuneTxTimer) return;
+  const RATE = 24000, CHUNK_MS = 20;
+  const n = Math.round(RATE * CHUNK_MS / 1000); // 480 mono samples / chunk
+  const dPhase = 2 * Math.PI * JTCAT_TUNE_FREQ_HZ / RATE;
+  _jtcatTunePhase = 0;
+  _jtcatTuneTxTimer = setInterval(() => {
+    if (!smartSdrAudio || !smartSdrAudio.txReady) return;
+    const buf = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      buf[i] = JTCAT_TUNE_AMP * Math.sin(_jtcatTunePhase);
+      _jtcatTunePhase += dPhase;
+      if (_jtcatTunePhase > 2 * Math.PI) _jtcatTunePhase -= 2 * Math.PI;
+    }
+    try { smartSdrAudio.pushTxAudioChunk(buf); } catch {}
+  }, CHUNK_MS);
+}
+function _stopDirectTuneTone() {
+  if (_jtcatTuneTxTimer) { clearInterval(_jtcatTuneTxTimer); _jtcatTuneTxTimer = null; }
+  _jtcatTunePhase = 0;
+  if (smartSdrAudio && smartSdrAudio.resetTxStream) { try { smartSdrAudio.resetTxStream(); } catch {} }
+}
+
 function startJtcatTune() {
   if (jtcatTuneState.active) return;
   jtcatTuneState.active = true;
@@ -4839,7 +4881,14 @@ function startJtcatTune() {
   // SSB-over-DATA where appropriate (USB -> DIGU mute the rig mic during
   // the tone). The 90s timer auto-releases.
   handleRemotePtt(true, { audio: true });
-  if (win && !win.isDestroyed()) win.webContents.send('jtcat-tune-audio-start');
+  // Route the tone the same way FT8 TX is routed: straight to dax_tx on the
+  // SmartSDR-Direct path, else the renderer's Windows-DAX device path.
+  if (jtcatDirectTxActive()) {
+    _startDirectTuneTone();
+    sendCatLog('[JTCAT] Tune tone → DAX TX direct (VITA-49)');
+  } else if (win && !win.isDestroyed()) {
+    win.webContents.send('jtcat-tune-audio-start');
+  }
   jtcatTuneState.endTimer = setTimeout(() => stopJtcatTune(), JTCAT_TUNE_DURATION_S * 1000);
   jtcatTuneState.tickTimer = setInterval(broadcastJtcatTuneState, 1000);
   broadcastJtcatTuneState();
@@ -4851,6 +4900,7 @@ function stopJtcatTune() {
   jtcatTuneState.active = false;
   if (jtcatTuneState.endTimer) { clearTimeout(jtcatTuneState.endTimer); jtcatTuneState.endTimer = null; }
   if (jtcatTuneState.tickTimer) { clearInterval(jtcatTuneState.tickTimer); jtcatTuneState.tickTimer = null; }
+  _stopDirectTuneTone(); // no-op if the renderer path was used
   if (win && !win.isDestroyed()) win.webContents.send('jtcat-tune-audio-stop');
   handleRemotePtt(false);
   broadcastJtcatTuneState();
