@@ -27,14 +27,26 @@
       this._iceServers = [];
       this._relayOnly = false;
       this._started = false;
+      this._pairReported = false;
       // ICE that arrives before we've applied the remote offer must be
       // buffered, or addIceCandidate throws and the candidate is lost.
       this._pendingIce = [];
     }
 
     // Adopt ICE config from the shack's stun-config. Full TURN iceServers
-    // when present (Model A), else legacy STUN, else local-only. Applying to
-    // a live pc takes effect on the next ICE gather (re-mint / reconnect).
+    // when present (Model A), else legacy STUN, else local-only.
+    //
+    // CRITICAL for double-CGNAT: the peer connection is created LAZILY (in
+    // handleSignal, on the offer) — NOT in start() — precisely so that by the
+    // time `new RTCPeerConnection(...)` runs, these relay iceServers are
+    // already in `this._iceServers` and the pc is born able to gather `relay`
+    // candidates. The shack sends stun-config(TURN) BEFORE the offer, so the
+    // ordering holds. The setConfiguration() call below only matters for a
+    // LIVE re-mint mid-session (the pc already exists); a fresh negotiation
+    // never depends on it. (Earlier this built the pc eagerly in start() with
+    // empty iceServers and relied on setConfiguration to retrofit TURN — that
+    // worked in Chromium but was fragile; relay is too important to leave to a
+    // best-effort retrofit.)
     setIceConfig(cfg) {
       cfg = cfg || {};
       if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) {
@@ -43,9 +55,24 @@
         this._iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
       } // else: leave as-is (don't let a bare useStun ping wipe a TURN list)
       if (typeof cfg.relayOnly === 'boolean') this._relayOnly = cfg.relayOnly;
+      // Diagnostic: how many servers, how many are relay (turn:/turns:). Lets
+      // the [CAT] log confirm the answerer actually adopted relay creds — the
+      // make-or-break fact for double-CGNAT.
+      this._onState({ adopted: { servers: this._iceServers.length, relay: this._relayServerCount() } });
       if (this._pc) {
+        // Live re-mint only — the pc already gathered with the prior config.
         try { this._pc.setConfiguration(this._rtcConfig()); } catch (e) { /* not all engines allow live setConfiguration */ }
       }
+    }
+
+    // Count relay (turn:/turns:) servers in the adopted iceServers list.
+    _relayServerCount() {
+      let n = 0;
+      for (const s of (this._iceServers || [])) {
+        const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+        if (urls.some((u) => /^turns?:/i.test(String(u || '')))) n++;
+      }
+      return n;
     }
 
     _rtcConfig() {
@@ -68,7 +95,9 @@
         this._onState({ error: 'mic: ' + (e && e.message || e) });
         // RX-only still works (recvonly transceiver below).
       }
-      this._ensurePc();
+      // NOTE: do NOT build the peer connection here. It's created lazily in
+      // handleSignal() once the shack's stun-config (TURN creds) has arrived,
+      // so the pc is born relay-capable. See setIceConfig().
       this._onSignal({ type: 'start-audio' });
     }
 
@@ -97,8 +126,37 @@
         }
       };
       pc.onconnectionstatechange = () => { this._onState({ connectionState: pc.connectionState }); };
-      pc.oniceconnectionstatechange = () => { this._onState({ iceConnectionState: pc.iceConnectionState }); };
+      pc.oniceconnectionstatechange = () => {
+        this._onState({ iceConnectionState: pc.iceConnectionState });
+        // Once connected, report which candidate types won — the definitive
+        // proof of whether double-CGNAT actually relayed. host/srflx = direct;
+        // relay = went through TURN. Surfaced to the [CAT] log via main.
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          this._reportSelectedPair(pc);
+        }
+      };
       return pc;
+    }
+
+    // Pull the selected ICE candidate pair from getStats and report its
+    // local/remote candidate types. Best-effort; no-op where getStats is
+    // unavailable (e.g. the unit-test FakePC).
+    _reportSelectedPair(pc) {
+      if (!pc || typeof pc.getStats !== 'function' || this._pairReported) return;
+      pc.getStats().then((stats) => {
+        let selId = null; const pairs = {}, cands = {};
+        stats.forEach((r) => {
+          if (r.type === 'transport' && r.selectedCandidatePairId) selId = r.selectedCandidatePairId;
+          else if (r.type === 'candidate-pair') pairs[r.id] = r;
+          else if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r;
+        });
+        let pair = selId && pairs[selId];
+        if (!pair) { for (const id in pairs) { if (pairs[id].nominated && pairs[id].state === 'succeeded') { pair = pairs[id]; break; } } }
+        if (!pair) return;
+        const lc = cands[pair.localCandidateId] || {}, rc = cands[pair.remoteCandidateId] || {};
+        this._pairReported = true;
+        this._onState({ selectedPair: { local: lc.candidateType || '?', remote: rc.candidateType || '?', protocol: lc.protocol || '?' } });
+      }).catch(() => {});
     }
 
     // Inbound WebRTC payload from the shack: { type:'sdp', sdp } | { type:'ice', candidate }.
@@ -138,6 +196,7 @@
 
     stop() {
       this._started = false;
+      this._pairReported = false;
       if (this._pc) { try { this._pc.close(); } catch (e) {} this._pc = null; }
       if (this._mic) { this._mic.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} }); this._mic = null; }
       this._pendingIce = [];

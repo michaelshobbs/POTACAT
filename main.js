@@ -1757,16 +1757,8 @@ function ensureRemoteClient() {
   // to the hidden answerer window (remote-audio-client.html), which builds
   // the peer, answers, and plays the rig audio. No-op until the user starts
   // remote-client audio. See startRemoteClientAudio().
-  remoteClient.on('signal', (data) => {
-    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
-      remoteAudioClientWin.webContents.send('rac-signal', data);
-    }
-  });
-  remoteClient.on('stun-config', (cfg) => {
-    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) {
-      remoteAudioClientWin.webContents.send('rac-stun-config', cfg);
-    }
-  });
+  remoteClient.on('signal', (data) => { _racSend('rac-signal', data); });
+  remoteClient.on('stun-config', (cfg) => { _racSend('rac-stun-config', cfg); });
   remoteClient.on('alt-hosts', ({ tsHost, cloudHost }) => {
     // Persist refreshed alt hosts on the target row so reconnect
     // attempts use the freshest values after a network change.
@@ -9469,6 +9461,18 @@ function _sendStunConfig() {
 // CGNAT-on-both-ends audio relays automatically. Signaling is relayed through
 // RemoteClient (the 'signal'/'stun-config' forwarders in ensureRemoteClient).
 let remoteAudioClientWin = null;
+// The answerer window loads async. The shack only sends stun-config/offer in
+// response to our start-audio (sent post-load), so in practice they arrive
+// after the window is ready — but a dropped stun-config means STUN-only and a
+// dead double-CGNAT session, so we make it bulletproof: queue rac-* until
+// did-finish-load, then flush in order. _racReady gates the queue.
+let _racReady = false;
+let _racQueue = [];
+function _racSend(channel, payload) {
+  if (!remoteAudioClientWin || remoteAudioClientWin.isDestroyed()) return;
+  if (!_racReady) { _racQueue.push([channel, payload]); return; }
+  remoteAudioClientWin.webContents.send(channel, payload);
+}
 
 async function startRemoteClientAudio() {
   if (!remoteClient) { sendCatLog('[remote-client-audio] no active remote shack to listen to'); return; }
@@ -9482,6 +9486,8 @@ async function startRemoteClientAudio() {
     remoteAudioClientWin.webContents.send('rac-start'); // re-arm an existing window
     return;
   }
+  _racReady = false;
+  _racQueue = [];
   remoteAudioClientWin = new BrowserWindow({
     width: 320, height: 200, show: false,
     webPreferences: {
@@ -9498,9 +9504,16 @@ async function startRemoteClientAudio() {
   remoteAudioClientWin.showInactive();
   remoteAudioClientWin.loadFile(path.join(__dirname, 'renderer', 'remote-audio-client.html'));
   remoteAudioClientWin.webContents.on('did-finish-load', () => {
-    if (remoteAudioClientWin && !remoteAudioClientWin.isDestroyed()) remoteAudioClientWin.webContents.send('rac-start');
+    if (!remoteAudioClientWin || remoteAudioClientWin.isDestroyed()) return;
+    remoteAudioClientWin.webContents.send('rac-start');
+    // Window is live — flush any rac-* that raced ahead of the load.
+    _racReady = true;
+    const q = _racQueue; _racQueue = [];
+    for (const [ch, payload] of q) {
+      try { remoteAudioClientWin.webContents.send(ch, payload); } catch {}
+    }
   });
-  remoteAudioClientWin.on('closed', () => { remoteAudioClientWin = null; });
+  remoteAudioClientWin.on('closed', () => { remoteAudioClientWin = null; _racReady = false; _racQueue = []; });
   sendCatLog('[remote-client-audio] answerer started');
 }
 
@@ -9510,12 +9523,32 @@ function stopRemoteClientAudio() {
     try { remoteAudioClientWin.close(); } catch {}
   }
   remoteAudioClientWin = null;
+  _racReady = false;
+  _racQueue = [];
 }
 
 // IPC (registered once at load). app.js starts/stops listening + PTT; the
 // answerer window relays its outbound WebRTC signaling back to the shack.
 ipcMain.on('rac-out-signal', (_e, data) => { if (remoteClient && data) remoteClient.sendSignal(data); });
-ipcMain.on('rac-state', (_e, s) => { if (s && s.error) sendCatLog('[remote-client-audio] ' + s.error); });
+ipcMain.on('rac-state', (_e, s) => {
+  if (!s) return;
+  if (s.error) sendCatLog('[remote-client-audio] ' + s.error);
+  // Relay diagnostics — make the double-CGNAT verification self-evident in the
+  // [CAT] log instead of "no audio, no idea why".
+  if (s.adopted) {
+    sendCatLog(`[remote-client-audio] adopted ${s.adopted.servers} ICE servers (${s.adopted.relay} relay/TURN)` +
+      (s.adopted.relay === 0 ? ' — STUN-only, double-CGNAT will NOT connect' : ''));
+  }
+  if (s.selectedPair) {
+    const p = s.selectedPair;
+    const relayed = (p.local === 'relay' || p.remote === 'relay');
+    sendCatLog(`[remote-client-audio] ICE connected via ${p.local}/${p.remote} (${p.protocol})` +
+      (relayed ? ' — RELAY (double-CGNAT path working)' : ' — direct'));
+  }
+  if (s.iceConnectionState === 'failed') {
+    sendCatLog('[remote-client-audio] ICE FAILED — no working path (check TURN/relay; both ends behind CGNAT need relay creds)');
+  }
+});
 ipcMain.handle('remote-client-audio-start', () => { startRemoteClientAudio(); return { ok: true }; });
 ipcMain.handle('remote-client-audio-stop', () => { stopRemoteClientAudio(); return { ok: true }; });
 ipcMain.on('remote-client-audio-ptt', (_e, on) => {
@@ -18766,6 +18799,17 @@ app.whenReady().then(() => {
     // Forward audio connection state to phone
     if (status.connectionState && remoteServer) {
       remoteServer.broadcastRadioStatus({ audioState: status.connectionState });
+    }
+    // Relay diagnostics for the [CAT] log — the offerer (shack) side of the
+    // double-CGNAT proof. Mirrors the answerer's rac-state logging.
+    if (status.selectedPair) {
+      const p = status.selectedPair;
+      const relayed = (p.local === 'relay' || p.remote === 'relay');
+      sendCatLog(`[Echo CAT Audio] ICE connected via ${p.local}/${p.remote} (${p.protocol})` +
+        (relayed ? ' — RELAY (CGNAT path working)' : ' — direct'));
+    }
+    if (status.iceConnectionState === 'failed') {
+      sendCatLog('[Echo CAT Audio] ICE FAILED — no working path (CGNAT clients need TURN relay creds)');
     }
     if (status.error) {
       console.error('[Echo CAT Audio] Error:', status.error);
