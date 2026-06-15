@@ -6103,6 +6103,50 @@ if (window.api && window.api.onRemoteClientDisplaced) {
       }
     });
   }
+  // Phase 2 audio leg: bring up the rig-audio answerer (listen to the remote
+  // rig; mic stays muted until PTT) when connected to a remote shack, tear it
+  // down on drop, and gate the voice push-to-talk button on that same state.
+  // The shack mints TURN creds and offers; the hidden answerer window plays
+  // the audio. Idempotent — start/stop fire only on a real connected→not edge.
+  if (window.api && window.api.onRemoteClientStatus && window.api.remoteClientAudioStart) {
+    const pttBtn = document.getElementById('remote-ptt-btn');
+    const ptt = (typeof RemotePttController === 'function')
+      ? new RemotePttController({
+          sendPtt: (on) => { try { window.api.remoteClientAudioPtt(on); } catch (e) {} },
+          onChange: (keyed) => {
+            if (!pttBtn) return;
+            pttBtn.textContent = keyed ? '🔴 ON AIR' : '🎙 HOLD TO TALK';
+            pttBtn.style.background = keyed ? '#ff2d55' : '#e94560';
+          },
+        })
+      : null;
+    // Press-and-hold (mouse + touch). Release on pointerup / pointerleave /
+    // pointercancel / window blur so a dragged-off, interrupted, or alt-tabbed
+    // press can NEVER leave the remote rig stuck keyed. No keyboard PTT — an
+    // explicit hold is the only way to transmit (no accidental TX).
+    if (pttBtn && ptt) {
+      const down = (e) => { e.preventDefault(); ptt.down(); };
+      const up = () => { ptt.up(); };
+      pttBtn.addEventListener('pointerdown', down);
+      pttBtn.addEventListener('pointerup', up);
+      pttBtn.addEventListener('pointerleave', up);
+      pttBtn.addEventListener('pointercancel', up);
+      window.addEventListener('blur', up);
+    }
+    let _racOn = false;
+    window.api.onRemoteClientStatus((s) => {
+      const connected = !!(s && s.state === 'connected');
+      if (connected && !_racOn) {
+        _racOn = true;
+        window.api.remoteClientAudioStart().catch(() => {});
+      } else if (!connected && _racOn) {
+        _racOn = false;
+        try { window.api.remoteClientAudioStop(); } catch (e) {}
+      }
+      if (ptt) ptt.setActive(connected); // force-releases TX if we just dropped
+      if (pttBtn) pttBtn.classList.toggle('hidden', !connected);
+    });
+  }
   // Hydrate on load.
   if (window.api && window.api.connectionTargetsGetStatus) {
     window.api.connectionTargetsGetStatus().then(setChip).catch(() => {});

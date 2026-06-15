@@ -163,6 +163,34 @@ window.api.onStartAudio(async (config) => {
       window.api.sendAudioStatus({ connectionState: state });
     };
 
+    // Report which ICE candidate types won, so the [CAT] log proves whether a
+    // CGNAT session actually relayed through TURN (relay) or found a direct
+    // path (host/srflx). Fires once per session.
+    let _pairReported = false;
+    pc.oniceconnectionstatechange = async () => {
+      if (!pc) return;
+      const st = pc.iceConnectionState;
+      window.api.sendAudioStatus({ iceConnectionState: st });
+      if ((st === 'connected' || st === 'completed') && !_pairReported && pc.getStats) {
+        _pairReported = true;
+        try {
+          const stats = await pc.getStats();
+          let selId = null; const pairs = {}, cands = {};
+          stats.forEach((r) => {
+            if (r.type === 'transport' && r.selectedCandidatePairId) selId = r.selectedCandidatePairId;
+            else if (r.type === 'candidate-pair') pairs[r.id] = r;
+            else if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r;
+          });
+          let pair = selId && pairs[selId];
+          if (!pair) { for (const id in pairs) { if (pairs[id].nominated && pairs[id].state === 'succeeded') { pair = pairs[id]; break; } } }
+          if (pair) {
+            const lc = cands[pair.localCandidateId] || {}, rc = cands[pair.remoteCandidateId] || {};
+            window.api.sendAudioStatus({ selectedPair: { local: lc.candidateType || '?', remote: rc.candidateType || '?', protocol: lc.protocol || '?' } });
+          }
+        } catch (e) { /* getStats best-effort */ }
+      }
+    };
+
     // Create offer (we initiate)
     // Must extract plain object — RTCSessionDescription getters are lost during IPC structured clone
     const offer = await pc.createOffer();

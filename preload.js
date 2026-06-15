@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld('api', {
   // Pass null to switch back to the local rig.
   connectionTargetsActivate: (id) => ipcRenderer.invoke('connection-targets-activate', id),
   connectionTargetsGetStatus: () => ipcRenderer.invoke('connection-targets-get-status'),
+  // Remote-shack audio (desktop-as-client answerer; remote-desktop Phase 2).
+  // Start/stop listening to the remote rig's audio (and sending mic for PTT);
+  // remoteClientAudioPtt toggles the mic + keys the shack during transmit.
+  remoteClientAudioStart: () => ipcRenderer.invoke('remote-client-audio-start'),
+  remoteClientAudioStop: () => ipcRenderer.invoke('remote-client-audio-stop'),
+  remoteClientAudioPtt: (on) => ipcRenderer.send('remote-client-audio-ptt', on),
   // mDNS discovery of nearby POTACAT shacks for welcome-screen "we
   // found a shack on your network" and Remote-Radios "+ Add new"
   // same-LAN add. Returns [{name, host, port, fingerprint, rigModel, …}].
