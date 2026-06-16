@@ -252,6 +252,7 @@ const { checkClockOffset, syncSystemClock } = require('./lib/ntp');
 const JtcatParser = require('./renderer/jtcat-parser'); // shared FT8 message classifier (also a browser global in the renderers)
 const CqTarget = require('./renderer/cq-target'); // shared CQ "chase target" tags + decode-match (also a browser global)
 const { RemoteServer } = require('./lib/remote-server');
+const { buildDiagnosticSnapshot } = require('./lib/diagnostic-snapshot');
 const { RemoteClient, tsWssUrl } = require('./lib/remote-client');
 // Linux-only ALSA bridge. On non-Linux, alsa.isAvailable() returns false
 // and every other call is a stable no-op — safe to require unconditionally.
@@ -1660,6 +1661,48 @@ function appendDiagnosticLog(fileName, msg) {
   } catch (err) {
     try { console.log(`[diagnostic-log] ${fileName}: ${err.message || err}`); } catch {}
   }
+}
+
+// Read the last `maxLines` lines of a log file in userData (best-effort).
+// Used by the diagnostic-snapshot gatherer; never throws.
+function readLogTail(fileName, maxLines) {
+  try {
+    const file = path.join(app.getPath('userData'), fileName);
+    if (!fs.existsSync(file)) return '';
+    const text = fs.readFileSync(file, 'utf-8');
+    const lines = text.split(/\r?\n/);
+    return lines.slice(-Math.max(1, maxLines || 200)).join('\n');
+  } catch { return ''; }
+}
+
+// Assemble the desktop's diagnostic-snapshot reply for the Unified Bug Report.
+// Gathers live state (the server owns rig status; we own version/tunnel/log),
+// then hands it to the pure builder which shapes + redacts. Honors `redact`.
+function gatherDesktopDiagnostic(requestId, redact) {
+  let tunnel = null;
+  try { tunnel = cloudTunnel ? cloudTunnel.getState() : null; } catch {}
+  const input = {
+    requestId: requestId || '',
+    appVersion: (() => { try { return app.getVersion(); } catch { return ''; } })(),
+    platform: process.platform,
+    osRelease: (() => { try { return require('os').release(); } catch { return ''; } })(),
+    electronVersion: (process.versions && process.versions.electron) || '',
+    nodeVersion: (process.versions && process.versions.node) || '',
+    rigStatus: (() => { try { return remoteServer ? remoteServer.getRadioStatus() : null; } catch { return null; } })(),
+    tunnel,
+    logTail: readLogTail('startup.log', 200),
+    timestamp: Date.now(),
+    secrets: {
+      callsign: settings && settings.myCallsign ? String(settings.myCallsign) : '',
+      email: settings && settings.cloudEmail ? String(settings.cloudEmail) : '',
+      hosts: [
+        tunnel && tunnel.cloudHost ? String(tunnel.cloudHost) : '',
+        settings && settings.tsHost ? String(settings.tsHost) : '',
+      ].filter(Boolean),
+      tokens: [],
+    },
+  };
+  return buildDiagnosticSnapshot(input, { redact: !!redact });
 }
 
 function appendIcomNetworkDiagnostic(msg) {
@@ -9758,6 +9801,23 @@ function connectRemote() {
     } catch (err) {
       console.error('[Echo CAT] Past activations error:', err.message);
       remoteServer.sendPastActivations([]);
+    }
+  });
+
+  // Unified Bug Report: the mobile app requests a desktop snapshot to fill
+  // the DESKTOP section of a shared report (see work/.../desktop-request-
+  // diagnostic-responder.md). Guest gating already happened in the server;
+  // here we gather live state and reply. ALWAYS reply (even on error) so the
+  // phone doesn't strand on its 5s timeout.
+  remoteServer.on('request-diagnostic', ({ requestId, redact }) => {
+    try {
+      remoteServer.sendDiagnosticSnapshot(gatherDesktopDiagnostic(requestId, redact));
+    } catch (err) {
+      try { appendDiagnosticLog('diagnostic.log', `[diag] gather failed: ${err.message || err}`); } catch {}
+      remoteServer.sendDiagnosticSnapshot({
+        type: 'diagnostic-snapshot', requestId: requestId || '', source: 'desktop',
+        error: String((err && err.message) || err),
+      });
     }
   });
 

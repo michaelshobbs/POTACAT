@@ -348,6 +348,24 @@ the broader `status` message; no dedicated S→C envelope today.)
 | `cluster-state` | S→C | DX-cluster connection state for the cluster badge. |
 | `qrz-names` | S→C | `{CALLSIGN: 'First Last'}` map after a batch QRZ lookup — drives the spot-row Name column. |
 
+### Diagnostics (Unified Bug Report)
+
+| Message | Dir | Purpose |
+|---|---|---|
+| `request-diagnostic` | C→S | Mobile asks the desktop for a diagnostic snapshot to fill the DESKTOP section of a shared bug report. Fields: `requestId` (string, echoed in the reply), `redact` (optional bool — when true the reply is safe to paste into a PUBLIC report). |
+| `diagnostic-snapshot` | S→C | Desktop's reply, carrying the SAME `requestId`. Fields: `source` (`"desktop"`), `appVersion`, `platform`, `timestamp`, `sections` (object — `app`/`rig`/`tunnel`/`log`; an any-bag mirroring the mobile HostSnapshot, intentionally untyped), and `error` (string, present instead of `sections` on refusal/failure). |
+
+`sections` is deliberately an untyped object so it can evolve in lockstep
+with the mobile `BugReportAssembler` without a protocol-version bump. Every
+field except `requestId` is optional: a refused (Guest Pass session →
+`error: "not-authorized"`) or failed gather still returns a valid snapshot
+so the phone never sits on its 5s timeout. When `redact:true`, the desktop
+masks callsign, account email, tunnel/host names, device tokens,
+home-directory usernames in paths, and public IPv4s (loopback preserved).
+The desktop advertises `diagnostic-snapshot` in its server `hello`
+`capabilities` so an older desktop (no responder) is detected immediately
+instead of by timeout.
+
 ### Pairing (new in v1, see Phase 0 plan)
 
 | Message | Dir | Purpose |
