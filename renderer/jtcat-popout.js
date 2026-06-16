@@ -540,6 +540,124 @@ function _applyPopoutTheme(payload) {
     myActivity.scrollTop = myActivity.scrollHeight;
   }
 
+  // Classify a decode for filtering + row styling. Shared by the live append
+  // path and the rebuild-on-toggle path so the two never drift apart.
+  function classifyDecode(d) {
+    var text = d.text || '';
+    var upper = text.toUpperCase();
+    return {
+      d: d,
+      text: text,
+      upper: upper,
+      isCq: upper.startsWith('CQ '),
+      isDirected: myCallsign && (upper.indexOf(' ' + myCallsign + ' ') >= 0 || upper.startsWith(myCallsign + ' ') || upper.endsWith(' ' + myCallsign)),
+      is73: upper.indexOf('RR73') >= 0 || upper.indexOf(' 73') >= 0,
+      isWanted: d.newDxcc || d.newCall || d.newGrid,
+    };
+  }
+
+  // Current CQ/73 / Wanted / Chase / search filter state. Directed decodes
+  // (and 73s) always pass so the operator never loses a reply to their own
+  // CQ behind a filter — matches the mobile app + in-window view.
+  function decodeVisible(c) {
+    if (cqFilter && !c.isCq && !c.is73 && !c.isDirected) return false;
+    if (wantedFilter && !c.isWanted && !c.isDirected && !c.is73) return false;
+    if (chaseFilter && !c.d.chaseMatch && !c.isDirected && !c.is73) return false;
+    if (searchFilter && c.upper.indexOf(searchFilter) === -1) return false;
+    return true;
+  }
+
+  function sortDecodes(results) {
+    // Sort by signal strength (strongest first) when enabled.
+    return sortBySignal ? results.slice().sort(function(a, b) { return (b.db || 0) - (a.db || 0); }) : results;
+  }
+
+  // Build one Band Activity row element from a classified decode.
+  function buildBandRow(c) {
+    var d = c.d;
+    var badges = '';
+    if (d.chaseMatch) badges += '<span class="jp-badge jp-badge-chase" title="Chase target: ' + esc(chaseTarget) + '">◎</span>';
+    if (d.newDxcc) badges += '<span class="jp-badge jp-badge-dxcc" title="New DXCC: ' + esc(d.entity || '') + '">D</span>';
+    if (d.newGrid) badges += '<span class="jp-badge jp-badge-grid" title="New grid: ' + esc(d.grid || '') + '">G</span>';
+    if (d.newCall) badges += '<span class="jp-badge jp-badge-call" title="New call: ' + esc(d.call || '') + '">C</span>';
+    if (d.watched) badges += '<span class="jp-badge jp-badge-watch" title="Watchlist">W</span>';
+    var entityStr = d.entity ? '<span class="jp-entity">' + esc(d.entity) + '</span>' : '';
+
+    var row = document.createElement('div');
+    // Spot-list highlight — match on the decoded DX call. isNewPark bumps
+    // the styling from a subtle stripe to a stronger green tint so the op
+    // can spot unworked parks at a glance during multi-slice operating.
+    var spotMatch = d.call ? spottedCalls.get(String(d.call).toUpperCase()) : null;
+    var spotClass = spotMatch ? (spotMatch.isNewPark ? ' jp-new-park' : ' jp-spotted') : '';
+    row.className = 'jp-row' + (c.isCq ? ' jp-cq' : '') + (c.isDirected ? ' jp-directed' : '') + (c.isWanted ? ' jp-wanted' : '') + (d.chaseMatch ? ' jp-chase' : '') + (d.watched ? ' jp-watched' : '') + spotClass;
+    if (spotMatch && spotMatch.reference) row.title = 'Spotted at ' + spotMatch.reference + (spotMatch.isNewPark ? ' (new park)' : '');
+    var dtStr = d.dt != null ? (d.dt >= 0 ? '+' : '') + d.dt.toFixed(1) : '';
+    // Band badge for multi-slice decodes
+    var bandBadge = '';
+    if (d.band && multiActive) {
+      var bColor = BAND_COLORS[d.band] || '#888';
+      bandBadge = '<span class="jp-badge jp-badge-band" style="background:' + bColor + ';color:#000;">' + d.band + '</span>';
+    }
+    row.innerHTML =
+      (bandBadge ? bandBadge : '') +
+      '<span class="jp-db">' + (d.db >= 0 ? '+' : '') + d.db + '</span>' +
+      '<span class="jp-dt">' + dtStr + '</span>' +
+      '<span class="jp-df">' + Math.round(d.df) + '</span>' +
+      '<span class="jp-msg">' + esc(c.text) + '</span>' +
+      (badges ? '<span class="jp-badges">' + badges + '</span>' : '') +
+      entityStr;
+    row.addEventListener('dblclick', (function(decode) { return function() { onDecodeRowClick(decode); }; })(d));
+    return row;
+  }
+
+  // Append one cycle's decodes to Band Activity, applying the current filters
+  // + sort. Pure DOM build off the supplied results — no My Activity, no map
+  // plot, no decodeLog mutation — so the rebuild path can replay it safely.
+  // Returns the number of rows actually shown (0 = fully filtered out).
+  function appendBandCycle(time, results) {
+    var rows = [];
+    sortDecodes(results).forEach(function(d) {
+      var c = classifyDecode(d);
+      if (!decodeVisible(c)) return;
+      rows.push(buildBandRow(c));
+    });
+    // A filter that hides every decode in this cycle should hide its separator
+    // too, so the log doesn't fill with empty timestamps.
+    if (rows.length === 0 && (cqFilter || wantedFilter || chaseFilter || searchFilter)) return 0;
+    var sep = document.createElement('div');
+    sep.className = 'jp-cycle-sep';
+    sep.textContent = time + ' UTC';
+    bandActivity.appendChild(sep);
+    rows.forEach(function(r) { bandActivity.appendChild(r); });
+    return rows.length;
+  }
+
+  // Rebuild the WHOLE Band Activity pane from the retained decodeLog, applying
+  // the current filters + sort. The CQ/73 / Wanted / Chase / dB / search
+  // controls call this so toggling them re-filters and re-sorts the decodes
+  // ALREADY on screen — not just future cycles. My Activity and the map are
+  // left untouched (their content isn't filter-dependent: directed decodes
+  // always pass, and the map shows all CQ/QSO geometry).
+  function rebuildBandActivity() {
+    var wasAtBottom = bandActivity.scrollTop + bandActivity.clientHeight >= bandActivity.scrollHeight - 20;
+    bandActivity.innerHTML = '';
+    var shown = 0;
+    for (var i = 0; i < decodeLog.length; i++) {
+      shown += appendBandCycle(decodeLog[i].time, decodeLog[i].results);
+    }
+    if (decodeLog.length === 0) {
+      bandActivity.innerHTML = '<div class="jp-empty">Waiting for decodes...</div>';
+    } else if (shown === 0) {
+      bandActivity.innerHTML = '<div class="jp-empty">No decodes match the current filter</div>';
+    } else {
+      // Respect the same DOM cap as the live append path (leak fix, PR #54).
+      // Empty-after-filter cycles add no separator, so this keeps up to
+      // MAX_BA_CYCLES *matching* cycles drawn from the full retained log.
+      pruneCyclePanel(bandActivity, MAX_BA_CYCLES);
+    }
+    if (wasAtBottom) bandActivity.scrollTop = bandActivity.scrollHeight;
+  }
+
   function renderDecodes(data) {
     var results = data.results || [];
     var decodeSlot = data.slot || null; // slot the decoded audio was from
@@ -555,69 +673,23 @@ function _applyPopoutTheme(payload) {
     if (empty) empty.remove();
 
     if (!time) return;
-    var sep = document.createElement('div');
-    sep.className = 'jp-cycle-sep';
-    sep.textContent = time + ' UTC';
-    bandActivity.appendChild(sep);
 
+    // Band Activity — append just this cycle (filtered + sorted exactly like
+    // the rebuild path). Live decodes stay an efficient append; only toggles
+    // pay for a full rebuild.
+    appendBandCycle(time, results);
+
+    // My Activity + map plot — driven off the same filter so a hidden decode
+    // doesn't leak into the map / My Activity (faithful to the original single
+    // loop). Directed decodes always pass, so My Activity is unaffected by the
+    // CQ/Wanted filters in practice.
     var myActivityHasSep = false; // only add separator to My Activity if there's a directed decode
-
-    // Sort by signal strength if enabled (strongest first)
-    if (sortBySignal) {
-      results = results.slice().sort(function(a, b) { return (b.db || 0) - (a.db || 0); });
-    }
-
-    results.forEach(function(d) {
+    sortDecodes(results).forEach(function(d) {
       d.slot = decodeSlot; // attach slot so click handler knows which slot this station was on
-      var text = d.text || '';
-      var upper = text.toUpperCase();
-      var isCq = upper.startsWith('CQ ');
-      var isDirected = myCallsign && (upper.indexOf(' ' + myCallsign + ' ') >= 0 || upper.startsWith(myCallsign + ' ') || upper.endsWith(' ' + myCallsign));
-      var is73 = upper.indexOf('RR73') >= 0 || upper.indexOf(' 73') >= 0;
-      var isWanted = d.newDxcc || d.newCall || d.newGrid;
+      var c = classifyDecode(d);
+      if (!decodeVisible(c)) return;
 
-      if (cqFilter && !isCq && !is73 && !isDirected) return;
-      if (wantedFilter && !isWanted && !isDirected && !is73) return;
-      if (chaseFilter && !d.chaseMatch && !isDirected && !is73) return;
-      if (searchFilter && upper.indexOf(searchFilter) === -1) return;
-
-      // Build needed badges + entity
-      var badges = '';
-      if (d.chaseMatch) badges += '<span class="jp-badge jp-badge-chase" title="Chase target: ' + esc(chaseTarget) + '">◎</span>';
-      if (d.newDxcc) badges += '<span class="jp-badge jp-badge-dxcc" title="New DXCC: ' + esc(d.entity || '') + '">D</span>';
-      if (d.newGrid) badges += '<span class="jp-badge jp-badge-grid" title="New grid: ' + esc(d.grid || '') + '">G</span>';
-      if (d.newCall) badges += '<span class="jp-badge jp-badge-call" title="New call: ' + esc(d.call || '') + '">C</span>';
-      if (d.watched) badges += '<span class="jp-badge jp-badge-watch" title="Watchlist">W</span>';
-      var entityStr = d.entity ? '<span class="jp-entity">' + esc(d.entity) + '</span>' : '';
-
-      var row = document.createElement('div');
-      // Spot-list highlight — match on the decoded DX call. isNewPark bumps
-      // the styling from a subtle stripe to a stronger green tint so the op
-      // can spot unworked parks at a glance during multi-slice operating.
-      var spotMatch = d.call ? spottedCalls.get(String(d.call).toUpperCase()) : null;
-      var spotClass = spotMatch ? (spotMatch.isNewPark ? ' jp-new-park' : ' jp-spotted') : '';
-      row.className = 'jp-row' + (isCq ? ' jp-cq' : '') + (isDirected ? ' jp-directed' : '') + (isWanted ? ' jp-wanted' : '') + (d.chaseMatch ? ' jp-chase' : '') + (d.watched ? ' jp-watched' : '') + spotClass;
-      if (spotMatch && spotMatch.reference) row.title = 'Spotted at ' + spotMatch.reference + (spotMatch.isNewPark ? ' (new park)' : '');
-      var dtStr = d.dt != null ? (d.dt >= 0 ? '+' : '') + d.dt.toFixed(1) : '';
-      // Band badge for multi-slice decodes
-      var bandBadge = '';
-      if (d.band && multiActive) {
-        var bColor = BAND_COLORS[d.band] || '#888';
-        bandBadge = '<span class="jp-badge jp-badge-band" style="background:' + bColor + ';color:#000;">' + d.band + '</span>';
-      }
-      row.innerHTML =
-        (bandBadge ? bandBadge : '') +
-        '<span class="jp-db">' + (d.db >= 0 ? '+' : '') + d.db + '</span>' +
-        '<span class="jp-dt">' + dtStr + '</span>' +
-        '<span class="jp-df">' + Math.round(d.df) + '</span>' +
-        '<span class="jp-msg">' + esc(text) + '</span>' +
-        (badges ? '<span class="jp-badges">' + badges + '</span>' : '') +
-        entityStr;
-      row.addEventListener('dblclick', (function(decode) { return function() { onDecodeRowClick(decode); }; })(d));
-      bandActivity.appendChild(row);
-
-      // Also add directed decodes to My Activity
-      if (isDirected) {
+      if (c.isDirected) {
         if (!myActivityHasSep) {
           var mEmpty = myActivity.querySelector('.jp-empty');
           if (mEmpty) mEmpty.remove();
@@ -627,10 +699,8 @@ function _applyPopoutTheme(payload) {
           myActivity.appendChild(mSep);
           myActivityHasSep = true;
         }
-        var myRow = document.createElement('div');
+        var myRow = buildBandRow(c);
         myRow.className = 'jp-row jp-directed';
-        myRow.innerHTML = row.innerHTML;
-        myRow.addEventListener('dblclick', (function(decode) { return function() { onDecodeRowClick(decode); }; })(d));
         myActivity.appendChild(myRow);
       }
 
@@ -1037,11 +1107,13 @@ function _applyPopoutTheme(payload) {
   cqFilterBtn.addEventListener('click', function() {
     cqFilter = !cqFilter;
     cqFilterBtn.classList.toggle('active', cqFilter);
+    rebuildBandActivity();
   });
 
   wantedFilterBtn.addEventListener('click', function() {
     wantedFilter = !wantedFilter;
     wantedFilterBtn.classList.toggle('active', wantedFilter);
+    rebuildBandActivity();
   });
 
   // --- Chase target picker (CqTarget shared module) ---
@@ -1110,6 +1182,7 @@ function _applyPopoutTheme(payload) {
     chaseFilterBtn.addEventListener('click', function() {
       chaseFilter = !chaseFilter;
       chaseFilterBtn.classList.toggle('active', chaseFilter);
+      rebuildBandActivity();
     });
   }
   // Live sync from main (phone changed it, or echo of our own change).
@@ -1124,11 +1197,13 @@ function _applyPopoutTheme(payload) {
   sortSignalBtn.addEventListener('click', function() {
     sortBySignal = !sortBySignal;
     sortSignalBtn.classList.toggle('active', sortBySignal);
+    rebuildBandActivity();
   });
 
   var searchInput = document.getElementById('jp-search');
   searchInput.addEventListener('input', function() {
     searchFilter = searchInput.value.toUpperCase().trim();
+    rebuildBandActivity();
   });
 
   // --- Multi-slice ---
