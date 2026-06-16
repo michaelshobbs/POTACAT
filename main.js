@@ -246,7 +246,8 @@ const alsa = require('./lib/alsa');
 const { fetchSpots: fetchWwffSpots } = require('./lib/wwff');
 const { fetchSpots: fetchTilesSpots, parseFreqKhz: parseTilesFreqKhz, TilesRateLimitError } = require('./lib/tiles');
 const { fetchSpots: fetchLlotaSpots } = require('./lib/llota');
-const { fetchSpots: fetchWwbotaSpots, postSpot: postWwbotaSpot } = require('./lib/wwbota');
+const { fetchSpots: fetchWwbotaSpots, postSpot: postWwbotaSpot, disconnect: wwbotaDisconnect, setLogger: wwbotaSetLogger } = require('./lib/wwbota');
+wwbotaSetLogger(sendCatLog); // surface WWBOTA SSE reconnects/errors in the CAT log (sendCatLog is hoisted)
 const { postWwffRespot } = require('./lib/wwff-respot');
 const { fetchNets: fetchDirectoryNets, fetchSwl: fetchDirectorySwl } = require('./lib/directory');
 const { QrzClient } = require('./lib/qrz');
@@ -10818,6 +10819,7 @@ async function refreshSpots() {
     if (enableWwff) fetches.push(fetchWwffSpots().then(processWwffSpots));
     if (enableLlota) fetches.push(fetchLlotaSpots().then(processLlotaSpots));
     if (enableWwbota) fetches.push(fetchWwbotaSpots().then(processWwbotaSpots));
+    else wwbotaDisconnect(); // close the SSE stream when WWBOTA is off (idempotent)
     if (enableTiles) {
       // Tiles fetch with operator-friendly cadence + since-incremental
       // polling + 429 backoff. See TILES_POLL_MS comment block above
@@ -21269,6 +21271,7 @@ function gracefulCleanup() {
   try { ft8brBridge.stop(); } catch {}
   try { if (potaSync) potaSync.stop(); } catch {}
   try { if (cloudTunnel) cloudTunnel.shutdown(); } catch {}
+  try { wwbotaDisconnect(); } catch {}
   killRigctld();
 }
 
