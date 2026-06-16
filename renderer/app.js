@@ -1097,6 +1097,7 @@ const setSsbOverData = document.getElementById('set-ssb-over-data');
 const setRemoteCwEnabled = document.getElementById('set-remote-cw-enabled');
 const setRemoteStun = document.getElementById('set-remote-stun');
 const setAudioSource = document.getElementById('set-audio-source');
+const setFlexOnboardSpeaker = document.getElementById('set-flex-onboard-speaker');
 const setTxEqEnabled = document.getElementById('set-tx-eq-enabled');
 const setTxEqPreset = document.getElementById('set-tx-eq-preset');
 const setTxEqPresetRow = document.getElementById('set-tx-eq-preset-row');
@@ -13369,6 +13370,9 @@ async function openSettingsDialog(tab) {
   if (setAudioSource) {
     setAudioSource.value = ['smartsdr', 'icom-network'].includes(s.audioSource) ? s.audioSource : 'dax';
   }
+  if (setFlexOnboardSpeaker) {
+    setFlexOnboardSpeaker.checked = !!s.flexOnboardSpeaker;
+  }
   // TX EQ — load saved state into the Settings dialog. Live updates go
   // through window.api.setTxEq() so toggling the checkbox / dropdown
   // doesn't require reopening Settings or clicking Save.
@@ -13836,6 +13840,7 @@ settingsSave.addEventListener('click', async () => {
   const remoteCwEnabledVal = setRemoteCwEnabled.checked;
   const remoteStunVal = setRemoteStun.checked;
   const audioSourceVal = setAudioSource ? setAudioSource.value : 'dax';
+  const flexOnboardSpeakerVal = setFlexOnboardSpeaker ? setFlexOnboardSpeaker.checked : false;
   const cwKeyPortVal = setCwKeyPort.value || '';
   const launcherEnabled = setEnableLauncher ? setEnableLauncher.checked : false;
   // Audio comes from the active rig (resolved after selectedRig below)
@@ -14060,6 +14065,7 @@ settingsSave.addEventListener('click', async () => {
     remoteCwEnabled: remoteCwEnabledVal,
     remoteStun: remoteStunVal,
     audioSource: audioSourceVal,
+    flexOnboardSpeaker: flexOnboardSpeakerVal,
     cwKeyPort: cwKeyPortVal,
     enableLauncher: launcherEnabled,
     remoteAudioInput: selectedRig ? (selectedRig.remoteAudioInput || '') : '',

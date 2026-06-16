@@ -6166,6 +6166,13 @@ function connectSmartSdr() {
       // routes to the dedicated audio connection (no SmartSDR to do it).
       const ch = parseInt(settings.audioDaxChannel, 10) || 1;
       smartSdr.setSliceDax(index, ch);
+      // As the GUI head, an 8000-series Flex plays this slice on its
+      // built-in speaker. Hunters don't want that — mute the onboard
+      // monitor audio unless the operator opted in (flexOnboardSpeaker).
+      // DAX is upstream-independent, so RX audio for JTCAT/SSTV is unaffected.
+      const onboard = !!settings.flexOnboardSpeaker;
+      smartSdr.setOnboardAudioMute(index, !onboard);
+      sendCatLog(`Flex Direct: radio speaker ${onboard ? 'ON' : 'muted'} (slice ${index} audio_mute=${onboard ? 0 : 1})`);
     } else {
       // Bound mode: the host GUI client (SmartSDR-Win / AetherSDR) already
       // configured DAX; we're just following its active slice. The UI's CAT
@@ -20939,6 +20946,8 @@ app.whenReady().then(() => {
 
     const audioSourceChanged = has('audioSource') && newSettings.audioSource !== settings.audioSource;
 
+    const flexOnboardSpeakerChanged = has('flexOnboardSpeaker') && newSettings.flexOnboardSpeaker !== settings.flexOnboardSpeaker;
+
     const tciChanged = (has('tciSpots') && newSettings.tciSpots !== settings.tciSpots) ||
       (has('tciHost') && newSettings.tciHost !== settings.tciHost) ||
       (has('tciPort') && newSettings.tciPort !== settings.tciPort);
@@ -21126,6 +21135,14 @@ app.whenReady().then(() => {
     // — desktop rig editor left smartSdr disconnected, tunes ignored.
     if (smartSdrChanged || wsjtxChanged || cwKeyerChanged || remoteChanged || activeRigChanged) {
       connectSmartSdr(); // needsSmartSdr() decides whether to actually connect
+    }
+
+    // Live toggle of the Flex onboard speaker (Flex Direct only). Apply to
+    // the slice POTACAT owns without a reconnect; bound mode leaves the
+    // host GUI client's audio routing alone.
+    if (flexOnboardSpeakerChanged && smartSdr && smartSdr.mode === 'self' && smartSdr.ourSliceIndex != null) {
+      smartSdr.setOnboardAudioMute(smartSdr.ourSliceIndex, !settings.flexOnboardSpeaker);
+      sendCatLog(`Flex Direct: radio speaker ${settings.flexOnboardSpeaker ? 'ON' : 'muted'} (live)`);
     }
 
     // DAX-free audio path: start / stop the dedicated non-GUI audio
