@@ -1,18 +1,21 @@
 // Desktop diagnostic-snapshot responder (Unified Bug Report).
-// Covers the three layers of the #1 responder:
-//   - lib/diagnostic-snapshot.js  — pure assembly + redaction
-//   - lib/echocat-protocol.js     — request-diagnostic / diagnostic-snapshot wire schemas
-//   - lib/remote-server.js        — inbound handler: owner emits, guest is refused
+// Canonical contract: status/brief-bug-report-{desktop,mobile}.md — the mobile
+// app already ships a BugReportAssembler that consumes EXACTLY this sections
+// shape, so these tests lock the desktop to the brief's wire schema.
 //
-// Bug: desktop never answered request-diagnostic, so every mobile bug report
-// showed no desktop snapshot (work/in-progress/desktop-request-diagnostic-
-// responder.md).
+// Layers:
+//   - lib/diagnostic-snapshot.js  — pure section assembly + redaction
+//   - lib/echocat-protocol.js     — request-diagnostic / diagnostic-snapshot (Dir.BOTH)
+//   - lib/remote-server.js        — inbound handler: owner emits, guest refused
 //
 // Run: node test/diagnostic-snapshot-test.js
 
 'use strict';
 
-const { buildDiagnosticSnapshot, maskString, REDACTED } = require('../lib/diagnostic-snapshot');
+const {
+  assembleSections, buildDiagnosticSnapshot,
+  maskEmail, redactIpTo24, redactLogLines, REDACTED,
+} = require('../lib/diagnostic-snapshot');
 const protocol = require('../lib/echocat-protocol');
 const { RemoteServer } = require('../lib/remote-server');
 
@@ -26,121 +29,115 @@ function eq(actual, expected, label) {
     `${label} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-console.log('=== buildDiagnosticSnapshot: shape ===');
-
-const baseInput = {
-  requestId: 'req-1',
-  appVersion: '1.8.13',
-  platform: 'win32',
-  osRelease: '10.0.26200',
-  electronVersion: '32.0.0',
-  nodeVersion: '22.0.0',
-  rigStatus: { type: 'status', model: 'Flex 8600M', freqKhz: 14074, mode: 'DIGU', connected: true, swr: 1.2 },
-  tunnel: { enabled: true, status: 'live', cloudHost: 'shack.example.com', degraded: false, lastError: '' },
-  logTail: 'line A\nline B',
-  timestamp: 1700000000000,
-  secrets: { callsign: 'K3SBP', email: 'casey@cmox.co', hosts: ['shack.example.com'], tokens: [] },
+const rawFull = {
+  account: { signedIn: true, callsign: 'K3SBP', email: 'casey@cmox.co', subscriptionStatus: 'active', subscriptionSource: 'app_store', subscriptionExpiresAt: '2026-07-15' },
+  connection: { role: 'host', pathTried: ['lan', 'cloud'], pathActive: 'cloud', remoteAddress: '192.168.1.50', latencyMs: 47, reconnectsLastHour: 1, passSession: false },
+  pairedDevices: [{ id: '878b', name: 'iPhone 16 Pro', platform: 'ios', lastSeen: '2026-06-16T13:00:00Z' }],
+  rig: { configured: true, profile: 'Flex 8600M', catTransport: 'TCP 192.168.1.50:4992', catStatus: 'connected', catLastPollAgeMs: 180, vfo: '14074.0 kHz DIGU', audioBridge: 'Flex Direct' },
+  tailscale: { installed: true, connected: true, hostname: 'shack.taile1234.ts.net', peerCount: 3 },
+  cloudTunnel: { enabled: true, status: 'live', cloudHost: 'k3sbp.potacat.com', lastHealthCheckAt: '2026-06-16T13:00:00Z' },
+  logLines: ['[Echo CAT] hello', 'token eyJabc.def.ghi here', 'Authorization: Bearer sk_live_DEADBEEFtoken', 'blob ' + 'A'.repeat(40)],
 };
 
+// ───────────────────────────────────────────────────────────────────────────
+console.log('=== assembleSections: brief shape (redact=false) ===');
+
 {
-  const snap = buildDiagnosticSnapshot(baseInput, { redact: false });
-  eq(snap.type, 'diagnostic-snapshot', 'message type');
-  eq(snap.requestId, 'req-1', 'requestId echoed');
-  eq(snap.source, 'desktop', 'source is desktop');
-  eq(snap.timestamp, 1700000000000, 'timestamp passed through');
-  check(snap.sections && typeof snap.sections === 'object', 'sections present');
-  eq(Object.keys(snap.sections).sort(), ['app', 'log', 'rig', 'tunnel'], 'four sections');
-  eq(snap.sections.app.electron, '32.0.0', 'app.electron');
-  eq(snap.sections.rig.available, true, 'rig available');
-  eq(snap.sections.rig.model, 'Flex 8600M', 'rig model passed through');
-  check(!('type' in snap.sections.rig), 'rig section drops the status message tag');
-  eq(snap.sections.tunnel.cloudHost, 'shack.example.com', 'tunnel host (unredacted)');
-  eq(snap.sections.log.tail, 'line A\nline B', 'log tail');
+  const s = assembleSections(rawFull, { redact: false });
+  eq(Object.keys(s).sort(), ['account', 'cloudTunnel', 'connection', 'logLines', 'pairedDevices', 'rig', 'tailscale'], 'seven desktop sections');
+  check(!('network' in s), 'no network section on desktop (mobile-only)');
+  eq(s.account.callsign, 'K3SBP', 'account.callsign');
+  eq(s.account.emailRedacted, 'casey@cmox.co', 'email raw when redact=false');
+  eq(s.connection.pathActive, 'cloud', 'connection.pathActive');
+  eq(s.pairedDevices[0].lastSeenAt, '2026-06-16T13:00:00Z', 'pairedDevices maps lastSeen -> lastSeenAt');
+  eq(s.rig.profile, 'Flex 8600M', 'rig.profile');
+  eq(s.rig.catStatus, 'connected', 'rig.catStatus');
+  eq(s.tailscale.hostname, 'shack.taile1234.ts.net', 'tailscale.hostname');
+  eq(s.cloudTunnel.cloudHost, 'k3sbp.potacat.com', 'cloudTunnel.cloudHost');
+  check(Array.isArray(s.logLines) && s.logLines.length === 4, 'logLines is an array (string[])');
 }
 
 {
-  // No rig status / no tunnel → graceful "not available" rather than throwing.
-  const snap = buildDiagnosticSnapshot({ requestId: 'r2' }, {});
-  eq(snap.sections.rig, { available: false }, 'rig unavailable when no status');
-  eq(snap.sections.tunnel, { enabled: false }, 'tunnel disabled when no state');
-  check(!('timestamp' in snap), 'absent timestamp is dropped from the wire');
+  // Empty raw → every section present with safe defaults (partial gather ships).
+  const s = assembleSections({}, {});
+  eq(s.account.signedIn, false, 'account defaults signedIn=false');
+  eq(s.rig.catStatus, 'not_configured', 'rig defaults not_configured');
+  eq(s.cloudTunnel.status, 'off', 'cloudTunnel defaults off');
+  eq(s.logLines, [], 'logLines defaults to []');
 }
 
 {
-  // A section that throws is isolated — the snapshot still ships.
+  // One malformed section is isolated.
   const evil = {};
-  Object.defineProperty(evil, 'boom', { enumerable: true, get() { throw new Error('kaboom'); } });
-  const snap = buildDiagnosticSnapshot({ requestId: 'r3', rigStatus: evil }, {});
-  check(snap.sections.rig && typeof snap.sections.rig.error === 'string', 'throwing rig section -> per-section error');
-  eq(snap.sections.app.appVersion, '', 'other sections still built after one fails');
-  eq(snap.requestId, 'r3', 'snapshot still returns despite section failure');
+  Object.defineProperty(evil, 'configured', { enumerable: true, get() { throw new Error('boom'); } });
+  const s = assembleSections({ rig: evil }, {});
+  check(s.rig && typeof s.rig.error === 'string', 'throwing rig section -> per-section error');
+  eq(s.account.signedIn, false, 'other sections still built after one fails');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-console.log('\n=== redaction (redact:true) ===');
+console.log('\n=== redaction (redact=true) ===');
 
 {
-  const input = {
-    ...baseInput,
-    logTail: 'op K3SBP at C:\\Users\\casey\\AppData\\pota.log peer 192.168.1.50 loop 127.0.0.1 mail casey@cmox.co',
-    rigStatus: { type: 'status', model: 'Flex 8600M', operator: 'K3SBP', connected: true },
-  };
-  const snap = buildDiagnosticSnapshot(input, { redact: true });
-  const tail = snap.sections.log.tail;
-  check(!tail.includes('K3SBP'), 'callsign masked in log');
-  check(!tail.includes('casey@cmox.co'), 'email masked in log');
-  check(!tail.includes('192.168.1.50'), 'public IPv4 masked in log');
-  check(tail.includes('127.0.0.1'), 'loopback IP preserved');
-  check(!/Users[\\/]casey/i.test(tail), 'home-dir username masked');
-  check(snap.sections.tunnel.cloudHost === REDACTED, 'tunnel host masked (in secrets.hosts)');
-  check(snap.sections.rig.operator === REDACTED, 'callsign in rig telemetry masked');
-  // Identity-bearing envelope fields must survive — the report needs them.
-  eq(snap.requestId, 'req-1', 'requestId NOT redacted');
-  eq(snap.source, 'desktop', 'source NOT redacted');
+  const s = assembleSections(rawFull, { redact: true });
+  check(s.account.emailRedacted !== 'casey@cmox.co' && s.account.emailRedacted.includes('@'), 'email masked');
+  eq(s.connection.remoteAddress, '192.168.1.0/24', 'remoteAddress redacted to /24');
+  check(s.rig.catTransport.includes('192.168.1.0/24'), 'rig.catTransport IP redacted to /24');
+  check(!s.rig.catTransport.includes('192.168.1.50'), 'raw rig IP gone');
+  const joined = s.logLines.join('\n');
+  check(!joined.includes('eyJabc.def.ghi'), 'JWT stripped from logLines');
+  check(!/Bearer sk_live/.test(joined), 'Bearer token stripped from logLines');
+  check(!joined.includes('A'.repeat(40)), '32+ char blob stripped from logLines');
+  // Identity-bearing structural fields the report still needs:
+  eq(s.account.callsign, 'K3SBP', 'callsign NOT redacted (report needs it)');
 }
 
+console.log('\n=== redaction helpers ===');
+eq(redactIpTo24('192.168.1.50:4992'), '192.168.1.0/24:4992', 'redactIpTo24 host:port');
+eq(redactIpTo24('127.0.0.1'), '127.0.0.1', 'loopback preserved');
+check(maskEmail('casey@cmox.co').endsWith('.co'), 'maskEmail preserves TLD');
+check(!maskEmail('casey@cmox.co').includes('casey'), 'maskEmail hides local part');
+eq(redactLogLines(['x eyJaa.bb.cc y']), ['x <redacted-jwt> y'], 'redactLogLines JWT');
+
+// ───────────────────────────────────────────────────────────────────────────
+console.log('\n=== buildDiagnosticSnapshot: envelope ===');
+
 {
-  // Short secrets must not be masked (would shred unrelated text).
-  const out = maskString('the cat sat', ['a']);
-  eq(out, 'the cat sat', 'secrets shorter than 3 chars are ignored');
+  const msg = buildDiagnosticSnapshot(
+    { requestId: 'r1', source: 'desktop', appVersion: '1.8.13', platform: { os: 'win32', osVersion: '10.0', deviceModel: null }, timestamp: '2026-06-16T13:00:00.000Z' },
+    rawFull, { redact: true });
+  eq(msg.type, 'diagnostic-snapshot', 'message type');
+  eq(msg.requestId, 'r1', 'requestId echoed');
+  eq(msg.source, 'desktop', 'source desktop');
+  eq(msg.platform, { os: 'win32', osVersion: '10.0', deviceModel: null }, 'platform is an object');
+  eq(msg.timestamp, '2026-06-16T13:00:00.000Z', 'timestamp is ISO string');
+  check(msg.sections && msg.sections.rig, 'sections embedded');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-console.log('\n=== protocol: wire schemas ===');
+console.log('\n=== protocol: wire schema (Dir.BOTH) ===');
 
-check(protocol.isKnownType('request-diagnostic'), 'request-diagnostic registered');
-check(protocol.isKnownType('diagnostic-snapshot'), 'diagnostic-snapshot registered');
-
+check(protocol.isKnownType('request-diagnostic') && protocol.isKnownType('diagnostic-snapshot'), 'both types registered');
+eq(protocol.describe('request-diagnostic').dir, protocol.Dir.BOTH, 'request-diagnostic is Dir.BOTH');
+eq(protocol.describe('diagnostic-snapshot').dir, protocol.Dir.BOTH, 'diagnostic-snapshot is Dir.BOTH');
+// Bidirectional → valid in BOTH directions (either side can request/respond).
+check(protocol.validate({ type: 'request-diagnostic', requestId: 'x', redact: true }, protocol.Dir.C2S).ok, 'request-diagnostic valid c2s');
+check(protocol.validate({ type: 'request-diagnostic', requestId: 'x' }, protocol.Dir.S2C).ok, 'request-diagnostic valid s2c (bidirectional)');
+check(!protocol.validate({ type: 'request-diagnostic' }, protocol.Dir.C2S).ok, 'request-diagnostic without requestId rejected');
 {
-  const v = protocol.validate({ type: 'request-diagnostic', requestId: 'x', redact: true }, protocol.Dir.C2S);
-  check(v.ok, 'valid request-diagnostic (c2s) accepted');
+  const msg = { type: 'diagnostic-snapshot', requestId: 'x', source: 'desktop', appVersion: '1.8.13', platform: { os: 'win32', osVersion: '10', deviceModel: null }, timestamp: '2026-06-16T13:00:00Z', sections: { rig: { configured: false } } };
+  const parsed = protocol.parse(protocol.encode(msg), protocol.Dir.S2C);
+  check(parsed.ok, 'full snapshot encodes + parses (object platform, string timestamp)');
 }
+check(protocol.validate({ type: 'diagnostic-snapshot', requestId: 'x', source: 'desktop', error: 'not-authorized' }).ok, 'error-only snapshot validates');
 {
-  const v = protocol.validate({ type: 'request-diagnostic' }, protocol.Dir.C2S);
-  check(!v.ok && v.field === 'requestId', 'request-diagnostic without requestId rejected');
-}
-{
-  const v = protocol.validate({ type: 'request-diagnostic', requestId: 'x' }, protocol.Dir.S2C);
-  check(!v.ok, 'request-diagnostic refused in the s2c direction');
-}
-{
-  // Full snapshot (with an any-bag sections object) encodes + parses back.
-  const msg = { type: 'diagnostic-snapshot', requestId: 'x', source: 'desktop', appVersion: '1.8.13', platform: 'win32', timestamp: 1700000000000, sections: { app: { node: '22' }, rig: { available: false } } };
-  const wire = protocol.encode(msg);
-  const parsed = protocol.parse(wire, protocol.Dir.S2C);
-  check(parsed.ok, 'diagnostic-snapshot encodes + parses (s2c)');
-  eq(parsed.msg.requestId, 'x', 'requestId round-trips');
-}
-{
-  // Error-only snapshot (refusal / failure) is still valid — no sections.
-  const v = protocol.validate({ type: 'diagnostic-snapshot', requestId: 'x', source: 'desktop', error: 'not-authorized' });
-  check(v.ok, 'error-only snapshot validates (no sections required)');
+  // platform must be an object now, not a string.
+  const v = protocol.validate({ type: 'diagnostic-snapshot', requestId: 'x', platform: 'win32' });
+  check(!v.ok && v.field === 'platform', 'string platform rejected (must be object)');
 }
 {
   const hello = protocol.buildServerHello({ capabilities: ['diagnostic-snapshot'] });
-  check(Array.isArray(hello.capabilities) && hello.capabilities.includes('diagnostic-snapshot'),
-    'server hello carries the diagnostic-snapshot capability');
+  check(hello.capabilities.includes('diagnostic-snapshot'), 'server hello carries diagnostic-snapshot capability');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -148,17 +145,10 @@ console.log('\n=== server handler: owner emits, guest refused ===');
 
 function fakeWs() {
   const sent = [];
-  return {
-    _authenticated: true,
-    readyState: 1, // WebSocket.OPEN
-    send: (wire) => { try { sent.push(JSON.parse(wire)); } catch {} },
-    _sent: sent,
-  };
+  return { _authenticated: true, readyState: 1, send: (w) => { try { sent.push(JSON.parse(w)); } catch {} }, _sent: sent };
 }
 
 {
-  // Owner (no _passSession): handler emits an event for main.js to gather,
-  // and does NOT reply directly.
   const rs = new RemoteServer();
   const ws = fakeWs();
   rs._client = ws;
@@ -171,7 +161,9 @@ function fakeWs() {
 }
 
 {
-  // Guest Pass session: refused with an error snapshot, NOT emitted.
+  // Guest Pass session must NOT be able to pull host diagnostics (security
+  // deviation from the brief, intentional — see handoff note). Refused with an
+  // error snapshot so the requester never strands on its 5s timeout.
   const rs = new RemoteServer();
   const ws = fakeWs();
   ws._passSession = { code: 'GUEST1' };
@@ -183,7 +175,7 @@ function fakeWs() {
   eq(ws._sent.length, 1, 'guest gets an immediate reply');
   eq(ws._sent[0].type, 'diagnostic-snapshot', 'guest reply is a diagnostic-snapshot');
   eq(ws._sent[0].error, 'not-authorized', 'guest reply carries not-authorized error');
-  eq(ws._sent[0].requestId, 'g1', 'guest reply echoes requestId (no client timeout)');
+  eq(ws._sent[0].requestId, 'g1', 'guest reply echoes requestId');
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -350,21 +350,27 @@ the broader `status` message; no dedicated S→C envelope today.)
 
 ### Diagnostics (Unified Bug Report)
 
+Canonical contract: `status/brief-bug-report-{desktop,mobile}.md`.
+
 | Message | Dir | Purpose |
 |---|---|---|
-| `request-diagnostic` | C→S | Mobile asks the desktop for a diagnostic snapshot to fill the DESKTOP section of a shared bug report. Fields: `requestId` (string, echoed in the reply), `redact` (optional bool — when true the reply is safe to paste into a PUBLIC report). |
-| `diagnostic-snapshot` | S→C | Desktop's reply, carrying the SAME `requestId`. Fields: `source` (`"desktop"`), `appVersion`, `platform`, `timestamp`, `sections` (object — `app`/`rig`/`tunnel`/`log`; an any-bag mirroring the mobile HostSnapshot, intentionally untyped), and `error` (string, present instead of `sections` on refusal/failure). |
+| `request-diagnostic` | ↔ | "Report a Bug" on either side asks the other for a diagnostic snapshot. Fields: `requestId` (string, echoed in the reply), `redact` (optional bool — when true the reply is safe to paste into a PUBLIC report). |
+| `diagnostic-snapshot` | ↔ | Reply carrying the SAME `requestId`. Fields: `source` (`"desktop"`/`"mobile"`), `appVersion`, `platform` (object `{os, osVersion, deviceModel}`), `timestamp` (ISO 8601 string), `sections` (object — see below), and `error` (string, present instead of `sections` on refusal/failure). |
 
-`sections` is deliberately an untyped object so it can evolve in lockstep
-with the mobile `BugReportAssembler` without a protocol-version bump. Every
-field except `requestId` is optional: a refused (Guest Pass session →
-`error: "not-authorized"`) or failed gather still returns a valid snapshot
-so the phone never sits on its 5s timeout. When `redact:true`, the desktop
-masks callsign, account email, tunnel/host names, device tokens,
-home-directory usernames in paths, and public IPv4s (loopback preserved).
-The desktop advertises `diagnostic-snapshot` in its server `hello`
-`capabilities` so an older desktop (no responder) is detected immediately
-instead of by timeout.
+Both types are **bidirectional** (`Dir.BOTH`) — either side can be requester
+or responder. `sections` is an untyped any-bag so it can evolve in lockstep
+with the mobile `BugReportAssembler` without a protocol-version bump. Desktop
+sections: `account`, `connection`, `pairedDevices`, `rig`, `tailscale`,
+`cloudTunnel`, `logLines` (`string[]`); mobile adds `network` and omits the
+desktop-only ones. Every field except `requestId` is optional: a refused or
+failed gather returns `error` and no `sections` so the requester never sits
+on its 5s timeout. When `redact:true`, the responder masks email, IPs (to
+/24, loopback preserved), and JWT/Bearer/long-token strings in `logLines`.
+Both sides advertise `diagnostic-snapshot` in their `hello.capabilities` so
+the requester short-circuits to NOT REACHABLE against an old peer instead of
+waiting on the timeout. **Security deviation (desktop):** a Guest Pass
+session is refused (`error: "not-authorized"`) rather than handed the host's
+diagnostics.
 
 ### Pairing (new in v1, see Phase 0 plan)
 

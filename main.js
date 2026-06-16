@@ -1640,9 +1640,22 @@ function broadcastRigState() {
   broadcastRemoteRadioStatus();
 }
 
+// In-process rolling buffer of the most recent CAT/ECHOCAT log lines. There
+// is no in-memory log today (sendCatLog writes straight through to the
+// renderer over IPC), so the diagnostic-snapshot gatherer had nothing to read
+// — this gives it the last ~200 lines for the bug report's logLines section.
+const _catLogRing = [];
+const CAT_LOG_RING_CAP = 200;
+function getRecentSendCatLog(n) {
+  const count = Math.max(1, Math.min(n || 50, _catLogRing.length));
+  return _catLogRing.slice(-count);
+}
+
 function sendCatLog(msg) {
   const ts = new Date().toISOString().slice(11, 23);
   const line = `[CAT ${ts}] ${msg}`;
+  _catLogRing.push(line);
+  if (_catLogRing.length > CAT_LOG_RING_CAP) _catLogRing.shift();
   try { console.log(line); } catch { /* EPIPE if stdout closed */ }
   if (win && !win.isDestroyed()) win.webContents.send('cat-log', line);
 }
@@ -1663,46 +1676,113 @@ function appendDiagnosticLog(fileName, msg) {
   }
 }
 
-// Read the last `maxLines` lines of a log file in userData (best-effort).
-// Used by the diagnostic-snapshot gatherer; never throws.
-function readLogTail(fileName, maxLines) {
+// Derive a human-readable audio-bridge label from existing settings — POTACAT
+// has no single canonical "audio bridge" field (brief §rig.audioBridge rule).
+function deriveAudioBridge() {
   try {
-    const file = path.join(app.getPath('userData'), fileName);
-    if (!fs.existsSync(file)) return '';
-    const text = fs.readFileSync(file, 'utf-8');
-    const lines = text.split(/\r?\n/);
-    return lines.slice(-Math.max(1, maxLines || 200)).join('\n');
-  } catch { return ''; }
+    const activeRig = (settings.rigs || []).find(r => r && r.id === settings.activeRigId) || null;
+    const isFlex = activeRig && /flex/i.test(activeRig.model || activeRig.name || '');
+    if (isFlex && settings.smartSdrHost) {
+      return 'SmartSDR ' + (settings.smartSdrAudioMode || '').toString().trim() || 'SmartSDR';
+    }
+    if (isFlex) return 'Flex Direct';
+    if (settings.remoteAudioInput || settings.remoteAudioOutput) {
+      return 'WebRTC bridge: ' + (settings.remoteAudioInput || settings.remoteAudioOutput);
+    }
+  } catch {}
+  return null;
 }
 
-// Assemble the desktop's diagnostic-snapshot reply for the Unified Bug Report.
-// Gathers live state (the server owns rig status; we own version/tunnel/log),
-// then hands it to the pure builder which shapes + redacts. Honors `redact`.
-function gatherDesktopDiagnostic(requestId, redact) {
+// Gather the desktop's RAW diagnostic state into the brief's section inputs.
+// Pure shaping + redaction happens in lib/diagnostic-snapshot.js; this only
+// reads live state. Best-effort per field — never throws.
+function gatherDesktopRawDiagnostic() {
+  const activeRig = (() => { try { return (settings.rigs || []).find(r => r && r.id === settings.activeRigId) || null; } catch { return null; } })();
+  const catTarget = (cat && cat._target) || (settings && settings.catTarget) || null;
+  const catTransport = (() => {
+    if (!catTarget) return null;
+    if (catTarget.host) return `${(catTarget.type || 'tcp').toUpperCase()} ${catTarget.host}${catTarget.port ? ':' + catTarget.port : ''}`;
+    if (catTarget.path) return `${(catTarget.type || 'serial')} ${catTarget.path}`;
+    return null;
+  })();
+  const catConnected = !!(cat && cat.connected);
+
   let tunnel = null;
   try { tunnel = cloudTunnel ? cloudTunnel.getState() : null; } catch {}
-  const input = {
-    requestId: requestId || '',
-    appVersion: (() => { try { return app.getVersion(); } catch { return ''; } })(),
-    platform: process.platform,
-    osRelease: (() => { try { return require('os').release(); } catch { return ''; } })(),
-    electronVersion: (process.versions && process.versions.electron) || '',
-    nodeVersion: (process.versions && process.versions.node) || '',
-    rigStatus: (() => { try { return remoteServer ? remoteServer.getRadioStatus() : null; } catch { return null; } })(),
-    tunnel,
-    logTail: readLogTail('startup.log', 200),
-    timestamp: Date.now(),
-    secrets: {
-      callsign: settings && settings.myCallsign ? String(settings.myCallsign) : '',
+  let ts = null;
+  try { const { tailscaleStatus } = require('./lib/remote-server'); ts = tailscaleStatus(); } catch {}
+  let conn = null;
+  try { conn = remoteServer && typeof remoteServer.activeClientContext === 'function' ? remoteServer.activeClientContext() : null; } catch {}
+  let paired = [];
+  try { paired = remoteServer && typeof remoteServer.listPairedDevices === 'function' ? remoteServer.listPairedDevices() : []; } catch {}
+
+  return {
+    account: {
+      signedIn: !!(settings && settings.cloudAccessToken),
+      callsign: settings && settings.myCallsign ? String(settings.myCallsign).toUpperCase() : null,
       email: settings && settings.cloudEmail ? String(settings.cloudEmail) : '',
-      hosts: [
-        tunnel && tunnel.cloudHost ? String(tunnel.cloudHost) : '',
-        settings && settings.tsHost ? String(settings.tsHost) : '',
-      ].filter(Boolean),
-      tokens: [],
+      subscriptionStatus: (settings && settings.cloudSubscriptionStatus) || 'none',
+      subscriptionSource: (settings && settings.cloudSubscriptionSource) || null,
+      subscriptionExpiresAt: (settings && settings.cloudSubscriptionExpiresAt) || null,
     },
+    connection: {
+      role: 'host',
+      // pathTried / pathActive / latencyMs / reconnectsLastHour need WS-path
+      // instrumentation not yet wired (brief notes this as light follow-up).
+      pathTried: [],
+      pathActive: null,
+      remoteAddress: null,
+      latencyMs: null,
+      reconnectsLastHour: 0,
+      passSession: !!(conn && conn.passSession),
+    },
+    pairedDevices: (paired || []).map(d => ({
+      id: d.id, name: d.name, platform: d.platform, lastSeenAt: d.lastSeen || null,
+    })),
+    rig: {
+      configured: !!activeRig,
+      profile: activeRig ? (activeRig.name || activeRig.model || null) : null,
+      catTransport,
+      catStatus: !catTarget ? 'not_configured' : (catConnected ? 'connected' : 'disconnected'),
+      catLastPollAgeMs: null,
+      vfo: _currentMode ? `${(_currentFreqHz / 1000).toFixed(1)} kHz ${_currentMode}` : null,
+      audioBridge: deriveAudioBridge(),
+    },
+    tailscale: {
+      installed: !!(ts && ts.installed),
+      connected: !!(ts && ts.loggedIn),
+      hostname: (ts && ts.hostname) || null,
+      peerCount: null,
+    },
+    cloudTunnel: {
+      enabled: !!(tunnel && tunnel.enabled),
+      status: (tunnel && tunnel.status) || 'off',
+      cloudHost: (tunnel && tunnel.cloudHost) || null,
+      lastHealthCheckAt: (tunnel && tunnel.lastCheckAt) || null,
+    },
+    logLines: getRecentSendCatLog(50),
   };
-  return buildDiagnosticSnapshot(input, { redact: !!redact });
+}
+
+// Build the full diagnostic-snapshot message for the Unified Bug Report.
+// Used by both the host (remoteServer) and, later, the desktop-as-client path.
+function gatherDesktopDiagnostic(requestId, redact) {
+  const platform = {
+    os: process.platform,
+    osVersion: (() => { try { return require('os').release(); } catch { return ''; } })(),
+    deviceModel: null,
+  };
+  return buildDiagnosticSnapshot(
+    {
+      requestId: requestId || '',
+      source: 'desktop',
+      appVersion: (() => { try { return app.getVersion(); } catch { return ''; } })(),
+      platform,
+      timestamp: new Date().toISOString(),
+    },
+    gatherDesktopRawDiagnostic(),
+    { redact: !!redact },
+  );
 }
 
 function appendIcomNetworkDiagnostic(msg) {
