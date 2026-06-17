@@ -539,6 +539,7 @@ let radioFreqKhz = null;
 let radioMode = null;
 
 let scanning = false;
+let remoteScanning = false; // ECHOCAT mobile's scan engine is running (scan-state-sync-desktop)
 let scanTimer = null;
 let scanIndex = 0;
 let scanSkipped = new Set(); // "callsign\tfrequency" keys to skip
@@ -9213,9 +9214,32 @@ function getScanList() {
   return filtered.filter((s) => s.source !== 'net' && !scanSkipped.has(skipKey(s)) && (!isWorkedSpot(s) || scanForceUnskipped.has(skipKey(s))));
 }
 
+// Notify main (→ ECHOCAT mobile) of a real scan on↔off transition. Fired only
+// on actual state changes so the mutual-exclusion stop can't feedback-loop.
+// (scan-state-sync-desktop)
+function notifyScanState(on) {
+  try { if (window.api && window.api.scanStateChanged) window.api.scanStateChanged(!!on); } catch {}
+}
+
+// Reflect the peer (mobile) scan in the desktop Scan button when we aren't
+// locally scanning, so the desktop shows "Stop" while the phone scans.
+function reflectScanButton() {
+  if (scanning) return; // a local scan owns the button label via start/stopScan
+  if (remoteScanning) {
+    scanBtn.textContent = 'Stop';
+    scanBtn.title = 'Mobile is scanning — press to stop it';
+    scanBtn.classList.add('scan-active');
+  } else {
+    scanBtn.textContent = 'Scan';
+    scanBtn.title = 'Scan through spots';
+    scanBtn.classList.remove('scan-active');
+  }
+}
+
 function startScan() {
   const list = getScanList();
   if (list.length === 0) return;
+  const wasScanning = scanning;
   scanning = true;
   scanVisitedFreqs.clear();
   // Resume from the spot matching the radio's current frequency, or start at 0
@@ -9227,10 +9251,12 @@ function startScan() {
   scanBtn.textContent = 'Stop';
   scanBtn.title = 'Press Stop or Spacebar to stop scanning';
   scanBtn.classList.add('scan-active');
+  if (!wasScanning) notifyScanState(true);
   scanStep();
 }
 
 function stopScan() {
+  const wasScanning = scanning;
   scanning = false;
   if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
   scanVisitedFreqs.clear();
@@ -9242,6 +9268,8 @@ function stopScan() {
   scanBtn.textContent = 'Scan';
   scanBtn.title = 'Scan through spots';
   scanBtn.classList.remove('scan-active');
+  if (wasScanning) notifyScanState(false);
+  reflectScanButton(); // re-show "Stop" if the phone is still scanning
   render();
 }
 
@@ -9298,8 +9326,30 @@ function scanStep() {
 }
 
 scanBtn.addEventListener('click', () => {
-  if (scanning) { stopScan(); } else { startScan(); }
+  // Button routing mirrors mobile: stop our own scan first; else if only the
+  // phone is scanning, ask it to stop; else start a local scan.
+  if (scanning) { stopScan(); }
+  else if (remoteScanning) { try { window.api.scanControlSend('stop'); } catch {} }
+  else { startScan(); }
 });
+
+// --- ECHOCAT scan-state sync (scan-state-sync-desktop) ---
+// Inbound: mobile asks the desktop to start/stop its scan.
+if (window.api && window.api.onRemoteScanControl) {
+  window.api.onRemoteScanControl(({ action } = {}) => {
+    if (action === 'stop') stopScan();
+    else if (action === 'start') startScan();
+  });
+}
+// Inbound: mobile announced its own scan turned on/off. Mutual exclusion (one
+// rig): if the phone started scanning, stop ours. Always reflect it in the button.
+if (window.api && window.api.onRemotePeerScanState) {
+  window.api.onRemotePeerScanState(({ scanning: peerScanning } = {}) => {
+    remoteScanning = !!peerScanning;
+    if (remoteScanning && scanning) stopScan(); // stopScan() also calls reflectScanButton()
+    else reflectScanButton();
+  });
+}
 
 document.addEventListener('keydown', (e) => {
   // Don't intercept F-keys that are part of a modifier combo — those are

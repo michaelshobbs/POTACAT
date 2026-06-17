@@ -887,6 +887,7 @@ let spotTimer = null;
 let solarTimer = null;
 let rigctldProc = null;
 let cluster = null; // legacy — replaced by clusterClients Map
+let desktopScanning = false; // mirror of the renderer scan engine's on/off, for ECHOCAT scan-state sync (scan-state-sync-desktop)
 let clusterSpots = []; // streaming DX cluster spots (FIFO, max 500)
 // Non-deduped spot histories so the "spot history" popover can show prior
 // spots of the same callsign (clusterSpots itself is deduped per call+band so
@@ -8762,6 +8763,19 @@ function connectRemote() {
     handleRemotePtt(state);
   });
 
+  // Scan on/off sync (scan-state-sync-desktop). The scan engine lives in the
+  // renderer, so these inbound peer messages are forwarded over IPC.
+  remoteServer.on('scan-control', ({ action }) => {
+    // Mobile asks us to start/stop the desktop scan. The renderer acts and
+    // then emits scan-state-changed, which broadcasts the new state back.
+    if (win && !win.isDestroyed()) win.webContents.send('remote-scan-control', { action });
+  });
+  remoteServer.on('peer-scan-state', ({ scanning }) => {
+    // Mobile's engine changed. Forward for mutual exclusion (one rig: if the
+    // phone started scanning, the desktop stops its own) + button reflection.
+    if (win && !win.isDestroyed()) win.webContents.send('remote-peer-scan-state', { scanning });
+  });
+
   remoteServer.on('client-connected', ({ deviceId, profileCallsign } = {}) => {
     // Cancel any pending teardown — the phone came back inside the
     // grace window, so the engine kept running and we're whole.
@@ -8771,6 +8785,9 @@ function connectRemote() {
       sendCatLog('[Echo CAT] Phone reconnected during grace window — engine survived.');
     }
     broadcastRemoteRadioStatus();
+    // Seed the (re)connecting phone with the desktop's current scan state so a
+    // mid-scan reconnect shows the in-progress scan (scan-state-sync-desktop).
+    remoteServer.sendToClient({ type: 'scan-state', scanning: desktopScanning });
     // Send current source toggles to phone
     remoteServer.sendSourcesToClient({
       pota: settings.enablePota !== false,
@@ -8909,6 +8926,9 @@ function connectRemote() {
   remoteServer.on('client-disconnected', () => {
     if (win && !win.isDestroyed()) {
       win.webContents.send('remote-status', { connected: false });
+      // Phone gone — clear any mirrored "phone is scanning" state so the
+      // desktop Scan button doesn't stay stuck showing the peer's scan.
+      win.webContents.send('remote-peer-scan-state', { scanning: false });
     }
     // Stop the in-process spectrum loop — only mobile would have
     // subscribed it, and mobile re-subscribes on reconnect via the
@@ -19047,6 +19067,23 @@ app.whenReady().then(() => {
       if (!ok) return;
       require('electron').shell.openExternal(url);
     } catch { /* silent — invalid URL or load failure */ }
+  });
+
+  // Scan engine (renderer) transitions → mirror + broadcast scan-state to the
+  // ECHOCAT client. The renderer only fires this on an actual on↔off change,
+  // so there's no feedback loop with the mutual-exclusion stop. (scan-state-sync-desktop)
+  ipcMain.on('scan-state-changed', (_e, scanning) => {
+    desktopScanning = !!scanning;
+    if (remoteServer && remoteServer.running) {
+      remoteServer.sendToClient({ type: 'scan-state', scanning: desktopScanning });
+    }
+  });
+  // Desktop Scan button pressed while only the PHONE is scanning → ask the
+  // phone to stop (full symmetry; mobile mirrors this for the desktop).
+  ipcMain.on('scan-control-send', (_e, action) => {
+    if (remoteServer && remoteServer.running) {
+      remoteServer.sendToClient({ type: 'scan-control', action: String(action || '') });
+    }
   });
 
   ipcMain.on('rotate-to', (_e, azimuth) => {

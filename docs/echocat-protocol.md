@@ -152,6 +152,8 @@ for the history.
 | `set-dist-unit` | C→S | mi vs km. |
 | `set-refresh-interval` | C→S | Spot refresh cadence. |
 | `scan-step` | C→S | Skip / unskip / next during a scan. |
+| `scan-state` | ↔ | Scan on/off STATE sync. Field: `scanning` (boolean). Each side announces when ITS own scan engine turns on/off; the receiver mirrors it as the peer's state. On mutual exclusion (one rig) a side that sees the peer's `scanning:true` stops its own engine. Re-sent to a (re)connecting client so a mid-scan reconnect shows the in-progress scan. |
+| `scan-control` | ↔ | Ask the peer to change ITS scan. Field: `action` (string): `"stop"` (the reported use-case) or `"start"` (optional; uses that side's own filters). Gated like other rig C→S (authenticated active client). NOTE: supersedes the older, unused `scan:state`/`scan:control` (colon) registrations. |
 | `rig-control` | C→S | Generic raw-CAT passthrough button (Settings → Rig table). |
 | `rig-blocked` | S→C | Rig switch denied (club mode etc.). |
 | `rigs` | S→C | List of configured rigs and the active one. |

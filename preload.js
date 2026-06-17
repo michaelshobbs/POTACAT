@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('api', {
   onExternalAtuComplete: (cb) => ipcRenderer.on('external-atu-complete', () => cb()),
   externalAtuCancel: () => ipcRenderer.send('external-atu-cancel'),
   rotateTo: (azimuth) => ipcRenderer.send('rotate-to', azimuth),
+  // Scan on/off sync with ECHOCAT mobile (scan-state-sync-desktop)
+  scanStateChanged: (scanning) => ipcRenderer.send('scan-state-changed', scanning),
+  scanControlSend: (action) => ipcRenderer.send('scan-control-send', action),
+  onRemoteScanControl: (cb) => ipcRenderer.on('remote-scan-control', (_e, d) => cb(d)),
+  onRemotePeerScanState: (cb) => ipcRenderer.on('remote-peer-scan-state', (_e, d) => cb(d)),
   refresh: () => ipcRenderer.send('refresh'),
   getSdrDirectory: () => ipcRenderer.invoke('get-sdr-directory'),
   getContests: () => ipcRenderer.invoke('get-contests'),
