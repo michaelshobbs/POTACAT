@@ -5368,6 +5368,13 @@ function startJtcat(mode) {
     if (typeof ft8Engine.setHoldTxFreq === 'function') {
       ft8Engine.setHoldTxFreq(!!settings.jtcatHoldTxFreq);
     }
+    // Late-start TX (WSJT-X waveform-truncation parity). Default ON — it's
+    // standards-compliant and only helps (a reply that would otherwise miss
+    // the cycle still goes out, decodable via the receiver's middle/end
+    // Costas + AP). Explicit false disables for strict slot-boundary parity.
+    if (typeof ft8Engine.setLateStartTx === 'function') {
+      ft8Engine.setLateStartTx(settings.jtcatLateStartTx !== false);
+    }
   }
 
   // Persist the auto-derived latency so a fresh start can apply it
@@ -5652,6 +5659,25 @@ function startJtcat(mode) {
     const catState = cat ? `connected=${cat.connected}` : 'cat=null';
     console.log(`[JTCAT] TX start requested — message: ${data.message}, ${catState}`);
     logIcomNetworkAudio(`FT8 TX: ${data.message} freq=${data.freq}Hz slot=${data.slot} ${catState}`);
+
+    // Late-start TX (WSJT-X waveform truncation). When the engine fires past
+    // the 500ms pad window it attaches data.lateStart. We can't pad the
+    // envelope back to slot+500ms (that moment is gone), so slice the leading
+    // symbols off the pre-rendered buffer HERE — once, at the dispatch choke
+    // point — and rewrite offsetMs to a small PTT-settle lead. Every audio
+    // route below (SmartSDR direct, Icom network, renderer DAX, failsafe)
+    // then plays the already-truncated buffer with its existing leading-
+    // silence math, prepending only the settle. The buffer TAIL is untouched,
+    // so PTT-off still lands at slot+13.14s and never trails into the
+    // responder's next slot — the distinction from the reverted 2026-05-08
+    // pad-and-play-full-buffer-late path. The leading Costas array is
+    // sacrificed; the receiver re-syncs on the middle/end Costas arrays.
+    if (data.lateStart && data.samples && data.samples.length) {
+      const before = data.samples.length;
+      data.samples = Ft8Engine.sliceLateStartBuffer(data.samples, data.lateStart, 12000);
+      data.offsetMs = Math.round(500 - data.lateStart.leadingDelaySec * 1000);
+      sendCatLog(`[JTCAT] Late-start TX: truncated waveform ${before}→${data.samples.length} samples (skipped ${data.lateStart.playOffsetSec.toFixed(2)}s of leading symbols), tail preserved so PTT-off stays on time; routes prepend ${500 - data.offsetMs}ms PTT settle`);
+    }
     const smartSdrDirectTxOk = settings.audioSource === 'smartsdr' &&
                                smartSdrAudio &&
                                smartSdrAudio.connected &&
@@ -22348,6 +22374,13 @@ app.whenReady().then(() => {
     }
     if (remoteServer && remoteServer.hasClient && remoteServer.hasClient()) {
       remoteServer.sendToClient({ type: 'jtcat-hold-tx-state', enabled: settings.jtcatHoldTxFreq });
+    }
+  });
+  ipcMain.on('jtcat-set-late-start-tx', (_e, enabled) => {
+    settings.jtcatLateStartTx = !!enabled;
+    saveSettings(settings);
+    if (ft8Engine && typeof ft8Engine.setLateStartTx === 'function') {
+      ft8Engine.setLateStartTx(settings.jtcatLateStartTx);
     }
   });
   ipcMain.on('jtcat-enable-tx', (_e, enabled) => { if (ft8Engine) ft8Engine._txEnabled = enabled; });

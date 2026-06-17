@@ -23281,10 +23281,16 @@ jtcatRxFreqInput.addEventListener('change', function() {
 // start, so a flip here takes effect immediately for a running engine
 // and survives a stop/start cycle.
 const jtcatHoldTxFreqEl = document.getElementById('jtcat-hold-tx-freq');
+const jtcatLateStartTxEl = document.getElementById('jtcat-late-start-tx');
 const jtcatAudioLatencyMsEl = document.getElementById('jtcat-audio-latency-ms');
 if (jtcatHoldTxFreqEl) {
   jtcatHoldTxFreqEl.addEventListener('change', function() {
     window.api.jtcatSetHoldTxFreq(jtcatHoldTxFreqEl.checked);
+  });
+}
+if (jtcatLateStartTxEl) {
+  jtcatLateStartTxEl.addEventListener('change', function() {
+    window.api.jtcatSetLateStartTx(jtcatLateStartTxEl.checked);
   });
 }
 const jtcatAudioLatencyAutoBtn = document.getElementById('jtcat-audio-latency-auto');
@@ -23331,6 +23337,7 @@ if (jtcatFt8brCommentEl) {
 // Hydrate from settings on load
 window.api.getSettings().then(function(s) {
   if (jtcatHoldTxFreqEl) jtcatHoldTxFreqEl.checked = !!s.jtcatHoldTxFreq;
+  if (jtcatLateStartTxEl) jtcatLateStartTxEl.checked = s.jtcatLateStartTx !== false;
   if (jtcatAudioLatencyMsEl) {
     jtcatAudioLatencyMsEl.value = String(s.jtcatAudioLatencyMs || 0);
     if (!s.jtcatAudioLatencyManual) jtcatAudioLatencyMsEl.classList.add('jtcat-auto');
@@ -24594,6 +24601,11 @@ async function playJtcatTxAudio(data) {
     // 365ms of symbols (containing the start-of-message Costas array)
     // were missing. Padding instead keeps the envelope intact and gives
     // the rig PTT relay time to fully settle before audio starts.
+    //
+    // Late-start TX (offsetMs past the pad window) is handled UPSTREAM in
+    // main.js: it slices the leading symbols off the buffer and rewrites
+    // offsetMs to a small PTT-settle lead, so by the time the samples reach
+    // here they're already truncated and this pad path just adds the settle.
     var SLOT_AUDIO_START_MS = 500; // WSJT-X convention
     var leadingDelaySec = Math.max(0, (SLOT_AUDIO_START_MS - offsetMs) / 1000);
     var startTime = jtcatTxAudioCtx.currentTime + leadingDelaySec;

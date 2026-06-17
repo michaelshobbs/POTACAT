@@ -396,6 +396,7 @@ contextBridge.exposeInMainWorld('api', {
   jtcatSetAudioLatencyMs: (payload) => ipcRenderer.send('jtcat-set-audio-latency-ms', payload),
   onJtcatAudioLatency: (cb) => ipcRenderer.on('jtcat-audio-latency', (_e, data) => cb(data)),
   jtcatSetHoldTxFreq: (enabled) => ipcRenderer.send('jtcat-set-hold-tx-freq', !!enabled),
+  jtcatSetLateStartTx: (enabled) => ipcRenderer.send('jtcat-set-late-start-tx', !!enabled),
   jtcatSetTxGain: (level) => ipcRenderer.send('jtcat-set-tx-gain', level),
   jtcatEnableTx: (enabled) => ipcRenderer.send('jtcat-enable-tx', enabled),
   jtcatHaltTx: () => ipcRenderer.send('jtcat-halt-tx'),

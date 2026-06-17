@@ -764,6 +764,9 @@
           <label class="jtcat-tx-label" title="When on, TX freq is pinned — auto-replies and the QSO state machine won't drag it to the responder's freq. RX still tracks them.">
             <input type="checkbox" id="jtcat-hold-tx-freq"> Hold TX
           </label>
+          <label class="jtcat-tx-label" title="WSJT-X late-start parity. If you reply more than ~0.5s into the slot, send a truncated waveform (skip the leading symbols, keep the tail clock-aligned) instead of waiting for the next cycle — the receiver re-syncs on the middle/end Costas arrays. Off = strict slot-boundary TX.">
+            <input type="checkbox" id="jtcat-late-start-tx" checked> Late TX
+          </label>
           <label class="jtcat-tx-label" id="jtcat-ft8br-comment-label" title="FT8 Battle Royale COMMENT field. Sent only on the FT8BR UDP packet — your normal logbook comment is unaffected. Use for /team, /score, etc. Hidden unless FT8BR is enabled in Settings → Logbook." style="display:none;">
             BR:
             <input type="text" id="jtcat-ft8br-comment" placeholder="/team Battle Cats" style="width:140px;">
