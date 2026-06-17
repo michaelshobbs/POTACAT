@@ -263,6 +263,8 @@ const { fetchSpots: fetchLlotaSpots } = require('./lib/llota');
 const { fetchSpots: fetchWwbotaSpots, postSpot: postWwbotaSpot, disconnect: wwbotaDisconnect, setLogger: wwbotaSetLogger } = require('./lib/wwbota');
 wwbotaSetLogger(sendCatLog); // surface WWBOTA SSE reconnects/errors in the CAT log (sendCatLog is hoisted)
 const { postWwffRespot } = require('./lib/wwff-respot');
+const { fetchSpots: fetchGmaSpots, postGmaRespot, setLogger: gmaSetLogger } = require('./lib/gma');
+gmaSetLogger(sendCatLog); // surface GMA fetch errors in the CAT log (sendCatLog is hoisted)
 const { fetchNets: fetchDirectoryNets, fetchSwl: fetchDirectorySwl } = require('./lib/directory');
 const { QrzClient } = require('./lib/qrz');
 const { callsignToProgram, fetchParksForProgram, loadParksCache, saveParksCache, isCacheStale, searchParks: searchParksDb, getPark: getParkDb, buildParksMap } = require('./lib/pota-parks-db');
@@ -1223,7 +1225,7 @@ function notifyWatchlistSpot({ callsign, frequency, mode, source, reference, loc
   const freqMHz = (parseFloat(frequency) / 1000).toFixed(3);
   let body = `${freqMHz} MHz`;
   if (mode) body += ` ${mode}`;
-  const sourceLabels = { pota: 'POTA', sota: 'SOTA', wwff: 'WWFF', llota: 'LLOTA', dxc: 'DX Cluster', rbn: 'RBN', pskr: 'FreeDV' };
+  const sourceLabels = { pota: 'POTA', sota: 'SOTA', wwff: 'WWFF', llota: 'LLOTA', gma: 'GMA', dxc: 'DX Cluster', rbn: 'RBN', pskr: 'FreeDV' };
   const label = sourceLabels[source] || source;
   if (reference) {
     body += ` \u2014 ${label} ${reference}`;
@@ -4509,6 +4511,27 @@ async function saveQsoRecord(qsoData, opts) {
     }
   }
 
+  // Re-spot on GMA if requested. GMA references span many schemes (summit
+  // codes like DL/EW-017, WWFF-style KFF-2112, etc.), so we only sanity-check
+  // that a reference is present and post it as a DX line to the GMA cluster
+  // (cqgma.org:7300), the same way WWFF Spotline re-spots work.
+  if (qsoData.gmaRespot && qsoData.gmaReference && settings.myCallsign) {
+    try {
+      await postGmaRespot({
+        activator: qsoData.callsign,
+        spotter: settings.myCallsign.toUpperCase(),
+        frequency: qsoData.frequency,
+        reference: qsoData.gmaReference,
+        mode: qsoData.mode,
+        comments: qsoData.respotComment || '',
+      });
+      trackRespot('gma');
+    } catch (respotErr) {
+      console.error('GMA re-spot failed:', respotErr.message);
+      return { success: true, gmaRespotError: respotErr.message };
+    }
+  }
+
   // Spot on DX Cluster if requested
   if (qsoData.dxcRespot) {
     try {
@@ -7246,6 +7269,7 @@ function panadapterWantsSource(source) {
     case 'rbn':     return settings.panadapterRbn === true;
     case 'cwspots': return settings.panadapterCwSpots === true;
     case 'pskr':    return settings.panadapterPskr === true;
+    case 'gma':     return settings.panadapterGma === true;
     default:        return false;
   }
 }
@@ -12113,6 +12137,62 @@ function processWwffSpots(raw) {
   return [...seen.values()];
 }
 
+// GMA (Global Mountain Activity). lib/gma.js normalizes the cqgma.org feed
+// into the same WWFF-style records this consumes, so the mapping mirrors
+// processWwffSpots. GMA re-publishes WWFF/other spots alongside its own
+// references; cross-source dedupe (gma in _DEDUPE_PRIORITY + PROGRAM_PRIORITY)
+// collapses overlaps with the dedicated WWFF/SOTA sources. (Luk 2026-06-13.)
+function processGmaSpots(raw) {
+  const myPos = gridToLatLon(settings.grid);
+  const all = raw.map((s) => {
+    const freqKhz = s.frequency_khz;
+    const freqMHz = freqKhz / 1000;
+    const callsign = s.activator || '';
+    const lat = s.latitude != null ? parseFloat(s.latitude) : null;
+    const lon = s.longitude != null ? parseFloat(s.longitude) : null;
+    const haveLatLon = lat != null && lon != null && !isNaN(lat) && !isNaN(lon);
+
+    let distance = null, spotBearing = null;
+    if (myPos && haveLatLon) {
+      distance = Math.round(haversineDistanceMiles(myPos.lat, myPos.lon, lat, lon));
+      spotBearing = Math.round(bearing(myPos.lat, myPos.lon, lat, lon));
+    }
+
+    let continent = '', gmaLocationDesc = '';
+    if (ctyDb && callsign) {
+      const entity = resolveCallsign(callsign, ctyDb);
+      if (entity) {
+        continent = entity.continent || '';
+        gmaLocationDesc = entity.name || '';
+      }
+    }
+
+    const spotTime = s.spot_time ? new Date(s.spot_time * 1000).toISOString() : '';
+
+    return {
+      source: 'gma',
+      callsign,
+      frequency: String(freqKhz),
+      freqMHz,
+      mode: (s.mode || '').toUpperCase(),
+      reference: s.reference || '',
+      parkName: s.reference_name || '',
+      locationDesc: gmaLocationDesc,
+      distance,
+      bearing: spotBearing,
+      lat: haveLatLon ? lat : null,
+      lon: haveLatLon ? lon : null,
+      band: freqToBand(freqMHz),
+      spotTime,
+      continent,
+    };
+  });
+  // Dedupe: keep latest spot per callsign+band (allows multi-band activations)
+  const seen = new Map();
+  for (const s of all) { seen.set(s.callsign + '_' + s.band, s); }
+  return [...seen.values()];
+}
+
 // Tiles polling has its own cadence, decoupled from the user's spot-
 // refresh interval — the tilesontheair.com operator foots the Supabase
 // Edge Function bill, and aggregate POTACAT polling drove a quota
@@ -12457,7 +12537,10 @@ function getActiveNetSpots() {
 // `sources` array listing every source that reported it. Sources outside this
 // map (rbn / pskr / freedv / net) pass through untouched — they're per-skimmer
 // reception reports, not "the same spot from another spotter".
-const _DEDUPE_PRIORITY = { pota: 0, sota: 1, llota: 2, wwff: 3, cwspots: 4, dxc: 5 };
+// gma sits just below wwff: it re-publishes WWFF/other spots, so when the same
+// call+freq comes from both the dedicated WWFF/SOTA source and GMA, the native
+// source stays primary and GMA is folded in as an additional `sources` entry.
+const _DEDUPE_PRIORITY = { pota: 0, sota: 1, llota: 2, wwff: 3, gma: 4, cwspots: 5, dxc: 6 };
 
 function dedupeCrossSource(spots) {
   const groups = new Map();
@@ -12596,6 +12679,8 @@ async function refreshSpots() {
     // care about bunker spots can untick in Settings → Spots.
     const enableWwbota = settings.enableWwbota !== false || panadapterWantsSource('wwbota');
     const enableTiles = settings.enableTiles !== false || panadapterWantsSource('tiles');
+    // GMA defaults OFF — opt-in, niche (mountain/summit) program. (Luk 2026-06-13.)
+    const enableGma = settings.enableGma === true || panadapterWantsSource('gma');
 
     const fetches = [];
     if (enablePota) fetches.push(fetchPotaSpots().then(processPotaSpots));
@@ -12604,6 +12689,7 @@ async function refreshSpots() {
     if (enableLlota) fetches.push(fetchLlotaSpots().then(processLlotaSpots));
     if (enableWwbota) fetches.push(fetchWwbotaSpots().then(processWwbotaSpots));
     else wwbotaDisconnect(); // close the SSE stream when WWBOTA is off (idempotent)
+    if (enableGma) fetches.push(fetchGmaSpots().then(processGmaSpots));
     if (enableTiles) {
       // Tiles fetch with operator-friendly cadence + since-incremental
       // polling + 429 backoff. See TILES_POLL_MS comment block above
@@ -12682,7 +12768,11 @@ async function refreshSpots() {
     // Priority order is "what the operator most likely cares about
     // logging first": POTA > SOTA > WWFF > LLOTA > Tiles. Adjust here
     // if community usage shifts. (Casey 2026-05-04.)
-    const PROGRAM_PRIORITY = ['pota', 'sota', 'wwff', 'llota', 'wwbota', 'tiles'];
+    // gma is last — as an aggregator it's the least-authoritative source for a
+    // ref also reported by POTA/SOTA/WWFF, so a native program wins the primary
+    // slot and GMA decorates as gmaReference. A GMA-only ref is still primary
+    // (it's the only member of its group). (Luk 2026-06-13.)
+    const PROGRAM_PRIORITY = ['pota', 'sota', 'wwff', 'llota', 'wwbota', 'tiles', 'gma'];
     const SECONDARY_FIELDS = {
       pota: { ref: 'potaReference', name: 'potaParkName' },
       sota: { ref: 'sotaReference', name: 'sotaParkName' },
@@ -12690,6 +12780,7 @@ async function refreshSpots() {
       llota: { ref: 'llotaReference', name: 'llotaParkName' },
       wwbota: { ref: 'wwbotaReference', name: 'wwbotaParkName' },
       tiles: { ref: 'tilesReference', name: 'tilesParkName' },
+      gma: { ref: 'gmaReference', name: 'gmaParkName' },
     };
     const programSpots = allSpots.filter(s => PROGRAM_PRIORITY.includes(s.source));
     const otherSpots = allSpots.filter(s => !PROGRAM_PRIORITY.includes(s.source));

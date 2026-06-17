@@ -96,6 +96,7 @@ let enableWwff = false;
 let enableLlota = false;
 let enableWwbota = true;
 let enableTiles = false;
+let enableGma = false; // GMA (Global Mountain Activity) — opt-in, default off
 let enableDxcc = false;
 let enableCluster = false;
 let enableCwSpots = false;
@@ -561,6 +562,7 @@ const spotsDropdown = document.getElementById('spots-dropdown');
 const spotsBtn = document.getElementById('spots-btn');
 const spotsPota = document.getElementById('spots-pota');
 const spotsSota = document.getElementById('spots-sota');
+const spotsGma = document.getElementById('spots-gma');
 const spotsWwff = document.getElementById('spots-wwff');
 const spotsLlota = document.getElementById('spots-llota');
 const spotsWwbota = document.getElementById('spots-wwbota');
@@ -613,6 +615,7 @@ const setWwbotaRespotTemplate = document.getElementById('set-wwbota-respot-templ
 const setDxRespotTemplate = document.getElementById('set-dx-respot-template');
 const setEnablePota = document.getElementById('set-enable-pota');
 const setEnableSota = document.getElementById('set-enable-sota');
+const setEnableGma = document.getElementById('set-enable-gma');
 const setEnableWwff = document.getElementById('set-enable-wwff');
 const setEnableLlota = document.getElementById('set-enable-llota');
 const setEnableWwbota = document.getElementById('set-enable-wwbota');
@@ -1492,6 +1495,7 @@ async function loadPrefs() {
   enableLlota = settings.enableLlota === true; // default false
   enableWwbota = settings.enableWwbota !== false; // default true (Casey 2026-06-01)
   enableTiles = settings.enableTiles !== false; // default true (Tiles is fresh — show new users)
+  enableGma = settings.enableGma === true; // default false (opt-in)
   enableDxcc = settings.enableDxcc === true;  // default false
   enableCluster = settings.enableCluster === true; // default false
   enableCwSpots = settings.enableCwSpots === true; // default false
@@ -7983,6 +7987,7 @@ function getFiltered() {
       (s.source === 'llota' && !enableLlota) ||
       (s.source === 'wwbota' && !enableWwbota) ||
       (s.source === 'tiles' && !enableTiles) ||
+      (s.source === 'gma' && !enableGma) ||
       (s.source === 'dxc' && !enableCluster) ||
       (s.source === 'cwspots' && !enableCwSpots) ||
       (s.source === 'rbn' && !enableRbn) ||
@@ -8464,19 +8469,19 @@ L.Icon.Default.mergeOptions({
 // --- Colorblind-safe dual palettes ---
 const SOURCE_COLORS_NORMAL = {
   pota: '#4ecca3', sota: '#f0a500', wwff: '#26a69a',
-  llota: '#42a5f5', tiles: '#ab47bc', dxc: '#e040fb', cwspots: '#ffd740', rbn: '#00bcd4', pskr: '#ff6b6b', freedv: '#00e5ff'
+  llota: '#42a5f5', tiles: '#ab47bc', gma: '#a98467', dxc: '#e040fb', cwspots: '#ffd740', rbn: '#00bcd4', pskr: '#ff6b6b', freedv: '#00e5ff'
 };
 const SOURCE_COLORS_CB = {
   pota: '#4fc3f7', sota: '#ffb300', wwff: '#29b6f6',
-  llota: '#42a5f5', tiles: '#ce93d8', dxc: '#e040fb', cwspots: '#ffd740', rbn: '#81d4fa', pskr: '#ffa726', freedv: '#00e5ff'
+  llota: '#42a5f5', tiles: '#ce93d8', gma: '#bcaaa4', dxc: '#e040fb', cwspots: '#ffd740', rbn: '#81d4fa', pskr: '#ffa726', freedv: '#00e5ff'
 };
 const SOURCE_STROKES_NORMAL = {
   pota: '#3ba882', sota: '#c47f00', wwff: '#1b7a71',
-  llota: '#1e88e5', tiles: '#7b1fa2', dxc: '#ab00d9', cwspots: '#c6a700', rbn: '#0097a7', pskr: '#d84343', freedv: '#00acc1'
+  llota: '#1e88e5', tiles: '#7b1fa2', gma: '#7a5e4a', dxc: '#ab00d9', cwspots: '#c6a700', rbn: '#0097a7', pskr: '#d84343', freedv: '#00acc1'
 };
 const SOURCE_STROKES_CB = {
   pota: '#2196f3', sota: '#e6a200', wwff: '#0288d1',
-  llota: '#1e88e5', tiles: '#9c27b0', dxc: '#ab00d9', cwspots: '#c6a700', rbn: '#4fc3f7', pskr: '#e68a00', freedv: '#00acc1'
+  llota: '#1e88e5', tiles: '#9c27b0', gma: '#8d7b6f', dxc: '#ab00d9', cwspots: '#c6a700', rbn: '#4fc3f7', pskr: '#e68a00', freedv: '#00acc1'
 };
 const RBN_BAND_COLORS_NORMAL = {
   '160m': '#ff4444', '80m': '#ff8c00', '60m': '#ffd700', '40m': '#4ecca3',
@@ -8550,11 +8555,11 @@ function applyColorblindMode(enabled) {
 // WCAG AA high-contrast source palettes
 const SOURCE_COLORS_WCAG = {
   pota: '#5ed8ad', sota: '#f0a500', wwff: '#3cc4b8',
-  llota: '#42a5f5', tiles: '#ce93d8', dxc: '#e87fff', cwspots: '#ffe066', rbn: '#00bcd4', pskr: '#ff9090', freedv: '#00e5ff'
+  llota: '#42a5f5', tiles: '#ce93d8', gma: '#c8a98f', dxc: '#e87fff', cwspots: '#ffe066', rbn: '#00bcd4', pskr: '#ff9090', freedv: '#00e5ff'
 };
 const SOURCE_STROKES_WCAG = {
   pota: '#42b88a', sota: '#c47f00', wwff: '#2a9e92',
-  llota: '#1e88e5', tiles: '#9c27b0', dxc: '#c040e0', cwspots: '#c6a700', rbn: '#0097a7', pskr: '#d06060', freedv: '#00acc1'
+  llota: '#1e88e5', tiles: '#9c27b0', gma: '#8a6f5a', dxc: '#c040e0', cwspots: '#c6a700', rbn: '#0097a7', pskr: '#d06060', freedv: '#00acc1'
 };
 
 function applyWcagMode(enabled) {
@@ -9040,7 +9045,7 @@ const PRIVILEGE_RANGES = {
 
 const SOURCE_LABELS = {
   pota: 'POTA', sota: 'SOTA', dxc: 'DX', cwspots: 'CW',
-  rbn: 'RBN', wwff: 'WWFF', llota: 'LLOTA', tiles: 'Tiles', pskr: 'FreeDV', net: 'NET',
+  rbn: 'RBN', wwff: 'WWFF', llota: 'LLOTA', tiles: 'Tiles', gma: 'GMA', pskr: 'FreeDV', net: 'NET',
 };
 const CW_DIGI_MODES = new Set(['CW', 'FT8', 'FT4', 'FT2', 'RTTY', 'DIGI', 'JS8', 'PSK31', 'PSK']);
 const PHONE_MODES = new Set(['SSB', 'USB', 'LSB', 'FM', 'AM']);
@@ -9454,7 +9459,7 @@ document.addEventListener('keydown', (e) => {
 
 // --- Quick Re-spot (Ctrl+R) ---
 // SOURCE_COLORS is now managed by SOURCE_COLORS_ACTIVE (see colorblind palettes above)
-const RESPOT_NAMES = { pota: 'POTA', wwff: 'WWFF', llota: 'LLOTA', dxc: 'DX Cluster' };
+const RESPOT_NAMES = { pota: 'POTA', wwff: 'WWFF', llota: 'LLOTA', gma: 'GMA', dxc: 'DX Cluster' };
 
 function getRespotTargets(s) {
   const targets = [];
@@ -9467,6 +9472,8 @@ function getRespotTargets(s) {
     targets.push('llota');
   } else if (s.source === 'wwbota' && s.reference) {
     targets.push('wwbota');
+  } else if (s.source === 'gma' && s.reference) {
+    targets.push('gma');
   } else if (clusterConnected) {
     targets.push('dxc');
   }
@@ -9505,6 +9512,7 @@ async function openQuickRespot() {
   else if (s.source === 'wwff') refText = 'WWFF: ' + s.reference + (s.parkName ? ' \u2014 ' + s.parkName : '');
   else if (s.source === 'llota') refText = 'LLOTA: ' + s.reference + (s.parkName ? ' \u2014 ' + s.parkName : '');
   else if (s.source === 'wwbota') refText = 'WWBOTA: ' + (s.wwbotaRefsLabel || s.reference) + (s.parkName ? ' \u2014 ' + s.parkName : '');
+  else if (s.source === 'gma') refText = 'GMA: ' + s.reference + (s.parkName ? ' \u2014 ' + s.parkName : '');
   else if (s.source === 'dxc') refText = s.callsign + (s.locationDesc ? ' \u2014 ' + s.locationDesc : '');
   document.getElementById('respot-ref').textContent = refText;
 
@@ -9564,6 +9572,8 @@ document.getElementById('respot-send').addEventListener('click', async () => {
     llotaReference: s.source === 'llota' ? s.reference : '',
     wwbotaRespot: targets.includes('wwbota'),
     wwbotaReference: s.source === 'wwbota' ? s.reference : '',
+    gmaRespot: targets.includes('gma'),
+    gmaReference: s.source === 'gma' ? s.reference : '',
     dxcRespot: targets.includes('dxc'),
   };
 
@@ -10951,6 +10961,7 @@ function render() {
       if (s.source === 'wwff') tr.classList.add('spot-wwff');
       if (s.source === 'llota') tr.classList.add('spot-llota');
       if (s.source === 'wwbota') tr.classList.add('spot-wwbota');
+      if (s.source === 'gma') tr.classList.add('spot-gma');
       if (s.source === 'pskr') tr.classList.add('spot-pskr');
       if (s.source === 'net') tr.classList.add('spot-net');
       // Watchlist group — color the whole row when the activator's call
@@ -12218,6 +12229,7 @@ function syncSpotsPanel() {
   spotsLlota.checked = enableLlota;
   if (spotsWwbota) spotsWwbota.checked = enableWwbota;
   if (spotsTiles) spotsTiles.checked = enableTiles;
+  if (spotsGma) spotsGma.checked = enableGma;
   spotsCluster.checked = enableCluster;
   spotsCwSpots.checked = enableCwSpots;
   spotsRbn.checked = enableRbn;
@@ -12263,6 +12275,7 @@ document.querySelector('.spots-dropdown-panel').addEventListener('change', async
   enableLlota = spotsLlota.checked;
   enableWwbota = spotsWwbota ? spotsWwbota.checked : enableWwbota;
   enableTiles = spotsTiles ? spotsTiles.checked : enableTiles;
+  enableGma = spotsGma ? spotsGma.checked : enableGma;
   enableCluster = spotsCluster.checked;
   enableCwSpots = spotsCwSpots.checked;
   enableRbn = spotsRbn.checked;
@@ -12314,6 +12327,7 @@ document.querySelector('.spots-dropdown-panel').addEventListener('change', async
   setEnableLlota.checked = enableLlota;
   if (setEnableWwbota) setEnableWwbota.checked = enableWwbota;
   if (setEnableTiles) setEnableTiles.checked = enableTiles;
+  if (setEnableGma) setEnableGma.checked = enableGma;
   setEnableCluster.checked = enableCluster;
   setEnableCwSpots.checked = enableCwSpots;
   setEnableRbn.checked = enableRbn;
@@ -12330,7 +12344,7 @@ document.querySelector('.spots-dropdown-panel').addEventListener('change', async
 
   // Save and let main process handle connect/disconnect
   await window.api.saveSettings({
-    enablePota, enableSota, enableWwff, enableLlota, enableWwbota, enableTiles,
+    enablePota, enableSota, enableWwff, enableLlota, enableWwbota, enableTiles, enableGma,
     enableCluster, enableCwSpots, enableRbn, enablePskr, enableDxe,
     enableDxeSources: { ...enableDxeSources },
     hideWorked, hideWorkedParks, hideWorkedCallRef, prioritizeNewParks, strictAtno, hideOutOfBand,
@@ -13123,6 +13137,7 @@ async function openSettingsDialog(tab) {
   setEnableLlota.checked = s.enableLlota === true;
   if (setEnableWwbota) setEnableWwbota.checked = s.enableWwbota !== false;
   if (setEnableTiles) setEnableTiles.checked = s.enableTiles !== false;
+  if (setEnableGma) setEnableGma.checked = s.enableGma === true;
   setEnableQrz.checked = s.enableQrz === true;
   setQrzUsername.value = s.qrzUsername || '';
   setQrzPassword.value = s.qrzPassword || '';
@@ -13730,6 +13745,7 @@ settingsSave.addEventListener('click', async () => {
   const llotaEnabled = setEnableLlota.checked;
   const wwbotaEnabled = setEnableWwbota ? setEnableWwbota.checked : enableWwbota;
   const tilesEnabled = setEnableTiles ? setEnableTiles.checked : enableTiles;
+  const gmaEnabled = setEnableGma ? setEnableGma.checked : enableGma;
   const qrzEnabled = setEnableQrz.checked;
   const qrzUsername = setQrzUsername.value.trim().toUpperCase();
   const qrzPassword = setQrzPassword.value;
@@ -13936,6 +13952,7 @@ settingsSave.addEventListener('click', async () => {
     enableLlota: llotaEnabled,
     enableWwbota: wwbotaEnabled,
     enableTiles: tilesEnabled,
+    enableGma: gmaEnabled,
     enableQrz: qrzEnabled,
     qrzUsername: qrzUsername,
     qrzPassword: qrzPassword,
@@ -14125,6 +14142,7 @@ settingsSave.addEventListener('click', async () => {
   enableWwff = wwffEnabled;
   enableLlota = llotaEnabled;
   enableTiles = tilesEnabled;
+  enableGma = gmaEnabled;
   enableCluster = clusterEnabled;
   enableRbn = rbnEnabled;
   enablePskr = pskrEnabled;
