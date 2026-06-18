@@ -128,6 +128,7 @@ function _applyPopoutTheme(payload) {
   var markerLayer = L.layerGroup();
   var arcLayer = L.layerGroup();
   var homeMarker = null;
+  var nightLayer = null;
 
   function initMap() {
     var center = [20, 0];
@@ -140,9 +141,55 @@ function _applyPopoutTheme(payload) {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OSM', maxZoom: 18, className: 'dark-tiles',
     }).addTo(map);
+    // Day/night terminator first so it sits beneath markers/arcs (matches the
+    // Propagation map). setLatLngs on refresh preserves this z-order.
+    updateNightOverlay();
+    setInterval(updateNightOverlay, 60000);
     markerLayer.addTo(map);
     arcLayer.addTo(map);
     updateMapHome();
+  }
+
+  // Day/night terminator — ported from the Propagation popout (prop-popout.js).
+  // Subsolar point from date + UTC time, terminator latitude per longitude,
+  // closed into a dark polygon over the night hemisphere. Drawn at three
+  // longitude offsets so it wraps with worldCopyJump panning.
+  function computeNightPolygon() {
+    var now = new Date();
+    var start = new Date(now.getFullYear(), 0, 0);
+    var dayOfYear = Math.floor((now - start) / 86400000);
+    var utcHours = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
+    var declRad = (-23.44 * Math.PI / 180) * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10));
+    var sunLon = -(utcHours - 12) * 15;
+    var tanDecl = Math.tan(declRad);
+    var terminator = [];
+    for (var lon = -180; lon <= 180; lon += 2) {
+      var lonRad = (lon - sunLon) * Math.PI / 180;
+      var lat = Math.abs(tanDecl) < 1e-10 ? 0 : Math.atan(-Math.cos(lonRad) / tanDecl) * 180 / Math.PI;
+      terminator.push([lat, lon]);
+    }
+    var darkPoleLat = declRad > 0 ? -90 : 90;
+    var rings = [];
+    [-360, 0, 360].forEach(function(offset) {
+      var ring = terminator.map(function(p) { return [p[0], p[1] + offset]; });
+      ring.push([darkPoleLat, 180 + offset]);
+      ring.push([darkPoleLat, -180 + offset]);
+      ring.unshift([darkPoleLat, -180 + offset]);
+      rings.push(ring);
+    });
+    return rings;
+  }
+
+  function updateNightOverlay() {
+    if (!map) return;
+    var rings = computeNightPolygon();
+    if (nightLayer) {
+      nightLayer.setLatLngs(rings);
+    } else {
+      nightLayer = L.polygon(rings, {
+        fillColor: '#000', fillOpacity: 0.25, color: '#4fc3f7', weight: 1, opacity: 0.4, interactive: false,
+      }).addTo(map);
+    }
   }
 
   function updateMapHome() {
