@@ -29,6 +29,8 @@
     .jp-cycle-sep { padding: 2px 8px; font-size: 10px; color: var(--text-dim, #666); border-top: 1px solid var(--border-primary); margin-top: 2px; }
     .jp-row { display: flex; gap: 6px; padding: 1px 8px; cursor: pointer; align-items: baseline; }
     .jp-row:hover { background: var(--bg-hover); }
+    /* My Activity inlines the cycle time per row (no separator line) — see jp-my-activity. */
+    .jp-row .jp-time { min-width: 52px; text-align: right; color: var(--text-dim, #666); font-size: 11px; font-variant-numeric: tabular-nums; padding-right: 4px; border-right: 1px solid var(--border-primary); margin-right: 2px; }
     .jp-row .jp-db { min-width: 28px; text-align: right; color: var(--text-secondary); }
     .jp-row .jp-dt { min-width: 30px; text-align: right; color: var(--text-dim); font-size: 11px; }
     .jp-row .jp-df { min-width: 36px; text-align: right; color: var(--text-dim); }

@@ -338,7 +338,16 @@ function _applyPopoutTheme(payload) {
   // renderer leaked ~4.5 MB/min and Chromium eventually CHECK()-aborted after
   // a few hours of continuous decoding. (78hawkeye, PR #54.)
   var MAX_BA_CYCLES = 10;  // Band Activity — ~2.5 min of visible history
-  var MAX_MY_CYCLES = 30;  // My Activity grows much slower (directed only)
+  var MAX_MY_ROWS = 60;    // My Activity grows much slower (directed/TX only); capped by row, not cycle
+
+  // My Activity inlines its time per row (no .jp-cycle-sep), so prune by row
+  // count instead of cycle. Same PR #54 leak guard, different key.
+  function pruneRowPanel(container, maxRows) {
+    var rows = container.querySelectorAll('.jp-row');
+    for (var i = 0; i < rows.length - maxRows; i++) {
+      rows[i].remove();
+    }
+  }
 
   // Remove the oldest cycles (a .jp-cycle-sep and everything up to the next
   // separator) until at most maxCycles remain.
@@ -369,7 +378,7 @@ function _applyPopoutTheme(payload) {
       if (stations[call].lastSeen < now - 180000) { markerLayer.removeLayer(stations[call].marker); delete stations[call]; }
     });
     pruneCyclePanel(bandActivity, MAX_BA_CYCLES);
-    pruneCyclePanel(myActivity, MAX_MY_CYCLES);
+    pruneRowPanel(myActivity, MAX_MY_ROWS);
   }
 
   // --- QSO phase definitions ---
@@ -522,15 +531,12 @@ function _applyPopoutTheme(payload) {
     var mEmpty = myActivity.querySelector('.jp-empty');
     if (mEmpty) mEmpty.remove();
     var time = cycleBoundaryUtc();
-    var sep = document.createElement('div');
-    sep.className = 'jp-cycle-sep';
-    sep.textContent = time + ' UTC';
-    myActivity.appendChild(sep);
     var text = d.text || '';
     var dtStr = d.dt != null ? (d.dt >= 0 ? '+' : '') + d.dt.toFixed(1) : '';
     var row = document.createElement('div');
     row.className = 'jp-row jp-cq';
     row.innerHTML =
+      '<span class="jp-time">' + time + '</span>' +
       '<span class="jp-db">' + (d.db >= 0 ? '+' : '') + d.db + '</span>' +
       '<span class="jp-dt">' + dtStr + '</span>' +
       '<span class="jp-df">' + d.df + '</span>' +
@@ -685,24 +691,21 @@ function _applyPopoutTheme(payload) {
     // doesn't leak into the map / My Activity (faithful to the original single
     // loop). Directed decodes always pass, so My Activity is unaffected by the
     // CQ/Wanted filters in practice.
-    var myActivityHasSep = false; // only add separator to My Activity if there's a directed decode
     sortDecodes(results).forEach(function(d) {
       d.slot = decodeSlot; // attach slot so click handler knows which slot this station was on
       var c = classifyDecode(d);
       if (!decodeVisible(c)) return;
 
       if (c.isDirected) {
-        if (!myActivityHasSep) {
-          var mEmpty = myActivity.querySelector('.jp-empty');
-          if (mEmpty) mEmpty.remove();
-          var mSep = document.createElement('div');
-          mSep.className = 'jp-cycle-sep';
-          mSep.textContent = time + ' UTC';
-          myActivity.appendChild(mSep);
-          myActivityHasSep = true;
-        }
+        var mEmpty = myActivity.querySelector('.jp-empty');
+        if (mEmpty) mEmpty.remove();
+        // My Activity inlines the cycle time per row instead of a separator
+        // line (it's sparse — usually one entry per cycle, so a dedicated
+        // header line just wastes vertical space). Band Activity keeps its
+        // separators, where one header amortizes across many decodes.
         var myRow = buildBandRow(c);
         myRow.className = 'jp-row jp-directed';
+        myRow.insertAdjacentHTML('afterbegin', '<span class="jp-time">' + time + '</span>');
         myActivity.appendChild(myRow);
       }
 
@@ -945,16 +948,13 @@ function _applyPopoutTheme(payload) {
       row.innerHTML = txRowHtml;
       bandActivity.appendChild(row);
       bandActivity.scrollTop = bandActivity.scrollHeight;
-      // Also add TX row to My Activity (same separator pattern).
+      // Also add TX row to My Activity — but inline the time per row (no
+      // separator line) to match the directed-decode rows in this pane.
       var mEmpty = myActivity.querySelector('.jp-empty');
       if (mEmpty) mEmpty.remove();
-      var mySep = document.createElement('div');
-      mySep.className = 'jp-cycle-sep';
-      mySep.textContent = txTime + ' UTC';
-      myActivity.appendChild(mySep);
       var myTxRow = document.createElement('div');
       myTxRow.className = 'jp-row jp-tx';
-      myTxRow.innerHTML = txRowHtml;
+      myTxRow.innerHTML = '<span class="jp-time">' + txTime + '</span>' + txRowHtml;
       myActivity.appendChild(myTxRow);
       myActivity.scrollTop = myActivity.scrollHeight;
     }
