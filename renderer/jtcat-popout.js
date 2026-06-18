@@ -534,7 +534,8 @@ function _applyPopoutTheme(payload) {
       '<span class="jp-db">' + (d.db >= 0 ? '+' : '') + d.db + '</span>' +
       '<span class="jp-dt">' + dtStr + '</span>' +
       '<span class="jp-df">' + d.df + '</span>' +
-      '<span class="jp-msg">' + esc(text) + '</span>';
+      '<span class="jp-msg">' + esc(text) + '</span>' +
+      (d.ap ? '<span class="jp-badges"><span class="jp-badge jp-badge-ap" title="A priori decode — recovered a weak or late reply by hypothesizing your call">AP</span></span>' : '');
     row.addEventListener('dblclick', (function(decode) { return function() { onDecodeRowClick(decode); }; })(d));
     myActivity.appendChild(row);
     myActivity.scrollTop = myActivity.scrollHeight;
@@ -576,6 +577,7 @@ function _applyPopoutTheme(payload) {
   function buildBandRow(c) {
     var d = c.d;
     var badges = '';
+    if (d.ap) badges += '<span class="jp-badge jp-badge-ap" title="A priori decode — recovered a weak or late reply by hypothesizing your call">AP</span>';
     if (d.chaseMatch) badges += '<span class="jp-badge jp-badge-chase" title="Chase target: ' + esc(chaseTarget) + '">◎</span>';
     if (d.newDxcc) badges += '<span class="jp-badge jp-badge-dxcc" title="New DXCC: ' + esc(d.entity || '') + '">D</span>';
     if (d.newGrid) badges += '<span class="jp-badge jp-badge-grid" title="New grid: ' + esc(d.grid || '') + '">G</span>';

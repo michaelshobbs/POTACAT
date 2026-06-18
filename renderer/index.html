@@ -767,6 +767,9 @@
           <label class="jtcat-tx-label" title="WSJT-X late-start parity. If you reply more than ~0.5s into the slot, send a truncated waveform (skip the leading symbols, keep the tail clock-aligned) instead of waiting for the next cycle — the receiver re-syncs on the middle/end Costas arrays. Off = strict slot-boundary TX.">
             <input type="checkbox" id="jtcat-late-start-tx" checked> Late TX
           </label>
+          <label class="jtcat-tx-label" title="A priori (AP) decode. Runs extra decode passes that hypothesize your callsign (and the station you're working) to recover weak or late replies addressed to you — the RX mirror of Late TX. Requires your callsign set. Off = standard decode only.">
+            <input type="checkbox" id="jtcat-ap-decode" checked> AP RX
+          </label>
           <label class="jtcat-tx-label" id="jtcat-ft8br-comment-label" title="FT8 Battle Royale COMMENT field. Sent only on the FT8BR UDP packet — your normal logbook comment is unaffected. Use for /team, /score, etc. Hidden unless FT8BR is enabled in Settings → Logbook." style="display:none;">
             BR:
             <input type="text" id="jtcat-ft8br-comment" placeholder="/team Battle Cats" style="width:140px;">
@@ -1457,6 +1460,18 @@
           </select>
         </label>
         <span class="help-text" style="display:block;margin-bottom:8px;">Choose Icom Network audio when the active rig is Icom Network / RS-BA1. POTACAT uses the radio's UDP audio stream for JTCAT/SSTV receive audio and can send JTCAT FT8/FT4 plus SSTV transmit audio directly over RS-BA1.</span>
+        <div id="rig-audio-devices" style="margin:4px 0 10px;">
+          <div style="font-size:13px;color:#4fc3f7;margin-bottom:4px;">Audio Devices</div>
+          <label>RX audio in (from radio):
+            <select id="rig-remote-audio-input" style="width:100%;margin-top:2px;"><option value="">-- system default --</option></select>
+          </label>
+          <label style="margin-top:4px;display:block;">TX audio out (to radio):
+            <select id="rig-remote-audio-output" style="width:100%;margin-top:2px;"><option value="">-- system default --</option></select>
+          </label>
+          <span class="help-text" id="rig-audio-devices-hint" style="margin-top:4px;display:block;">Soundcard devices for this rig &mdash; used for JTCAT FT8/FT4 receive &amp; transmit, SSTV, and ECHOCAT remote audio.<br>
+            <b>Only hearing audio in DIGU / DIGL (USB-Data / LSB-Data)?</b> Your rig is probably routing RX to a separate USB audio stream for DATA modes. Pick the <i>main</i> USB Audio codec (not the "data" variant), and/or change your rig's menu so RX flows to the main USB audio in voice modes too &mdash; Yaesu: <code>USB Audio Mode</code> = AUTO, Icom: <code>USB AF Output</code> = AF, Kenwood: <code>Menu 75</code>. See docs/radio-setup-guide.md.</span>
+          <span class="help-text" id="rig-audio-devices-bypass" style="display:none;margin-top:4px;">Not used for this audio source &mdash; POTACAT streams receive and transmit audio directly to/from the radio, so no soundcard device is needed.</span>
+        </div>
         <label class="radio-label"><input type="radio" name="radio-type" value="flex" checked> FlexRadio</label>
         <div id="flex-config" class="radio-sub hidden">
           <label>Radio IP:
@@ -1744,19 +1759,6 @@
               </label>
               <span class="help-text" style="margin-top:4px;display:block;">Tune button emits a low-power CW carrier so the RF-sensing tuner can match. Rig restores to its previous mode and power afterwards.</span>
             </div>
-          </div>
-        </details>
-        <details id="rig-audio-details" style="margin-top:8px;">
-          <summary style="cursor:pointer;font-size:13px;color:#4fc3f7;">ECHOCAT Audio (optional)</summary>
-          <div style="margin-top:6px;margin-left:4px;">
-            <label>Audio Input (radio RX &rarr; phone):
-              <select id="rig-remote-audio-input" style="width:100%;margin-top:2px;"><option value="">-- system default --</option></select>
-            </label>
-            <label style="margin-top:4px;display:block;">Audio Output (phone &rarr; radio TX):
-              <select id="rig-remote-audio-output" style="width:100%;margin-top:2px;"><option value="">-- system default --</option></select>
-            </label>
-            <span class="help-text" style="margin-top:4px;display:block;">Set per-rig audio devices for ECHOCAT remote operation.<br>
-              <b>Only hearing audio in DIGU / DIGL (USB-Data / LSB-Data)?</b> Your rig is probably routing RX to a separate USB audio stream for DATA modes. Pick the <i>main</i> USB Audio codec (not the "data" variant), and/or change your rig's menu so RX flows to the main USB audio in voice modes too — Yaesu: <code>USB Audio Mode</code> = AUTO, Icom: <code>USB AF Output</code> = AF, Kenwood: <code>Menu 75</code>. See docs/radio-setup-guide.md.</span>
           </div>
         </details>
         <div class="rig-editor-buttons">

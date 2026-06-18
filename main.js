@@ -5375,6 +5375,17 @@ function startJtcat(mode) {
     if (typeof ft8Engine.setLateStartTx === 'function') {
       ft8Engine.setLateStartTx(settings.jtcatLateStartTx !== false);
     }
+    // AP (a priori) decode — RX mirror of late-start TX. Default ON. myCall is
+    // authoritative here; the engine auto-derives the QSO partner (dxCall) from
+    // its TX message. Recovers marginal/late replies addressed to us.
+    if (typeof ft8Engine.setApContext === 'function') {
+      const apOn = settings.jtcatApDecode !== false;
+      const apCall = (settings.myCallsign || '').toUpperCase();
+      ft8Engine.setApContext({ enabled: apOn, myCall: apCall });
+      sendCatLog(apOn && apCall
+        ? `[JTCAT] AP decode armed for ${apCall} (recovers weak/late replies addressed to you)`
+        : `[JTCAT] AP decode off${apOn && !apCall ? ' — set your callsign to enable it' : ''}`);
+    }
   }
 
   // Persist the auto-derived latency so a fresh start can apply it
@@ -5413,6 +5424,13 @@ function startJtcat(mode) {
   ft8Engine.on('decode', async (data) => {
     // Enrich decodes with "needed" flags for call roster
     if (data.results) {
+      // Surface AP (a priori) recoveries — decodes the plain pass missed,
+      // pulled in by hypothesizing our call. These are the marginal/late
+      // replies the receive-side parity feature exists to catch.
+      const apDecodes = data.results.filter(r => r && r.ap);
+      if (apDecodes.length) {
+        sendCatLog(`[JTCAT] AP recovered ${apDecodes.length} decode${apDecodes.length > 1 ? 's' : ''} the plain decoder missed: ${apDecodes.map(r => `"${(r.text || '').trim()}"`).join(', ')}`);
+      }
       const currentBand = _currentFreqHz ? freqToBand(_currentFreqHz / 1e6) : null;
       // Parse watchlist for matching
       const wlStr = (settings.watchlist || '').toUpperCase();
@@ -6432,6 +6450,21 @@ function startSmartSdrAudio() {
   }
   sendCatLog(`[SmartSDR-Audio] Starting audio client → ${sdrHost}:4992 (DAX RX ${daxChannel}, bind ${guiClientId})`);
   smartSdrAudio.start(sdrHost, daxChannel, guiClientId);
+  // Bind the RX slice to our DAX channel so the dax_rx stream actually carries
+  // audio. In Flex Direct (self) the slice-ready handler already does this; in
+  // BOUND mode POTACAT used to ASSUME the host GUI client (SmartSDR / AetherSDR)
+  // had configured DAX — but if its active slice isn't on our channel, dax_rx
+  // arrives silent and JTCAT/SSTV decode nothing (K3SBP 2026-06-18: SmartSDR
+  // open + bound, Slice A had no DAX channel → feedAudio all zeros, 0 decodes,
+  // and the stall-restart loop couldn't recover because it never set DAX).
+  // Owning this binding is the whole point of SmartSDR Direct, so set it
+  // ourselves. Use the followed slice if known, else slice 0 (single-slice
+  // default). This also makes the dax_rx stall→re-subscribe path self-heal.
+  if (smartSdr && smartSdr.mode === 'bound' && typeof smartSdr.setSliceDax === 'function') {
+    const sliceIdx = smartSdr.ourSliceIndex != null ? smartSdr.ourSliceIndex : 0;
+    smartSdr.setSliceDax(sliceIdx, daxChannel);
+    sendCatLog(`[SmartSDR-Audio] Bound slice ${sliceIdx} → DAX channel ${daxChannel} for RX audio (no longer assuming the host set it)`);
+  }
 }
 
 function stopSmartSdrAudio() {
@@ -22381,6 +22414,13 @@ app.whenReady().then(() => {
     saveSettings(settings);
     if (ft8Engine && typeof ft8Engine.setLateStartTx === 'function') {
       ft8Engine.setLateStartTx(settings.jtcatLateStartTx);
+    }
+  });
+  ipcMain.on('jtcat-set-ap-decode', (_e, enabled) => {
+    settings.jtcatApDecode = !!enabled;
+    saveSettings(settings);
+    if (ft8Engine && typeof ft8Engine.setApContext === 'function') {
+      ft8Engine.setApContext({ enabled: settings.jtcatApDecode, myCall: settings.myCallsign || '' });
     }
   });
   ipcMain.on('jtcat-enable-tx', (_e, enabled) => { if (ft8Engine) ft8Engine._txEnabled = enabled; });

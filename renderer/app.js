@@ -4136,6 +4136,7 @@ setSmartSdrMaxSpots.addEventListener('change', () => {
 if (setAudioSource) {
   setAudioSource.addEventListener('change', () => {
     window.api.saveSettings({ audioSource: setAudioSource.value });
+    syncRigAudioDeviceBypass();
   });
 }
 
@@ -7375,6 +7376,27 @@ async function populateRigAudioDevices(restoreIn, restoreOut) {
   } catch (e) {
     console.warn('Could not enumerate audio devices:', e.message);
   }
+  syncRigAudioDeviceBypass();
+}
+
+// When the audio source streams straight to/from the radio (SmartSDR Direct,
+// Icom Network) there is no soundcard in the path, so HIDE the device pickers
+// entirely and show a one-line reassurance. Earlier this greyed them out, but
+// a disabled-but-visible control invites users to "fix" it by switching the
+// audio source — which silently drops them off the direct path and kills TX
+// (K3SBP 2026-06-17 broke his own Flex TX exactly this way). Nothing to
+// configure here = nothing to break.
+function syncRigAudioDeviceBypass() {
+  const src = setAudioSource ? setAudioSource.value : 'dax';
+  const bypassed = (src === 'smartsdr' || src === 'icom-network');
+  const hint = document.getElementById('rig-audio-devices-hint');
+  const note = document.getElementById('rig-audio-devices-bypass');
+  const inLabel = rigRemoteAudioInput ? rigRemoteAudioInput.closest('label') : null;
+  const outLabel = rigRemoteAudioOutput ? rigRemoteAudioOutput.closest('label') : null;
+  if (inLabel) inLabel.style.display = bypassed ? 'none' : '';
+  if (outLabel) outLabel.style.display = bypassed ? 'none' : 'block';
+  if (hint) hint.style.display = bypassed ? 'none' : 'block';
+  if (note) note.style.display = bypassed ? 'block' : 'none';
 }
 
 async function updateRemoteAudioSummary(audioInId, audioOutId) {
@@ -19774,6 +19796,16 @@ document.getElementById('welcome-start').addEventListener('click', async () => {
       saveData.rigs = [...existingRigs, welcomeRig];
     }
     saveData.activeRigId = welcomeRig.id;
+    // New Flex setup → default to SmartSDR Direct so FT8/SSTV audio streams
+    // straight to the radio with no DAX program and no device config — the
+    // "Local/DAX" default was the #1 "PTT keys but no audio" setup trap
+    // (Casey 2026-06-17 hit it himself). Welcome-only + guarded on unset, so
+    // no existing user's audio source is ever changed.
+    const ct = welcomeRig.catTarget;
+    const isFlex = ct && ct.type === 'tcp' && [5002, 5003, 5004, 5005].includes(ct.port);
+    if (isFlex && currentSettings.audioSource == null) {
+      saveData.audioSource = 'smartsdr';
+    }
   }
 
   await window.api.saveSettings(saveData);
@@ -23282,6 +23314,7 @@ jtcatRxFreqInput.addEventListener('change', function() {
 // and survives a stop/start cycle.
 const jtcatHoldTxFreqEl = document.getElementById('jtcat-hold-tx-freq');
 const jtcatLateStartTxEl = document.getElementById('jtcat-late-start-tx');
+const jtcatApDecodeEl = document.getElementById('jtcat-ap-decode');
 const jtcatAudioLatencyMsEl = document.getElementById('jtcat-audio-latency-ms');
 if (jtcatHoldTxFreqEl) {
   jtcatHoldTxFreqEl.addEventListener('change', function() {
@@ -23291,6 +23324,11 @@ if (jtcatHoldTxFreqEl) {
 if (jtcatLateStartTxEl) {
   jtcatLateStartTxEl.addEventListener('change', function() {
     window.api.jtcatSetLateStartTx(jtcatLateStartTxEl.checked);
+  });
+}
+if (jtcatApDecodeEl) {
+  jtcatApDecodeEl.addEventListener('change', function() {
+    window.api.jtcatSetApDecode(jtcatApDecodeEl.checked);
   });
 }
 const jtcatAudioLatencyAutoBtn = document.getElementById('jtcat-audio-latency-auto');
@@ -23338,6 +23376,7 @@ if (jtcatFt8brCommentEl) {
 window.api.getSettings().then(function(s) {
   if (jtcatHoldTxFreqEl) jtcatHoldTxFreqEl.checked = !!s.jtcatHoldTxFreq;
   if (jtcatLateStartTxEl) jtcatLateStartTxEl.checked = s.jtcatLateStartTx !== false;
+  if (jtcatApDecodeEl) jtcatApDecodeEl.checked = s.jtcatApDecode !== false;
   if (jtcatAudioLatencyMsEl) {
     jtcatAudioLatencyMsEl.value = String(s.jtcatAudioLatencyMs || 0);
     if (!s.jtcatAudioLatencyManual) jtcatAudioLatencyMsEl.classList.add('jtcat-auto');
