@@ -11090,6 +11090,15 @@ function handleRemotePtt(state, opts = {}) {
       (typeof freedvEngine !== 'undefined' && freedvEngine)
     ));
 
+  // When SSB-over-DATA issues a mode change immediately before keying, the
+  // PTT frame and the mode frame are written back-to-back. On Icom CI-V's
+  // half-duplex bus the radio can drop the second of two rapid frames — so
+  // the mode reliably flips to DIGU but TX intermittently never engages
+  // (the failure depends on exact bus timing). tune() already staggers its
+  // CI-V writes for this reason; mirror that here by delaying the key-down a
+  // beat when we just switched mode. Icom only — 0 (immediate) otherwise.
+  // (K1MRE IC-7300 over CP2102 on RPi, 2026-06-18.)
+  let _civPttDelayMs = 0;
   if (state && settings.ssbOverData && audioActive && !ft8Engine) {
     // Switch to DATA mode before TX to prevent local mic bleed
     // Skip when JTCAT is active — it manages its own DATA mode
@@ -11120,6 +11129,10 @@ function handleRemotePtt(state, opts = {}) {
         if (cat.setModeOnly) cat.setModeOnly(dataMode, _currentFreqHz);
         else if (_currentFreqHz) cat.tune(_currentFreqHz, dataMode);
       }
+      // Stagger the upcoming PTT key-down on Icom so its CI-V PTT frame
+      // doesn't collide with the mode frame just written above.
+      const _ssbActiveRig = getActiveRigModel();
+      if (_ssbActiveRig && _ssbActiveRig.brand === 'Icom') _civPttDelayMs = 120;
     }
   }
 
@@ -11149,7 +11162,12 @@ function handleRemotePtt(state, opts = {}) {
       if (state && target && target.type === 'k4-network') {
         try { _resetK4TxBuf(); } catch {}
       }
-      gatedSetTransmit(state);
+      if (_civPttDelayMs > 0) {
+        // Icom SSB-over-DATA: let the mode frame clear the bus before keying.
+        setTimeout(() => { if (cat && cat.connected) gatedSetTransmit(state); }, _civPttDelayMs);
+      } else {
+        gatedSetTransmit(state);
+      }
     } else if (state) {
       console.warn('[PTT] Cannot key TX — CAT not connected');
       sendCatLog('PTT FAILED: CAT not connected (TX audio may play but radio will not transmit)');
