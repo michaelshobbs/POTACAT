@@ -930,13 +930,13 @@ function _applyPopoutTheme(payload) {
       if (!pttModeEl) return;
       if (s.connected || s.wsjtxMode) {
         pttModeEl.textContent = 'PTT: CAT';
-        pttModeEl.style.background = '#333';
-        pttModeEl.style.color = '#aaa';
+        pttModeEl.classList.remove('is-vox');
+        pttModeEl.classList.add('is-cat');
         pttModeEl.title = 'PTT via CAT command';
       } else {
         pttModeEl.textContent = 'PTT: VOX';
-        pttModeEl.style.background = '#f0a500';
-        pttModeEl.style.color = '#000';
+        pttModeEl.classList.remove('is-cat');
+        pttModeEl.classList.add('is-vox');
         pttModeEl.title = 'No CAT connected — enable VOX on your radio';
       }
     });
