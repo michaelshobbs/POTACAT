@@ -5045,10 +5045,14 @@ function startFullAutoCq(owner, modifier) {
   broadcastAutoCqState();
   const qso = jtcatBuildCqQso(jtcatFullAutoCqModifier);
   if (!qso) { stopFullAutoCq('callsign/grid not set'); return false; }
+  // Pick a clear TX frequency once, at the start of the run — rearmCq
+  // deliberately leaves it alone so we hold the same frequency cycle to cycle
+  // (answerers find us there). Respects Hold TX Freq.
+  ft8Engine.setTxFreq(jtcatQuietFreq);
   if (owner === 'remote') { remoteJtcatQso = qso; remoteJtcatBroadcastQso(); }
   else { popoutJtcatQso = qso; popoutBroadcastQso(); }
   broadcastFullAutoCqState();
-  sendCatLog('[JTCAT] Full Auto CQ STARTED: ' + qso.txMsg);
+  sendCatLog('[JTCAT] Full Auto CQ STARTED: ' + qso.txMsg + ' @ ' + ft8Engine._txFreq + 'Hz');
   return true;
 }
 
@@ -18896,12 +18900,18 @@ app.whenReady().then(() => {
       return;
     }
     const txMsg = buildCqTxMsg(myCall, myGrid, modifier != null ? modifier : (settings.jtcatChaseTarget || ''));
+    // Auto-place TX on the quiet frequency the waterfall analysis found —
+    // calling CQ on the default 1500 Hz lands right where everyone else calls
+    // CQ. This mirrors the phone CQ path (jtcat-call-cq). setTxFreq is a no-op
+    // when Hold TX Freq is on, so a pinned offset is still respected.
+    // (K3SBP 2026-06-19 — desktop CQ was stuck at 1500 Hz.)
+    ft8Engine.setTxFreq(jtcatQuietFreq);
     // TX on opposite slot from last decode; default to 'even' if no decodes yet
     const nextSlot = ft8Engine._lastRxSlot === 'even' ? 'odd' : 'even';
     ft8Engine.setTxSlot(nextSlot);
     popoutJtcatQso = { mode: 'cq', call: null, grid: null, phase: 'cq', txMsg, report: null, sentReport: null, myCall, myGrid, txRetries: 0 };
     ft8Engine._txEnabled = true;
-    sendCatLog(`[JTCAT] CQ encoding: ${txMsg} slot=${nextSlot}`);
+    sendCatLog(`[JTCAT] CQ encoding: ${txMsg} slot=${nextSlot} @ ${jtcatQuietFreq}Hz (quiet)`);
     await ft8Engine.setTxMessage(txMsg);
     const fired = ft8Engine.tryImmediateTx();
     if (!fired) {
