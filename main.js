@@ -5186,6 +5186,15 @@ function clampWsprDbm(d) {
   return Math.max(0, Math.min(JTCAT_WSPR_MAX_DBM, Number(d) || 0));
 }
 
+// Random TX audio offset within the 200 Hz WSPR sub-band. Tone-0 base is kept
+// below ~1590 so the whole ~6 Hz signal (tones span base..base+4.4 Hz) stays
+// inside the 1400–1600 Hz decode window. New spot per transmission.
+function wsprRandomTxAudioHz() {
+  const lo = wsprBands.AUDIO_LO_HZ;        // 1400
+  const hi = wsprBands.AUDIO_HI_HZ - 10;   // 1590 — margin for the tone spread
+  return Math.round(lo + Math.random() * (hi - lo));
+}
+
 // Command the rig to the 1 W ceiling. Returns true if SOME power-control path
 // took the command. CRITICAL on Flex Direct: CAT (PC command) is bypassed there
 // — power MUST go through the SmartSDR API, where rfpower is a PERCENT (1% ≈
@@ -5219,17 +5228,22 @@ function wsprBeaconTransmit(call, grid, dbm) {
   dbm = Math.max(0, Math.min(JTCAT_WSPR_MAX_DBM, dbm));
   const watts = wsprWattsFromDbm(dbm);
   wsprForcePowerCap(); // re-assert the 1 W rig cap immediately before key-up
+  // Pick a fresh random spot in the 200 Hz WSPR sub-band every transmission.
+  // Unlike FT8 you can't FFT a quiet slot here — WSPR signals are below the
+  // noise floor (invisible), so everyone randomizes within 1400–1600 Hz and
+  // the decoder's multi-signal subtraction untangles overlaps. (WSJT-X parity.)
+  const baseHz = wsprRandomTxAudioHz();
   let samples;
   try {
-    samples = encodeWspr(call, grid, dbm, { baseFreqHz: 1500 });
+    samples = encodeWspr(call, grid, dbm, { baseFreqHz: baseHz });
   } catch (e) { sendCatLog('[JTCAT] WSPR beacon encode error: ' + (e && e.message || e)); return; }
   // Drive scaling approximates sub-1 W targets on top of the rig's 1 W cap
   // (power ~ amplitude^2). The rig cap is the real limit; this is secondary.
   const amp = Math.max(0.05, Math.min(1, Math.sqrt(watts / JTCAT_WSPR_MAX_WATTS)));
   if (amp < 0.999) { for (let i = 0; i < samples.length; i++) samples[i] *= amp; }
   ft8Engine._txActive = true;
-  sendCatLog(`[JTCAT] WSPR beacon TX: ${call} ${grid} ${dbm} dBm (~${watts >= 1 ? '1 W' : Math.round(watts * 1000) + ' mW'}, rig capped 1 W, drive ${Math.round(amp * 100)}%)`);
-  ft8Engine.emit('tx-start', { samples, message: `${call} ${grid} ${dbm}`, freq: ft8Engine._txFreq || 1500, slot: 'wspr', offsetMs: 0 });
+  sendCatLog(`[JTCAT] WSPR beacon TX: ${call} ${grid} ${dbm} dBm (~${watts >= 1 ? '1 W' : Math.round(watts * 1000) + ' mW'}, rig capped 1 W, drive ${Math.round(amp * 100)}%) @ ${baseHz} Hz`);
+  ft8Engine.emit('tx-start', { samples, message: `${call} ${grid} ${dbm}`, freq: baseHz, slot: 'wspr', offsetMs: 0 });
   // Backstop tx-end after the waveform in case an audio route doesn't call
   // txComplete itself; the armed failsafe is the hard PTT-off backstop.
   const durMs = Math.round(samples.length / 12000 * 1000) + 1000;

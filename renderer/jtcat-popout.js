@@ -1831,6 +1831,9 @@ function _applyPopoutTheme(payload) {
     if (decodePane) decodePane.classList.toggle('hidden', on);
     if (controlsBar) controlsBar.classList.toggle('hidden', on);
     if (on && qsoTracker) qsoTracker.classList.add('hidden');
+    // The toolbar "TX: 1500 Hz" is the FT8/FT4/FT2 audio offset — meaningless in
+    // WSPR, where each transmission picks a random spot in the 200 Hz sub-band.
+    if (txFreqLabel) txFreqLabel.style.display = on ? 'none' : '';
     if (map) {
       if (on) { markerLayer.clearLayers(); arcLayer.clearLayers(); if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map); }
       else if (map.hasLayer(wsprMarkerLayer)) { wsprMarkerLayer.remove(); }
