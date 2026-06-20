@@ -226,6 +226,8 @@ const { CivCodec } = require('./lib/codecs/civ-codec');
 const { getTuneQuirks } = require('./lib/rig-models');
 const { gridToLatLon, haversineDistanceMiles, bearing } = require('./lib/grid');
 const { freqToBand } = require('./lib/bands');
+const wsprnet = require('./lib/wspr/wsprnet');
+const wsprBands = require('./lib/wspr/bands');
 const { loadCtyDat, resolveCallsign, getAllEntities } = require('./lib/cty');
 const { parseAdifFile, parseWorkedQsos, parseAllQsos, parseAllRawQsos, parseAdifStream, parseSqliteFile, parseSqliteConfirmed, isSqliteFile, parseRecord: parseAdifRecord } = require('./lib/adif');
 const { DxClusterClient } = require('./lib/dxcluster');
@@ -5390,6 +5392,10 @@ function startJtcat(mode) {
         ? `[JTCAT] AP decode armed for ${apCall} (recovers weak/late replies addressed to you)`
         : `[JTCAT] AP decode off${apOn && !apCall ? ' — set your callsign to enable it' : ''}`);
     }
+    // Restore the saved WSPR dial (used only in WSPR mode).
+    if (typeof ft8Engine.setWsprDial === 'function' && settings.wsprDial) {
+      ft8Engine.setWsprDial(settings.wsprDial);
+    }
   }
 
   // Persist the auto-derived latency so a fresh start can apply it
@@ -5410,6 +5416,7 @@ function startJtcat(mode) {
 
   // Remove any stale listeners from a previous startJtcat() cycle
   ft8Engine.removeAllListeners('decode');
+  ft8Engine.removeAllListeners('wspr-spots');
   ft8Engine.removeAllListeners('tx-start');
   ft8Engine.removeAllListeners('tx-end');
 
@@ -5636,6 +5643,55 @@ function startJtcat(mode) {
           }
           broadcastAutoCqState();
         }
+      }
+    }
+  });
+
+  // WSPR spots — a beacon/propagation mode, NOT a QSO. wsprd (separate GPLv3
+  // process) decodes the 2-min window; here we enrich (DXCC entity + distance/
+  // bearing from home grid), forward to the UI, and optionally report to
+  // wsprnet.org (the propagation map that gives WSPR its value).
+  ft8Engine.on('wspr-spots', async (data) => {
+    const spots = data.spots || [];
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const nowHHMM = p2(now.getUTCHours()) + p2(now.getUTCMinutes());
+    const home = settings.grid ? gridToLatLon(settings.grid) : null;
+    for (const s of spots) {
+      if (!s.timeUtc) s.timeUtc = nowHHMM; // wsprd gave filename stem, not a time
+      if (s.call && ctyDb) {
+        const entity = resolveCallsign(String(s.call).toUpperCase(), ctyDb);
+        s.entity = entity ? entity.name : '';
+        s.continent = entity ? entity.continent : '';
+      }
+      if (s.grid && home) {
+        const ll = gridToLatLon(s.grid);
+        if (ll) {
+          s.distanceMi = Math.round(haversineDistanceMiles(home.lat, home.lon, ll.lat, ll.lon));
+          s.bearing = Math.round(bearing(home.lat, home.lon, ll.lat, ll.lon));
+        }
+      }
+    }
+    if (data.error) sendCatLog('[JTCAT] WSPR decode: ' + data.error);
+    else if (spots.length) sendCatLog(`[JTCAT] WSPR: ${spots.length} spot${spots.length > 1 ? 's' : ''} decoded`);
+
+    const payload = { spots, cycle: data.cycle, dialMHz: ft8Engine._wsprDialMHz, error: data.error || null };
+    if (win && !win.isDestroyed()) win.webContents.send('jtcat-wspr-spots', payload);
+    if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('jtcat-wspr-spots', payload);
+
+    // Upload to wsprnet.org if enabled (keyed by our call + grid).
+    if (settings.wsprUpload && settings.myCallsign && settings.grid && spots.length) {
+      try {
+        const { dateYYMMDD, timeHHMM } = wsprnet.utcStamp(now);
+        const res = await wsprnet.uploadSpots(
+          spots,
+          { call: settings.myCallsign, grid: settings.grid },
+          { dialMHz: ft8Engine._wsprDialMHz, dateYYMMDD, timeHHMM, version: 'POTACAT' }
+        );
+        if (res.uploaded) sendCatLog(`[JTCAT] WSPR: reported ${res.uploaded} spot${res.uploaded > 1 ? 's' : ''} to wsprnet.org`);
+        if (res.failed) sendCatLog(`[JTCAT] WSPR: ${res.failed} wsprnet upload(s) failed`);
+      } catch (e) {
+        sendCatLog('[JTCAT] WSPR wsprnet upload error: ' + (e && e.message || e));
       }
     }
   });
@@ -22394,6 +22450,13 @@ app.whenReady().then(() => {
   ipcMain.on('jtcat-stop', () => stopJtcat());
   ipcMain.on('jtcat-set-mode', (_e, mode) => { if (ft8Engine) ft8Engine.setMode(mode); });
   ipcMain.on('jtcat-set-tx-freq', (_e, hz) => { if (ft8Engine) ft8Engine.setTxFreq(hz); });
+  // WSPR USB dial — accepts a band name ('20m') or an MHz number; wsprd needs
+  // it to report absolute spot frequencies and pick the band.
+  ipcMain.on('jtcat-set-wspr-dial', (_e, bandOrMHz) => {
+    if (!ft8Engine || typeof ft8Engine.setWsprDial !== 'function') return;
+    const mhz = typeof bandOrMHz === 'string' ? wsprBands.dialForBand(bandOrMHz) : Number(bandOrMHz);
+    if (mhz) { ft8Engine.setWsprDial(mhz); settings.wsprDial = mhz; }
+  });
   ipcMain.on('jtcat-set-rx-freq', (_e, hz) => { if (ft8Engine) ft8Engine.setRxFreq(hz); });
 
   ipcMain.on('jtcat-set-audio-latency-ms', (_e, payload) => {
