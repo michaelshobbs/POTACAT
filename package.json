@@ -2,6 +2,7 @@
   "name": "potacat",
   "version": "1.8.14",
   "description": "Amateur radio spot aggregator with CAT control, QSO logging, and panadapter integration",
+  "license": "Apache-2.0",
   "author": {
     "name": "Casey Stanton",
     "email": "casey@potacat.com"

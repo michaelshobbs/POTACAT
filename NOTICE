@@ -1,0 +1,36 @@
+POTACAT
+Copyright 2024-2026 Casey Stanton
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"POTACAT" and "ECHOCAT" are trademarks of Casey Stanton. The Apache License
+covers the source code only; it does not grant any right to use these names,
+logos, or other brand features. See TRADEMARKS.md.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+This product bundles or builds upon the following third-party software. Each
+remains under its own license; the licenses are reproduced under third_party/
+or in the LICENSES/ directory of the distribution where applicable.
+
+  ft8_lib (FT8/FT4 encode/decode)
+    Copyright (c) Karlis Goba (YL3JG) and contributors
+    License: MIT
+    Source: https://github.com/kgoba/ft8_lib
+
+  wsprd (WSPR decoder) — bundled as a SEPARATE executable, invoked at arm's
+    length over a child process; NOT linked into POTACAT.
+    Copyright (c) Joe Taylor (K1JT), Steven Franke (K9AN), and the WSJT
+    Development Group.
+    License: GNU General Public License v3.0 (GPLv3)
+    Source: https://sourceforge.net/p/wsjt/wsjtx/ (third_party/wsprd/)
+    NOTE: This GPLv3 component is distributed as an independent, separate
+    program. Its presence does not place POTACAT's own Apache-2.0 code under
+    the GPL ("mere aggregation"). A copy of the GPLv3 and the corresponding
+    source for wsprd are provided per the GPL's requirements.
+
+  Additional bundled libraries (Electron, Leaflet, serialport, ws, sharp,
+  kiss_fft, etc.) retain their respective licenses; see package.json and the
+  node_modules / vendored source trees.

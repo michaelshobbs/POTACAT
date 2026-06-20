@@ -134,8 +134,17 @@ POTACAT listens for WSJT-X UDP messages on the default port (2237). When WSJT-X 
 
 ## License
 
-MIT
+POTACAT is licensed under the [Apache License 2.0](LICENSE).
+
+**"POTACAT" and "ECHOCAT" are trademarks of Casey Stanton.** The license covers
+the source code, not the names — see [TRADEMARKS.md](TRADEMARKS.md). If you fork
+and redistribute a modified build, please give it a different name.
 
 ### Third-Party Software
 
-This application bundles [Hamlib](https://hamlib.github.io/) rigctld for radio control. Hamlib is licensed under the [GNU General Public License v2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html). Source code is available at [github.com/Hamlib/Hamlib](https://github.com/Hamlib/Hamlib).
+POTACAT bundles some GPL-licensed tools as **separate executables**, invoked over
+a process boundary (mere aggregation). This does not place POTACAT's own
+Apache-2.0 code under the GPL. See [`NOTICE`](NOTICE) for the full list.
+
+- [Hamlib](https://hamlib.github.io/) `rigctld` for radio control — [GPLv2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html); source at [github.com/Hamlib/Hamlib](https://github.com/Hamlib/Hamlib).
+- `wsprd` WSPR decoder (K1JT/K9AN, WSJT Development Group) — [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html); bundled as a standalone binary, not linked. See [`third_party/wsprd/`](third_party/wsprd/).
