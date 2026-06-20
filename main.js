@@ -228,6 +228,8 @@ const { gridToLatLon, haversineDistanceMiles, bearing } = require('./lib/grid');
 const { freqToBand } = require('./lib/bands');
 const wsprnet = require('./lib/wspr/wsprnet');
 const wsprBands = require('./lib/wspr/bands');
+const { WsprScheduler } = require('./lib/wspr/scheduler');
+const { encodeWspr } = require('./lib/wspr/encode');
 const { loadCtyDat, resolveCallsign, getAllEntities } = require('./lib/cty');
 const { parseAdifFile, parseWorkedQsos, parseAllQsos, parseAllRawQsos, parseAdifStream, parseSqliteFile, parseSqliteConfirmed, isSqliteFile, parseRecord: parseAdifRecord } = require('./lib/adif');
 const { DxClusterClient } = require('./lib/dxcluster');
@@ -4861,6 +4863,9 @@ let jtcatManager = null; // initialized on first startJtcat()
 let ft8Engine = null;    // alias for jtcatManager.engine (Phase 0 compatibility)
 let remoteJtcatQso = null;
 let jtcatQuietFreq = 1500; // auto-detected quiet TX frequency from FFT analysis
+// WSPR beacon state — driven by the IPC handler + a 1 s scheduler tick.
+let jtcatWsprScheduler = null;
+let jtcatWsprBeaconTimer = null;
 let _jtcatTxFailsafeTimer = null;
 let _jtcatIcomHardReleaseTimer = null;
 const JTCAT_MAX_CQ_RETRIES = 15;
@@ -5161,6 +5166,56 @@ function armJtcatTxFailsafe(label, samples, sampleRate = 12000, offsetMs = 0, st
       try { handleRemotePtt(false); } catch {}
     }
   }, timeoutMs);
+}
+
+// WSPR beacon control. Manages the scheduler + arming state and validates the
+// operator's identity. NOTE: keyed transmit is intentionally NOT wired to the
+// FT8 tx-start dispatch — that path's PTT failsafe caps at 30 s (tuned for
+// FT8's ~13 s waveform), which would chop a 110.6 s WSPR transmission. A
+// correct beacon needs a dedicated WSPR-length TX path + failsafe; until that's
+// built and bench-tested, arming the beacon reports its readiness and drives
+// the 2-minute rhythm UI without keying the radio. RX + wsprnet are fully live.
+function setWsprBeacon(on) {
+  const tellPopout = (enabled) => {
+    if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) {
+      jtcatPopoutWin.webContents.send('jtcat-wspr-beacon-state', { enabled });
+    }
+  };
+  if (!on) {
+    if (jtcatWsprScheduler) jtcatWsprScheduler.setEnabled(false);
+    if (jtcatWsprBeaconTimer) { clearInterval(jtcatWsprBeaconTimer); jtcatWsprBeaconTimer = null; }
+    sendCatLog('[JTCAT] WSPR beacon disarmed');
+    tellPopout(false);
+    return;
+  }
+  const call = (settings.myCallsign || '').trim().toUpperCase();
+  const grid = (settings.grid || '').trim().toUpperCase().slice(0, 4);
+  if (!ft8Engine || ft8Engine._mode !== 'WSPR') {
+    sendCatLog('[JTCAT] WSPR beacon: switch JTCAT to WSPR mode first');
+    tellPopout(false);
+    return;
+  }
+  if (!/^[A-Z0-9]{3,6}$/.test(call) || grid.length < 4) {
+    sendCatLog('[JTCAT] WSPR beacon: set a valid callsign + 4-char grid in Settings first');
+    tellPopout(false);
+    return;
+  }
+  // Confirm the clean-room encoder accepts this identity (cheap, catches bad
+  // grids/calls before any transmit path is wired).
+  try {
+    encodeWspr(call, grid, settings.wsprDbm != null ? settings.wsprDbm : 30, { baseFreqHz: 1500 });
+  } catch (e) {
+    sendCatLog('[JTCAT] WSPR beacon: ' + (e && e.message || e));
+    tellPopout(false);
+    return;
+  }
+  if (!jtcatWsprScheduler) jtcatWsprScheduler = new WsprScheduler({});
+  jtcatWsprScheduler.setTxPct(settings.wsprTxPct != null ? settings.wsprTxPct : 20);
+  jtcatWsprScheduler.setDbm(settings.wsprDbm != null ? settings.wsprDbm : 30);
+  jtcatWsprScheduler.setEnabled(true);
+  sendCatLog(`[JTCAT] WSPR beacon armed: ${call} ${grid}, TX ${jtcatWsprScheduler.txPct}% @ ${settings.wsprDbm != null ? settings.wsprDbm : 30} dBm. ` +
+    'Note: keyed transmit is pending the dedicated WSPR TX path (the FT8 PTT failsafe caps at 30 s); RX + wsprnet reporting are active now.');
+  tellPopout(true);
 }
 
 function remoteJtcatMyCall() { return (settings.myCallsign || '').toUpperCase(); }
@@ -22456,6 +22511,20 @@ app.whenReady().then(() => {
     if (!ft8Engine || typeof ft8Engine.setWsprDial !== 'function') return;
     const mhz = typeof bandOrMHz === 'string' ? wsprBands.dialForBand(bandOrMHz) : Number(bandOrMHz);
     if (mhz) { ft8Engine.setWsprDial(mhz); settings.wsprDial = mhz; }
+  });
+  // WSPR beacon controls. txPct/dBm persist; `enabled` starts/stops the
+  // scheduler-driven transmit loop. Attended-only (Part 97) — bounded by the
+  // same 30-min watchdog as Full Auto CQ.
+  ipcMain.on('jtcat-wspr-beacon', (_e, opts) => {
+    opts = opts || {};
+    if (opts.txPct != null) settings.wsprTxPct = Math.max(0, Math.min(100, opts.txPct));
+    if (opts.dBm != null) settings.wsprDbm = opts.dBm;
+    saveSettings(settings);
+    if (jtcatWsprScheduler) {
+      if (opts.txPct != null) jtcatWsprScheduler.setTxPct(settings.wsprTxPct);
+      if (opts.dBm != null) jtcatWsprScheduler.setDbm(settings.wsprDbm);
+    }
+    if (opts.enabled != null) setWsprBeacon(!!opts.enabled);
   });
   ipcMain.on('jtcat-set-rx-freq', (_e, hz) => { if (ft8Engine) ft8Engine.setRxFreq(hz); });
 

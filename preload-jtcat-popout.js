@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   jtcatStop: () => ipcRenderer.send('jtcat-stop'),
   jtcatSetMode: (mode) => ipcRenderer.send('jtcat-set-mode', mode),
   jtcatSetWsprDial: (bandOrMHz) => ipcRenderer.send('jtcat-set-wspr-dial', bandOrMHz),
+  jtcatWsprBeacon: (opts) => ipcRenderer.send('jtcat-wspr-beacon', opts),
   jtcatSetTxFreq: (hz) => ipcRenderer.send('jtcat-set-tx-freq', hz),
   jtcatSetRxFreq: (hz) => ipcRenderer.send('jtcat-set-rx-freq', hz),
   jtcatEnableTx: (enabled) => ipcRenderer.send('jtcat-enable-tx', enabled),
@@ -25,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   // JTCAT events
   onJtcatDecode: (cb) => ipcRenderer.on('jtcat-decode', (_e, data) => cb(data)),
   onJtcatWsprSpots: (cb) => ipcRenderer.on('jtcat-wspr-spots', (_e, data) => cb(data)),
+  onJtcatWsprBeaconState: (cb) => ipcRenderer.on('jtcat-wspr-beacon-state', (_e, data) => cb(data)),
   onJtcatCycle: (cb) => ipcRenderer.on('jtcat-cycle', (_e, data) => cb(data)),
   onJtcatSpectrum: (cb) => ipcRenderer.on('jtcat-spectrum', (_e, data) => cb(data)),
   onJtcatStatus: (cb) => ipcRenderer.on('jtcat-status', (_e, data) => cb(data)),

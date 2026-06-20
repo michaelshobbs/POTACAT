@@ -78,6 +78,37 @@
     .jp-row.jp-watched { background: rgba(255, 64, 129, 0.12); }
     .jp-entity { font-size: 10px; color: var(--text-dim, #666); margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 
+    /* WSPR pane */
+    .jp-wspr-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-primary); }
+    .jp-wspr-pane.hidden { display: none; }
+    .jp-wspr-beacon { padding: 6px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); flex-shrink: 0; font-size: 11px; }
+    .jp-wspr-beacon-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .jp-wspr-beacon label { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); white-space: nowrap; }
+    .jp-wspr-beacon label.jp-wspr-tx b { color: var(--text-primary); }
+    .jp-wspr-num { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+    .jp-wspr-select { font-size: 11px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 3px; padding: 1px 3px; }
+    .jp-wspr-sep { border-left: 1px solid var(--border-primary); height: 16px; }
+    .jp-wspr-next { margin-left: auto; font-family: monospace; font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 3px; background: var(--bg-tertiary); color: var(--accent-green, #4ecca3); white-space: nowrap; }
+    .jp-wspr-next.tx { background: #e94560; color: #fff; animation: jp-tune-pulse 1s ease-in-out infinite; }
+    /* Spot table */
+    .jp-wspr-thead, .jp-wspr-row { display: grid; grid-template-columns: 50px 30px 34px 78px 30px 1fr 52px 60px 36px; gap: 4px; padding: 1px 8px; font-family: monospace; font-size: 11px; align-items: baseline; }
+    .jp-wspr-thead { color: var(--text-dim); font-weight: 700; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); padding-top: 3px; padding-bottom: 3px; flex-shrink: 0; }
+    .jp-wspr-thead span, .jp-wspr-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .jp-wspr-list { flex: 1; overflow-y: auto; background: var(--bg-primary); padding: 2px 0; font-size: 12px; line-height: 1.55; }
+    .jp-wspr-row { cursor: default; }
+    .jp-wspr-row:hover { background: var(--bg-hover); }
+    .jp-wspr-row.is-new { animation: jp-wspr-flash 1.2s ease-out; }
+    @keyframes jp-wspr-flash { from { background: rgba(78,204,163,0.28); } to { background: transparent; } }
+    .jp-wspr-row .w-db { color: var(--text-secondary); text-align: right; }
+    .jp-wspr-row .w-dt, .jp-wspr-row .w-dr { color: var(--text-dim); text-align: right; }
+    .jp-wspr-row .w-freq { color: var(--accent-blue, #4fc3f7); text-align: right; }
+    .jp-wspr-row .w-call { color: var(--accent-green, #4ecca3); font-weight: 600; }
+    .jp-wspr-row .w-grid { color: var(--text-secondary); }
+    .jp-wspr-row .w-dist { color: #ffd966; text-align: right; }
+    .jp-wspr-row .w-az { color: var(--text-dim); text-align: right; }
+    .jp-wspr-row.is-dx .w-dist { color: #ff8c42; font-weight: 700; }
+    .jp-wspr-row .w-ent { grid-column: 1 / -1; font-size: 10px; color: var(--text-dim); padding-left: 50px; margin-top: -2px; }
+
     /* Controls bar */
     .jp-controls { padding: 6px 10px; background: var(--bg-secondary); border-top: 1px solid var(--border-primary); display: flex; gap: 8px; align-items: center; flex-shrink: 0; font-size: 12px; }
     .jp-btn { padding: 4px 12px; border-radius: 4px; border: 1px solid var(--border-primary); background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -174,6 +205,7 @@
         <option value="FT8">FT8</option>
         <option value="FT4">FT4</option>
         <option value="FT2">FT2</option>
+        <option value="WSPR">WSPR</option>
       </select>
     </div>
     <span id="jp-radio-freq" style="font-size:12px;font-weight:bold;color:#4fc3f7;white-space:nowrap;font-family:monospace;" title="Radio frequency">—</span>
@@ -226,6 +258,49 @@
         <div id="jp-my-activity" class="jp-decode-list">
           <div class="jp-empty">No activity yet</div>
         </div>
+      </div>
+    </div>
+    <!-- WSPR pane (swaps in for the decode pane in WSPR mode) -->
+    <div id="jp-wspr-pane" class="jp-wspr-pane hidden">
+      <div class="jp-wspr-beacon">
+        <div class="jp-wspr-beacon-row">
+          <label class="jp-wspr-tx" title="Beacon: transmit a low-power WSPR signal so distant stations spot you on wsprnet.org. WSPR is mostly receive — transmit briefly, listen the rest.">
+            <input type="checkbox" id="jp-wspr-tx-enable"> <b>Beacon TX</b>
+          </label>
+          <span class="jp-wspr-sep"></span>
+          <label title="Fraction of 2-minute slots to transmit (randomized to avoid collisions). 20% is typical — beacon occasionally, listen mostly.">TX
+            <input type="range" id="jp-wspr-txpct" min="0" max="100" step="5" value="20" style="width:70px;vertical-align:middle;">
+            <span id="jp-wspr-txpct-val" class="jp-wspr-num">20%</span>
+          </label>
+          <label title="Reported transmit power in dBm. Keep actual RF low — WSPR decodes far below the noise floor.">Pwr
+            <select id="jp-wspr-dbm" class="jp-wspr-select">
+              <option>0</option><option>3</option><option>7</option><option>10</option>
+              <option>13</option><option>17</option><option>20</option><option>23</option>
+              <option>27</option><option selected>30</option><option>33</option>
+              <option>37</option><option>40</option><option>43</option><option>47</option><option>50</option>
+            </select><span class="jp-wspr-num">dBm</span>
+          </label>
+          <span class="jp-wspr-sep"></span>
+          <label title="Upload your received spots to wsprnet.org — this is what plots your station on the global propagation map.">
+            <input type="checkbox" id="jp-wspr-upload"> Report to WSPRnet
+          </label>
+          <span id="jp-wspr-next" class="jp-wspr-next" title="Next transmit / receive window">RX</span>
+        </div>
+      </div>
+      <div class="jp-decode-header">
+        WSPR Spots <span id="jp-wspr-meta"></span>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <button id="jp-wspr-sort" class="jtcat-filter-btn" title="Sort by distance (farthest first)">DX</button>
+          <button id="jp-wspr-clear" class="jtcat-filter-btn" title="Clear spots">Clear</button>
+        </div>
+      </div>
+      <div class="jp-wspr-thead">
+        <span class="w-time">UTC</span><span class="w-db">dB</span><span class="w-dt">DT</span>
+        <span class="w-freq">Freq</span><span class="w-dr">Dft</span><span class="w-call">Call</span>
+        <span class="w-grid">Grid</span><span class="w-dist">Dist</span><span class="w-az">Az</span>
+      </div>
+      <div id="jp-wspr-list" class="jp-wspr-list">
+        <div class="jp-empty">No WSPR spots yet — listening on a 2-minute cycle…</div>
       </div>
     </div>
     <div class="jp-map-pane">

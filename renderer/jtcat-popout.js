@@ -1107,11 +1107,12 @@ function _applyPopoutTheme(payload) {
   // --- Countdown timer ---
   setInterval(function() {
     var mode = modeSelect.value;
-    var cycleSec = mode === 'FT2' ? 3.8 : mode === 'FT4' ? 7.5 : 15;
+    var cycleSec = mode === 'WSPR' ? 120 : mode === 'FT2' ? 3.8 : mode === 'FT4' ? 7.5 : 15;
     var cycleMs = cycleSec * 1000;
     var msInto = Date.now() % cycleMs;
     var remaining = (cycleMs - msInto) / 1000;
     countdownEl.textContent = (remaining < 10 ? remaining.toFixed(1) : Math.ceil(remaining)) + 's';
+    if (mode === 'WSPR') updateWsprNext(msInto, remaining);
   }, 200);
 
   // FT2 dial frequencies (kHz) per band — from IU8LMC published table
@@ -1130,9 +1131,16 @@ function _applyPopoutTheme(payload) {
     '20m': 14074, '17m': 18100, '15m': 21074, '12m': 24915, '10m': 28074,
     '6m': 50313,
   };
+  // WSPR USB dial frequencies (kHz) — the radio tunes here; signals sit
+  // 1400–1600 Hz above. Matches lib/wspr/bands.js.
+  var WSPR_BAND_FREQS = {
+    '160m': 1836.6, '80m': 3568.6, '60m': 5287.2, '40m': 7038.6, '30m': 10138.7,
+    '20m': 14095.6, '17m': 18104.6, '15m': 21094.6, '12m': 24924.6, '10m': 28124.6,
+    '6m': 50293.0,
+  };
   function updateBandFreqs() {
     var m = modeSelect.value;
-    var table = m === 'FT2' ? FT2_BAND_FREQS : m === 'FT4' ? FT4_BAND_FREQS : FT8_BAND_FREQS;
+    var table = m === 'WSPR' ? WSPR_BAND_FREQS : m === 'FT2' ? FT2_BAND_FREQS : m === 'FT4' ? FT4_BAND_FREQS : FT8_BAND_FREQS;
     document.querySelectorAll('.jtcat-band-btn').forEach(function(btn) {
       var band = btn.dataset.band;
       if (table[band]) btn.dataset.freq = table[band];
@@ -1142,6 +1150,7 @@ function _applyPopoutTheme(payload) {
   // --- Mode change ---
   modeSelect.addEventListener('change', function() {
     updateBandFreqs();
+    applyWsprMode(modeSelect.value === 'WSPR');
     window.api.jtcatSetMode(modeSelect.value);
     // Persist the mode so reopening JTCAT comes back in FT4/FT2 instead of
     // silently reverting to FT8 (which left the radio parked on the FT8 sub-
@@ -1751,6 +1760,12 @@ function _applyPopoutTheme(payload) {
   function selectBand(btn, save) {
     var freq = parseFloat(btn.dataset.freq);
     window.api.tune(freq, modeSelect.value);
+    // WSPR: tell the decoder which dial we're on (MHz) so it reports absolute
+    // spot frequencies and picks the band.
+    if (modeSelect.value === 'WSPR' && window.api.jtcatSetWsprDial) {
+      window.api.jtcatSetWsprDial(btn.dataset.band);
+      wsprClearSpots();
+    }
     document.querySelectorAll('.jtcat-band-btn').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
     // Clear decodes
@@ -1773,14 +1788,200 @@ function _applyPopoutTheme(payload) {
     btn.addEventListener('click', function() { selectBand(btn, true); });
   });
 
+  // ===================== WSPR =====================
+  // WSPR is a beacon/propagation mode, not a QSO mode. This pane swaps in for
+  // the FT8 decode/QSO UI: a rich spot list (who heard what, how far) + beacon
+  // controls. Decode comes from the separate wsprd process via main.js.
+  var wsprPane = document.getElementById('jp-wspr-pane');
+  var decodePane = document.querySelector('.jp-decode-pane');
+  var controlsBar = document.querySelector('.jp-controls');
+  var wsprListEl = document.getElementById('jp-wspr-list');
+  var wsprMetaEl = document.getElementById('jp-wspr-meta');
+  var wsprNextEl = document.getElementById('jp-wspr-next');
+  var wsprTxEnable = document.getElementById('jp-wspr-tx-enable');
+  var wsprTxPctEl = document.getElementById('jp-wspr-txpct');
+  var wsprTxPctVal = document.getElementById('jp-wspr-txpct-val');
+  var wsprDbmEl = document.getElementById('jp-wspr-dbm');
+  var wsprUploadEl = document.getElementById('jp-wspr-upload');
+  var wsprSortBtn = document.getElementById('jp-wspr-sort');
+  var wsprClearBtn = document.getElementById('jp-wspr-clear');
+  var wsprSpots = [];
+  var wsprSortByDx = false;
+  var wsprDistUnit = 'mi';
+  var wsprMarkerLayer = L.layerGroup();
+
+  function wsprEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function wsprFmtTime(t) {
+    if (t && /^\d{4}$/.test(t)) return t.slice(0, 2) + ':' + t.slice(2);
+    return t || '';
+  }
+  function wsprSnrColor(snr) {
+    if (snr == null) return '#888';
+    if (snr >= -10) return '#4ecca3';   // strong — green
+    if (snr >= -20) return '#f0a500';   // moderate — amber
+    return '#e94560';                   // weak — red
+  }
+
+  function applyWsprMode(on) {
+    if (wsprPane) wsprPane.classList.toggle('hidden', !on);
+    if (decodePane) decodePane.classList.toggle('hidden', on);
+    if (controlsBar) controlsBar.classList.toggle('hidden', on);
+    if (on && qsoTracker) qsoTracker.classList.add('hidden');
+    if (map) {
+      if (on) { markerLayer.clearLayers(); arcLayer.clearLayers(); if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map); }
+      else if (map.hasLayer(wsprMarkerLayer)) { wsprMarkerLayer.remove(); }
+    }
+    if (on) wsprRender();
+  }
+
+  function wsprInit(s) {
+    s = s || {};
+    wsprDistUnit = s.distUnit === 'km' ? 'km' : 'mi';
+    if (s.wsprTxPct != null) wsprTxPctEl.value = s.wsprTxPct;
+    wsprTxPctVal.textContent = wsprTxPctEl.value + '%';
+    if (s.wsprDbm != null) wsprDbmEl.value = String(s.wsprDbm);
+    wsprUploadEl.checked = !!s.wsprUpload;
+
+    wsprTxPctEl.addEventListener('input', function() { wsprTxPctVal.textContent = wsprTxPctEl.value + '%'; });
+    wsprTxPctEl.addEventListener('change', function() {
+      var v = parseInt(wsprTxPctEl.value, 10);
+      window.api.saveSettings({ wsprTxPct: v });
+      if (window.api.jtcatWsprBeacon) window.api.jtcatWsprBeacon({ txPct: v });
+    });
+    wsprDbmEl.addEventListener('change', function() {
+      var v = parseInt(wsprDbmEl.value, 10);
+      window.api.saveSettings({ wsprDbm: v });
+      if (window.api.jtcatWsprBeacon) window.api.jtcatWsprBeacon({ dBm: v });
+    });
+    wsprUploadEl.addEventListener('change', function() {
+      window.api.saveSettings({ wsprUpload: wsprUploadEl.checked });
+    });
+    wsprTxEnable.addEventListener('change', function() {
+      if (window.api.jtcatWsprBeacon) window.api.jtcatWsprBeacon({
+        enabled: wsprTxEnable.checked,
+        txPct: parseInt(wsprTxPctEl.value, 10),
+        dBm: parseInt(wsprDbmEl.value, 10),
+      });
+    });
+    wsprSortBtn.addEventListener('click', function() {
+      wsprSortByDx = !wsprSortByDx;
+      wsprSortBtn.classList.toggle('active', wsprSortByDx);
+      wsprRender();
+    });
+    wsprClearBtn.addEventListener('click', wsprClearSpots);
+  }
+
+  function wsprClearSpots() {
+    wsprSpots = [];
+    wsprMarkerLayer.clearLayers();
+    wsprRender();
+  }
+
+  function updateWsprNext(msInto, remaining) {
+    if (!wsprNextEl) return;
+    var armed = wsprTxEnable && wsprTxEnable.checked;
+    var inTxWin = armed && msInto >= 1000 && msInto < 111600;
+    wsprNextEl.classList.toggle('tx', !!inTxWin);
+    var label = inTxWin ? 'TX' : (armed ? 'Beacon' : 'RX');
+    var t = remaining < 60 ? Math.ceil(remaining) + 's'
+      : Math.floor(remaining / 60) + ':' + (Math.ceil(remaining % 60) < 10 ? '0' : '') + Math.ceil(remaining % 60);
+    wsprNextEl.textContent = label + ' · ' + t;
+  }
+
+  function wsprAddSpots(payload) {
+    if (!payload) return;
+    if (payload.error) wsprMetaEl.textContent = '⚠ ' + payload.error;
+    var spots = payload.spots || [];
+    spots.forEach(function(s) {
+      s._key = (s.call || '?') + '|' + (s.freqMHz || 0).toFixed(6);
+      s._new = true;
+      var i = wsprSpots.findIndex(function(x) { return x._key === s._key; });
+      if (i >= 0) wsprSpots.splice(i, 1);
+      wsprSpots.unshift(s);
+    });
+    if (wsprSpots.length > 300) wsprSpots.length = 300;
+    wsprRender();
+    spots.forEach(wsprAddMarker);
+  }
+
+  function wsprRender() {
+    if (!wsprListEl) return;
+    var rows = wsprSpots.slice();
+    if (wsprSortByDx) rows.sort(function(a, b) { return (b.distanceMi || 0) - (a.distanceMi || 0); });
+    var maxDist = 0;
+    wsprSpots.forEach(function(s) { if (s.distanceMi > maxDist) maxDist = s.distanceMi; });
+    if (!rows.length) {
+      wsprListEl.innerHTML = '<div class="jp-empty">No WSPR spots yet — listening on a 2-minute cycle…</div>';
+    } else {
+      wsprListEl.innerHTML = rows.map(function(s) {
+        var dist = s.distanceMi != null
+          ? (wsprDistUnit === 'km' ? Math.round(s.distanceMi * 1.60934) + ' km' : s.distanceMi + ' mi') : '';
+        var isDx = s.distanceMi && s.distanceMi === maxDist && maxDist > 0;
+        var ent = s.entity ? '<span class="w-ent">' + wsprEsc(s.entity) + (s.continent ? ' · ' + wsprEsc(s.continent) : '') + '</span>' : '';
+        return '<div class="jp-wspr-row' + (s._new ? ' is-new' : '') + (isDx ? ' is-dx' : '') + '">' +
+          '<span class="w-time">' + wsprEsc(wsprFmtTime(s.timeUtc)) + '</span>' +
+          '<span class="w-db">' + (s.snr != null ? s.snr : '') + '</span>' +
+          '<span class="w-dt">' + (s.dt != null ? s.dt.toFixed(1) : '') + '</span>' +
+          '<span class="w-freq">' + (s.freqMHz != null ? s.freqMHz.toFixed(4) : '') + '</span>' +
+          '<span class="w-dr">' + (s.drift != null ? s.drift : '') + '</span>' +
+          '<span class="w-call">' + wsprEsc(s.call || '') + '</span>' +
+          '<span class="w-grid">' + wsprEsc(s.grid || '') + '</span>' +
+          '<span class="w-dist">' + dist + '</span>' +
+          '<span class="w-az">' + (s.bearing != null ? s.bearing + '°' : '') + '</span>' +
+          ent + '</div>';
+      }).join('');
+    }
+    var calls = {};
+    wsprSpots.forEach(function(s) { if (s.call) calls[s.call] = 1; });
+    wsprMetaEl.textContent = wsprSpots.length + ' spot' + (wsprSpots.length !== 1 ? 's' : '') +
+      ' · ' + Object.keys(calls).length + ' call' + (Object.keys(calls).length !== 1 ? 's' : '');
+    setTimeout(function() { wsprSpots.forEach(function(s) { s._new = false; }); }, 1300);
+  }
+
+  function wsprAddMarker(s) {
+    if (!map || !s.grid) return;
+    var ll = gridToLatLon(s.grid);
+    if (!ll) return;
+    if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map);
+    var color = wsprSnrColor(s.snr);
+    var m = L.circleMarker([ll.lat, ll.lon], { radius: 5, color: color, weight: 1, fillColor: color, fillOpacity: 0.7 });
+    m.bindPopup('<b>' + wsprEsc(s.call || '') + '</b> ' + wsprEsc(s.grid || '') +
+      '<br>' + (s.snr != null ? s.snr + ' dB' : '') +
+      (s.distanceMi != null ? ' · ' + (wsprDistUnit === 'km' ? Math.round(s.distanceMi * 1.60934) + ' km' : s.distanceMi + ' mi') : '') +
+      (s.entity ? '<br>' + wsprEsc(s.entity) : ''), { className: 'jp-station-popup' });
+    wsprMarkerLayer.addLayer(m);
+    if (myGrid) {
+      var home = gridToLatLon(myGrid);
+      if (home) wsprMarkerLayer.addLayer(L.polyline([[home.lat, home.lon], [ll.lat, ll.lon]], { color: color, weight: 1, opacity: 0.22 }));
+    }
+  }
+
+  if (window.api.onJtcatWsprSpots) {
+    window.api.onJtcatWsprSpots(function(payload) { wsprAddSpots(payload); });
+  }
+  // Main process confirms/reverts the beacon toggle (e.g. if arming failed
+  // because the operator's call/grid isn't set, or we're not in WSPR mode).
+  if (window.api.onJtcatWsprBeaconState) {
+    window.api.onJtcatWsprBeaconState(function(st) {
+      if (wsprTxEnable) wsprTxEnable.checked = !!(st && st.enabled);
+    });
+  }
+  // ================== end WSPR ==================
+
   // Auto-restore last band, tune, and start decoding
   window.api.getSettings().then(function(s) {
     // Restore the last mode FIRST so the band buttons carry the correct
     // (FT4/FT2) sub-band frequencies before we match/select a band below.
-    if (s.jtcatLastMode === 'FT4' || s.jtcatLastMode === 'FT2') {
+    if (s.jtcatLastMode === 'FT4' || s.jtcatLastMode === 'FT2' || s.jtcatLastMode === 'WSPR') {
       modeSelect.value = s.jtcatLastMode;
       updateBandFreqs();
     }
+    wsprInit(s);
+    applyWsprMode(modeSelect.value === 'WSPR');
     var lastFreq = s.jtcatLastBandFreq || 14074;
     var bandBtn = document.querySelector('.jtcat-band-btn[data-freq="' + lastFreq + '"]');
     // If no exact match, find the band button closest to the requested frequency
