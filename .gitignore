@@ -13,5 +13,11 @@ resources/cloudflared/
 # GPLv3 wsprd binaries/DLLs live here for dev/CI; never commit the binaries
 # (source is vendored under third_party/wsprd/src per third_party/wsprd/BUILD.md)
 third_party/wsprd/build/
+# wsprd binary staged into the package at build time (mirrors assets/hamlib)
+assets/wsprd/wsprd
+assets/wsprd/wsprd.exe
+assets/wsprd/*.dll
+assets/wsprd/*.dylib
+assets/wsprd/*.so*
 # WSPR loopback scratch wav
 dbg.wav

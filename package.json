@@ -166,6 +166,16 @@
         ]
       },
       {
+        "from": "assets/wsprd",
+        "to": "bin",
+        "filter": [
+          "wsprd*",
+          "*.dll",
+          "*.dylib",
+          "*.so*"
+        ]
+      },
+      {
         "from": "scripts/launcher.js",
         "to": "scripts/launcher.js"
       }
