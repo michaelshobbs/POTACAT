@@ -89,6 +89,14 @@
     .jp-wspr-select { font-size: 11px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 3px; padding: 1px 3px; }
     .jp-wspr-sep { border-left: 1px solid var(--border-primary); height: 16px; }
     .jp-wspr-next { margin-left: auto; font-family: monospace; font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 3px; background: var(--bg-tertiary); color: var(--accent-green, #4ecca3); white-space: nowrap; }
+    /* Stats bar — the WSPR data that makes the mode sing */
+    .jp-wspr-stats { padding: 4px 10px; background: var(--bg-primary); border-bottom: 1px solid var(--border-primary); flex-shrink: 0; font-size: 11px; display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: baseline; }
+    .jp-wspr-stats .s-k { color: var(--text-dim); }
+    .jp-wspr-stats .s-v { color: var(--text-secondary); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .jp-wspr-stats .s-dx { color: #ffd966; }
+    .jp-wspr-stats .s-mpw { color: #ff8c42; font-weight: 700; }
+    .jp-wspr-stats .s-heard { color: var(--accent-blue, #4fc3f7); font-weight: 700; }
+    .jp-wspr-stats .jp-wspr-stat-dim { color: var(--text-dim); }
     .jp-wspr-next.tx { background: #e94560; color: #fff; animation: jp-tune-pulse 1s ease-in-out infinite; }
     /* Spot table */
     .jp-wspr-thead, .jp-wspr-row { display: grid; grid-template-columns: 50px 30px 34px 78px 30px 1fr 52px 60px 36px; gap: 4px; padding: 1px 8px; font-family: monospace; font-size: 11px; align-items: baseline; }
@@ -283,9 +291,13 @@
           <label title="Upload your received spots to wsprnet.org — this is what plots your station on the global propagation map.">
             <input type="checkbox" id="jp-wspr-upload"> Report to WSPRnet
           </label>
+          <label title="Show your beacon's footprint on the map — who is hearing YOU (pulled from wspr.live), as lines from your QTH to each receiver.">
+            <input type="checkbox" id="jp-wspr-show-heard" checked> Footprint
+          </label>
           <span id="jp-wspr-next" class="jp-wspr-next" title="Next transmit / receive window">RX</span>
         </div>
       </div>
+      <div id="jp-wspr-stats" class="jp-wspr-stats"><span class="jp-wspr-stat-dim">Listening…</span></div>
       <div class="jp-decode-header">
         WSPR Spots <span id="jp-wspr-meta"></span>
         <div style="display:flex;gap:4px;align-items:center;">
@@ -371,6 +383,7 @@
   <script src="../node_modules/leaflet/dist/leaflet.js"></script>
   <script src="jtcat-parser.js"></script>
   <script src="cq-target.js"></script>
+  <script src="../lib/wspr/stats.js"></script>
   <script src="jtcat-popout.js"></script>
 </body>
 </html>

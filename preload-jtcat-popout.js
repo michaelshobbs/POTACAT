@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   // JTCAT events
   onJtcatDecode: (cb) => ipcRenderer.on('jtcat-decode', (_e, data) => cb(data)),
   onJtcatWsprSpots: (cb) => ipcRenderer.on('jtcat-wspr-spots', (_e, data) => cb(data)),
+  onJtcatWsprHeard: (cb) => ipcRenderer.on('jtcat-wspr-heard', (_e, data) => cb(data)),
   onJtcatWsprBeaconState: (cb) => ipcRenderer.on('jtcat-wspr-beacon-state', (_e, data) => cb(data)),
   onJtcatCycle: (cb) => ipcRenderer.on('jtcat-cycle', (_e, data) => cb(data)),
   onJtcatSpectrum: (cb) => ipcRenderer.on('jtcat-spectrum', (_e, data) => cb(data)),

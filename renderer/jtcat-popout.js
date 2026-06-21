@@ -1805,10 +1805,18 @@ function _applyPopoutTheme(payload) {
   var wsprUploadEl = document.getElementById('jp-wspr-upload');
   var wsprSortBtn = document.getElementById('jp-wspr-sort');
   var wsprClearBtn = document.getElementById('jp-wspr-clear');
+  var wsprStatsEl = document.getElementById('jp-wspr-stats');
+  var wsprShowHeard = document.getElementById('jp-wspr-show-heard');
   var wsprSpots = [];
+  var wsprHeard = [];           // "where am I heard" reception reports (wspr.live)
   var wsprSortByDx = false;
   var wsprDistUnit = 'mi';
-  var wsprMarkerLayer = L.layerGroup();
+  var wsprMarkerLayer = L.layerGroup();   // who I hear (RX spots)
+  var wsprHeardLayer = L.layerGroup();    // who hears me (TX footprint)
+
+  function wsprFmtDist(mi) {
+    return wsprDistUnit === 'km' ? Math.round(mi * 1.60934) + ' km' : mi + ' mi';
+  }
 
   function wsprEsc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) {
@@ -1835,8 +1843,14 @@ function _applyPopoutTheme(payload) {
     // WSPR, where each transmission picks a random spot in the 200 Hz sub-band.
     if (txFreqLabel) txFreqLabel.style.display = on ? 'none' : '';
     if (map) {
-      if (on) { markerLayer.clearLayers(); arcLayer.clearLayers(); if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map); }
-      else if (map.hasLayer(wsprMarkerLayer)) { wsprMarkerLayer.remove(); }
+      if (on) {
+        markerLayer.clearLayers(); arcLayer.clearLayers();
+        if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map);
+        if (wsprShowHeard.checked && !map.hasLayer(wsprHeardLayer)) wsprHeardLayer.addTo(map);
+      } else {
+        if (map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.remove();
+        if (map.hasLayer(wsprHeardLayer)) wsprHeardLayer.remove();
+      }
     }
     if (on) wsprRender();
   }
@@ -1880,6 +1894,14 @@ function _applyPopoutTheme(payload) {
       wsprRender();
     });
     wsprClearBtn.addEventListener('click', wsprClearSpots);
+    wsprShowHeard.addEventListener('change', function() {
+      if (!map) return;
+      if (wsprShowHeard.checked && modeSelect.value === 'WSPR') {
+        if (!map.hasLayer(wsprHeardLayer)) wsprHeardLayer.addTo(map);
+      } else if (map.hasLayer(wsprHeardLayer)) {
+        wsprHeardLayer.remove();
+      }
+    });
   }
 
   function wsprClearSpots() {
@@ -1946,7 +1968,63 @@ function _applyPopoutTheme(payload) {
     wsprSpots.forEach(function(s) { if (s.call) calls[s.call] = 1; });
     wsprMetaEl.textContent = wsprSpots.length + ' spot' + (wsprSpots.length !== 1 ? 's' : '') +
       ' · ' + Object.keys(calls).length + ' call' + (Object.keys(calls).length !== 1 ? 's' : '');
+    wsprRenderStats();
     setTimeout(function() { wsprSpots.forEach(function(s) { s._new = false; }); }, 1300);
+  }
+
+  // The data that makes WSPR sing: coverage counts, best DX, miles-per-watt,
+  // and how many stations are hearing YOU. Uses the shared WsprStats module.
+  function wsprRenderStats() {
+    if (!wsprStatsEl) return;
+    var st = window.WsprStats ? window.WsprStats.computeWsprStats(wsprSpots) : null;
+    var heardCalls = {};
+    wsprHeard.forEach(function(r) { if (r.rxCall) heardCalls[r.rxCall] = 1; });
+    var heardN = Object.keys(heardCalls).length;
+    if ((!st || st.spots === 0) && !heardN) {
+      wsprStatsEl.innerHTML = '<span class="jp-wspr-stat-dim">Listening… spots and your footprint appear each 2-minute cycle.</span>';
+      return;
+    }
+    var p = [];
+    if (st && st.spots) {
+      p.push('<span class="s-k">RX</span> <span class="s-v">' + st.spots + '</span>');
+      p.push('<span class="s-v">' + st.uniqueCalls + '</span> <span class="s-k">calls</span>');
+      if (st.uniqueEntities) p.push('<span class="s-v">' + st.uniqueEntities + '</span> <span class="s-k">DXCC</span>');
+      if (st.uniqueContinents) p.push('<span class="s-v">' + st.uniqueContinents + '</span> <span class="s-k">cont</span>');
+      if (st.bestDx) p.push('<span class="s-k">DX</span> <span class="s-dx">' + wsprEsc(st.bestDx.call) + ' ' + wsprFmtDist(st.bestDx.distanceMi) + '</span>');
+      if (st.bestMpw && window.WsprStats) p.push('<span class="s-mpw">' + window.WsprStats.formatMpw(st.bestMpw.milesPerWatt) + '</span>');
+    }
+    if (heardN) {
+      var farHeard = wsprHeard.reduce(function(m, r) { return Math.max(m, r.distanceMi || 0); }, 0);
+      p.push('<span class="s-k">heard by</span> <span class="s-heard">' + heardN + '</span>' +
+        (farHeard ? ' <span class="s-k">to</span> <span class="s-heard">' + wsprFmtDist(farHeard) + '</span>' : ''));
+    }
+    wsprStatsEl.innerHTML = p.join('&nbsp;&nbsp; ');
+  }
+
+  // "Where am I heard" — render the beacon footprint: a dashed line from home to
+  // every receiver that decoded us, SNR-colored, with white-ringed markers so
+  // it reads distinctly from the RX-spot layer (who I hear).
+  function wsprRenderHeard(payload) {
+    wsprHeard = (payload && payload.reports) || [];
+    wsprHeardLayer.clearLayers();
+    if (map) {
+      if (wsprShowHeard.checked && modeSelect.value === 'WSPR' && !map.hasLayer(wsprHeardLayer)) wsprHeardLayer.addTo(map);
+      var home = myGrid ? gridToLatLon(myGrid) : null;
+      wsprHeard.forEach(function(r) {
+        var lat = r.lat, lon = r.lon;
+        if ((lat == null || lon == null) && r.rxGrid) { var ll = gridToLatLon(r.rxGrid); if (ll) { lat = ll.lat; lon = ll.lon; } }
+        if (lat == null || lon == null) return;
+        var color = wsprSnrColor(r.snr);
+        if (home) wsprHeardLayer.addLayer(L.polyline([[home.lat, home.lon], [lat, lon]], { color: color, weight: 1, opacity: 0.55, dashArray: '4 3' }));
+        var m = L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: color, fillOpacity: 0.9 });
+        m.bindPopup('<b>' + wsprEsc(r.rxCall) + '</b> heard you' +
+          '<br>' + (r.snr != null ? r.snr + ' dB' : '') +
+          (r.distanceMi != null ? ' · ' + wsprFmtDist(r.distanceMi) : '') +
+          (r.bearing != null ? ' · ' + r.bearing + '°' : ''), { className: 'jp-station-popup' });
+        wsprHeardLayer.addLayer(m);
+      });
+    }
+    wsprRenderStats();
   }
 
   function wsprAddMarker(s) {
@@ -1969,6 +2047,9 @@ function _applyPopoutTheme(payload) {
 
   if (window.api.onJtcatWsprSpots) {
     window.api.onJtcatWsprSpots(function(payload) { wsprAddSpots(payload); });
+  }
+  if (window.api.onJtcatWsprHeard) {
+    window.api.onJtcatWsprHeard(function(payload) { wsprRenderHeard(payload); });
   }
   // Main process confirms/reverts the beacon toggle (e.g. if arming failed
   // because the operator's call/grid isn't set, or we're not in WSPR mode).

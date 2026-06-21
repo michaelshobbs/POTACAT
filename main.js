@@ -228,6 +228,7 @@ const { gridToLatLon, haversineDistanceMiles, bearing } = require('./lib/grid');
 const { freqToBand } = require('./lib/bands');
 const wsprnet = require('./lib/wspr/wsprnet');
 const wsprBands = require('./lib/wspr/bands');
+const wsprlive = require('./lib/wspr/wsprlive');
 const { WsprScheduler } = require('./lib/wspr/scheduler');
 const { encodeWspr } = require('./lib/wspr/encode');
 const { loadCtyDat, resolveCallsign, getAllEntities } = require('./lib/cty');
@@ -5177,6 +5178,29 @@ function armJtcatTxFailsafe(label, samples, sampleRate = 12000, offsetMs = 0, st
   }, timeoutMs);
 }
 
+// "Where am I heard" — pull our beacon's reception reports from wspr.live and
+// push them to the UI as the footprint overlay. Throttled to ~3 min (wspr.live
+// lags wsprnet by a few minutes anyway) and only while in WSPR mode with a call.
+let _lastWsprHeardFetch = 0;
+async function maybeFetchWsprHeard(force) {
+  const call = (settings.myCallsign || '').trim();
+  if (!call || !ft8Engine || ft8Engine._mode !== 'WSPR') return;
+  if (!force && Date.now() - _lastWsprHeardFetch < 180000) return;
+  _lastWsprHeardFetch = Date.now();
+  try {
+    const res = await wsprlive.fetchReception(call, { sinceMinutes: 180, limit: 300 });
+    if (!res.ok) { sendCatLog('[JTCAT] WSPR footprint: ' + res.error); return; }
+    const payload = { call, reports: res.reports };
+    if (jtcatPopoutWin && !jtcatPopoutWin.isDestroyed()) jtcatPopoutWin.webContents.send('jtcat-wspr-heard', payload);
+    if (win && !win.isDestroyed()) win.webContents.send('jtcat-wspr-heard', payload);
+    if (res.reports.length) {
+      const rxers = new Set(res.reports.map((r) => r.rxCall)).size;
+      const far = res.reports.reduce((m, r) => Math.max(m, r.distanceMi || 0), 0);
+      sendCatLog(`[JTCAT] WSPR footprint: heard by ${rxers} station${rxers !== 1 ? 's' : ''} (farthest ${far} mi) in the last 3 h`);
+    }
+  } catch (e) { sendCatLog('[JTCAT] WSPR footprint error: ' + (e && e.message || e)); }
+}
+
 // dBm -> watts, hard-capped at the WSPR QRPp ceiling (1 W).
 function wsprWattsFromDbm(dbm) {
   return Math.min(JTCAT_WSPR_MAX_WATTS, Math.pow(10, (Number(dbm) - 30) / 10));
@@ -5871,6 +5895,8 @@ function startJtcat(mode) {
     // Relay to a connected phone/web client (spots carry dBm + distance/bearing
     // + DXCC, already enriched, so mobile renders without recomputing).
     if (remoteServer && remoteServer.hasClient()) remoteServer.broadcastJtcatWsprSpots(payload);
+    // "Where am I heard" — refresh the beacon footprint from wspr.live (throttled).
+    maybeFetchWsprHeard();
 
     // Upload to wsprnet.org if enabled (keyed by our call + grid).
     if (settings.wsprUpload && settings.myCallsign && settings.grid && spots.length) {
