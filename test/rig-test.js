@@ -219,8 +219,44 @@ test('Kenwood setMode CW -> MD3 (no DA)', () => {
   assert.strictEqual(writes.length, 1);
 });
 
-test('Kenwood setTransmit on -> TX;', () => {
+test('Kenwood setTransmit on -> TX; (generic default)', () => {
   const { codec, writes } = captureWrites(KenwoodCodec, TS590_MODEL);
+  codec.setTransmit(true);
+  assert.strictEqual(writes[0], 'TX;');
+});
+
+// Real-model data-send PTT: plain TX; keys the front mic; TX1; keys with the
+// rear/USB data input. POTACAT only sends computer audio to these rigs, so the
+// real TS-590S/SG (and TS-890S/TS-990S) must use TX1; or TX is silent dead air.
+// (KF0WXX serial-logger finding, 2026-06.)
+test('TS-590S/SG (real model) setTransmit on -> TX1; (data send)', () => {
+  const { RIG_MODELS } = require('../lib/rig-models');
+  const { codec, writes } = captureWrites(KenwoodCodec, RIG_MODELS['TS-590S/SG']);
+  codec.setTransmit(true);
+  assert.strictEqual(writes[0], 'TX1;');
+});
+
+test('TS-590S/SG (real model) setTransmit off -> RX; (stops TX regardless of form)', () => {
+  const { RIG_MODELS } = require('../lib/rig-models');
+  const { codec, writes } = captureWrites(KenwoodCodec, RIG_MODELS['TS-590S/SG']);
+  codec.setTransmit(false);
+  assert.strictEqual(writes[0], 'RX;');
+});
+
+test('TS-890S / TS-990S (real models) setTransmit on -> TX1; (data send)', () => {
+  const { RIG_MODELS } = require('../lib/rig-models');
+  for (const id of ['TS-890S', 'TS-990S']) {
+    const { codec, writes } = captureWrites(KenwoodCodec, RIG_MODELS[id]);
+    codec.setTransmit(true);
+    assert.strictEqual(writes[0], 'TX1;', `${id} should data-send key with TX1;`);
+  }
+});
+
+// Guard against over-broadening: TS-2000 predates TX0/TX1 data-send, so it must
+// stay on plain TX;. Elecraft (same codec) likewise keeps TX;.
+test('TS-2000 (real model) setTransmit on -> TX; (no data-send override)', () => {
+  const { RIG_MODELS } = require('../lib/rig-models');
+  const { codec, writes } = captureWrites(KenwoodCodec, RIG_MODELS['TS-2000']);
   codec.setTransmit(true);
   assert.strictEqual(writes[0], 'TX;');
 });
