@@ -253,6 +253,7 @@ const { parsePotaParksCSV } = require('./lib/pota-parks');
 const { PotaSync } = require('./lib/pota-sync');
 const { WsjtxClient, extractCallsigns, encodeHeartbeat, encodeLoggedAdif, encodeQsoLogged } = require('./lib/wsjtx');
 const { PskrClient } = require('./lib/pskreporter');
+const PskrTx = require('./lib/pskreporter-tx');
 const { Ft8Engine } = require('./lib/ft8-engine');
 const { checkClockOffset, syncSystemClock } = require('./lib/ntp');
 const JtcatParser = require('./renderer/jtcat-parser'); // shared FT8 message classifier (also a browser global in the renderers)
@@ -5183,6 +5184,72 @@ function armJtcatTxFailsafe(label, samples, sampleRate = 12000, offsetMs = 0, st
   }, timeoutMs);
 }
 
+// --- PSKReporter reception reporting (FT8/FT4) ---
+// Contribute the decodes our station hears to pskreporter.info, the way WSJT-X
+// does, over its IPFIX-over-UDP ingest. Batched + sent every ~5 min. OFF by
+// default (settings.pskrUpload) until the wire format is confirmed live —
+// settings.pskrTest targets the test port (14739) for validation.
+const PSKR_TX_HOST = 'report.pskreporter.info';
+const PSKR_TX_PORT = 4739;
+const PSKR_TX_TEST_PORT = 14739;
+const PSKR_FLUSH_MS = 5 * 60 * 1000;
+let _pskrPending = new Map();   // call -> best report this window (dedup)
+let _pskrObsId = 0;             // random observation-domain id, persistent per session
+let _pskrSeq = 0;
+let _pskrTimer = null;
+
+function pskrQueueDecodes(data) {
+  if (!settings.pskrUpload) return;
+  const mode = (data && data.mode) || (ft8Engine ? ft8Engine._mode : 'FT8');
+  if (mode !== 'FT8' && mode !== 'FT4') return; // WSPR -> wsprnet; only fast modes here
+  const dialHz = _currentFreqHz || 0;
+  if (!dialHz) return;
+  const myCall = (settings.myCallsign || '').toUpperCase();
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const r of (data.results || [])) {
+    const call = (r.call || '').toUpperCase();
+    if (!call || call === myCall) continue;            // skip our own call
+    if (!/^[A-Z0-9/]{3,}$/.test(call)) continue;       // sane callsign only
+    const rep = {
+      call, freqHz: Math.round(dialHz + (r.df || 0)), snr: typeof r.snr === 'number' ? r.snr : 0,
+      mode, grid: (r.grid && /^[A-R]{2}\d{2}$/i.test(r.grid)) ? r.grid.toUpperCase() : '', timeSec: nowSec,
+    };
+    const prev = _pskrPending.get(call);               // dedup: keep the strongest
+    if (!prev || rep.snr > prev.snr) _pskrPending.set(call, rep);
+  }
+}
+
+function pskrFlush() {
+  if (!settings.pskrUpload) { _pskrPending.clear(); return; }
+  if (_pskrPending.size === 0) return;
+  const myCall = (settings.myCallsign || '').trim().toUpperCase();
+  const grid = (settings.grid || '').trim().toUpperCase().slice(0, 6);
+  if (!myCall || grid.length < 4) { _pskrPending.clear(); return; }
+  const reports = Array.from(_pskrPending.values());
+  _pskrPending.clear();
+  if (!_pskrObsId) _pskrObsId = (Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  let datagram;
+  try {
+    datagram = PskrTx.encodeDatagram(
+      { call: myCall, grid, software: 'POTACAT ' + (app.getVersion() || ''), antenna: settings.pskrAntenna || '' },
+      reports,
+      { sequenceNumber: _pskrSeq++, observationDomainId: _pskrObsId }
+    );
+  } catch (e) { sendCatLog('[PSKReporter] encode error: ' + (e && e.message || e)); return; }
+  const port = settings.pskrTest ? PSKR_TX_TEST_PORT : PSKR_TX_PORT;
+  const sock = dgram.createSocket('udp4');
+  sock.send(datagram, port, PSKR_TX_HOST, (err) => {
+    if (err) sendCatLog('[PSKReporter] send failed: ' + err.message);
+    else sendCatLog(`[PSKReporter] reported ${reports.length} decode${reports.length !== 1 ? 's' : ''} to ${PSKR_TX_HOST}:${port}${settings.pskrTest ? ' (TEST)' : ''} — verify at pskreporter.info`);
+    try { sock.close(); } catch {}
+  });
+}
+
+function startPskrReporter() {
+  if (_pskrTimer) return;
+  _pskrTimer = setInterval(pskrFlush, PSKR_FLUSH_MS);
+}
+
 // "Where am I heard" — pull our beacon's reception reports from wspr.live and
 // push them to the UI as the footprint overlay. Throttled to ~3 min (wspr.live
 // lags wsprnet by a few minutes anyway) and only while in WSPR mode with a call.
@@ -5719,6 +5786,10 @@ function startJtcat(mode) {
     // Stamp the authoritative callsign so renderers classify against the
     // current call, never a stale cached copy. K3SBP 2026-06-10.
     data.myCall = (settings.myCallsign || '').toUpperCase();
+    // Contribute these FT8/FT4 decodes to PSKReporter (batched, gated). r.call
+    // is the transmitter (CQ caller / "FROM" station), exactly what PSKReporter
+    // wants — see extractCallsigns.
+    pskrQueueDecodes(data);
     if (win && !win.isDestroyed()) {
       win.webContents.send('jtcat-decode', data);
     }
@@ -16429,6 +16500,7 @@ let kiwiActive = false;
 
 app.whenReady().then(() => {
   logStartupStage('app.whenReady fired');
+  startPskrReporter(); // 5-min PSKReporter flush loop (no-ops unless enabled)
   // Add Referer header for OpenStreetMap tile requests (required by OSM usage policy)
   const { session } = require('electron');
   session.defaultSession.webRequest.onBeforeSendHeaders(
