@@ -1982,7 +1982,6 @@ function _applyPopoutTheme(payload) {
         var dist = s.distanceMi != null
           ? (wsprDistUnit === 'km' ? Math.round(s.distanceMi * 1.60934) + ' km' : s.distanceMi + ' mi') : '';
         var isDx = s.distanceMi && s.distanceMi === maxDist && maxDist > 0;
-        var ent = s.entity ? '<span class="w-ent">' + wsprEsc(s.entity) + (s.continent ? ' · ' + wsprEsc(s.continent) : '') + '</span>' : '';
         return '<div class="jp-wspr-row' + (s._new ? ' is-new' : '') + (isDx ? ' is-dx' : '') + '">' +
           '<span class="w-time">' + wsprEsc(wsprFmtTime(s.timeUtc)) + '</span>' +
           '<span class="w-db">' + (s.snr != null ? s.snr : '') + '</span>' +
@@ -1991,9 +1990,11 @@ function _applyPopoutTheme(payload) {
           '<span class="w-dr">' + (s.drift != null ? s.drift : '') + '</span>' +
           '<span class="w-call">' + wsprEsc(s.call || '') + '</span>' +
           '<span class="w-grid">' + wsprEsc(s.grid || '') + '</span>' +
+          '<span class="w-country" title="' + wsprEsc(s.entity || '') + '">' + wsprEsc(s.entity || '') + '</span>' +
+          '<span class="w-reg">' + wsprEsc(s.continent || '') + '</span>' +
           '<span class="w-dist">' + dist + '</span>' +
           '<span class="w-az">' + (s.bearing != null ? s.bearing + '°' : '') + '</span>' +
-          ent + '</div>';
+          '</div>';
       }).join('');
     }
     var calls = {};
@@ -2049,14 +2050,35 @@ function _applyPopoutTheme(payload) {
         var color = wsprSnrColor(r.snr);
         if (home) wsprHeardLayer.addLayer(L.polyline([[home.lat, home.lon], [lat, lon]], { color: color, weight: 1, opacity: 0.55, dashArray: '4 3' }));
         var m = L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: color, fillOpacity: 0.9 });
-        m.bindPopup('<b>' + wsprEsc(r.rxCall) + '</b> heard you' +
+        m.bindPopup(wsprQrzCallHtml(r.rxCall) + ' heard you' +
           '<br>' + (r.snr != null ? r.snr + ' dB' : '') +
           (r.distanceMi != null ? ' · ' + wsprFmtDist(r.distanceMi) : '') +
           (r.bearing != null ? ' · ' + r.bearing + '°' : ''), { className: 'jp-station-popup' });
+        wsprWireQrz(m);
         wsprHeardLayer.addLayer(m);
       });
     }
     wsprRenderStats();
+  }
+
+  // A QRZ-clickable callsign for map popups. CSP-safe: rendered as a link and
+  // wired on popupopen to open qrz.com in the external browser.
+  function wsprQrzCallHtml(call) {
+    return '<a href="#" class="wspr-qrz" data-call="' + wsprEsc(call || '') + '" ' +
+      'style="color:#4fc3f7;font-weight:700;text-decoration:underline;cursor:pointer;">' + wsprEsc(call || '') + '</a>';
+  }
+  function wsprWireQrz(marker) {
+    marker.on('popupopen', function() {
+      var el = marker.getPopup().getElement();
+      if (!el) return;
+      var a = el.querySelector('.wspr-qrz');
+      if (!a) return;
+      a.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        var c = a.dataset.call;
+        if (c && window.api.openExternal) window.api.openExternal('https://www.qrz.com/db/' + encodeURIComponent(c));
+      });
+    });
   }
 
   function wsprAddMarker(s) {
@@ -2066,10 +2088,11 @@ function _applyPopoutTheme(payload) {
     if (!map.hasLayer(wsprMarkerLayer)) wsprMarkerLayer.addTo(map);
     var color = wsprSnrColor(s.snr);
     var m = L.circleMarker([ll.lat, ll.lon], { radius: 5, color: color, weight: 1, fillColor: color, fillOpacity: 0.7 });
-    m.bindPopup('<b>' + wsprEsc(s.call || '') + '</b> ' + wsprEsc(s.grid || '') +
+    m.bindPopup(wsprQrzCallHtml(s.call) + ' ' + wsprEsc(s.grid || '') +
       '<br>' + (s.snr != null ? s.snr + ' dB' : '') +
       (s.distanceMi != null ? ' · ' + (wsprDistUnit === 'km' ? Math.round(s.distanceMi * 1.60934) + ' km' : s.distanceMi + ' mi') : '') +
       (s.entity ? '<br>' + wsprEsc(s.entity) : ''), { className: 'jp-station-popup' });
+    wsprWireQrz(m);
     wsprMarkerLayer.addLayer(m);
     if (myGrid) {
       var home = gridToLatLon(myGrid);

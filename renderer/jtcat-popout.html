@@ -105,7 +105,7 @@
     .jp-wspr-chip.hopping { box-shadow: 0 0 0 2px #4fc3f7; }
     .jp-wspr-next.tx { background: #e94560; color: #fff; animation: jp-tune-pulse 1s ease-in-out infinite; }
     /* Spot table */
-    .jp-wspr-thead, .jp-wspr-row { display: grid; grid-template-columns: 50px 30px 34px 78px 30px 1fr 52px 60px 36px; gap: 4px; padding: 1px 8px; font-family: monospace; font-size: 11px; align-items: baseline; }
+    .jp-wspr-thead, .jp-wspr-row { display: grid; grid-template-columns: 46px 26px 30px 68px 26px 60px 42px 1fr 30px 50px 30px; gap: 4px; padding: 1px 8px; font-family: monospace; font-size: 11px; align-items: baseline; }
     .jp-wspr-thead { color: var(--text-dim); font-weight: 700; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); padding-top: 3px; padding-bottom: 3px; flex-shrink: 0; }
     .jp-wspr-thead span, .jp-wspr-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .jp-wspr-list { flex: 1; overflow-y: auto; background: var(--bg-primary); padding: 2px 0; font-size: 12px; line-height: 1.55; }
@@ -121,7 +121,8 @@
     .jp-wspr-row .w-dist { color: #ffd966; text-align: right; }
     .jp-wspr-row .w-az { color: var(--text-dim); text-align: right; }
     .jp-wspr-row.is-dx .w-dist { color: #ff8c42; font-weight: 700; }
-    .jp-wspr-row .w-ent { grid-column: 1 / -1; font-size: 10px; color: var(--text-dim); padding-left: 50px; margin-top: -2px; }
+    .jp-wspr-row .w-country { color: var(--text-secondary); }
+    .jp-wspr-row .w-reg { color: var(--text-dim); text-align: center; }
 
     /* Controls bar */
     .jp-controls { padding: 6px 10px; background: var(--bg-secondary); border-top: 1px solid var(--border-primary); display: flex; gap: 8px; align-items: center; flex-shrink: 0; font-size: 12px; }
@@ -321,7 +322,8 @@
       <div class="jp-wspr-thead">
         <span class="w-time">UTC</span><span class="w-db">dB</span><span class="w-dt">DT</span>
         <span class="w-freq">Freq</span><span class="w-dr">Dft</span><span class="w-call">Call</span>
-        <span class="w-grid">Grid</span><span class="w-dist">Dist</span><span class="w-az">Az</span>
+        <span class="w-grid">Grid</span><span class="w-country">Country</span><span class="w-reg">Reg</span>
+        <span class="w-dist">Dist</span><span class="w-az">Az</span>
       </div>
       <div id="jp-wspr-list" class="jp-wspr-list">
         <div class="jp-empty">No WSPR spots yet — listening on a 2-minute cycle…</div>

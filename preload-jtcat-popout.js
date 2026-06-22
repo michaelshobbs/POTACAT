@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   jtcatStop: () => ipcRenderer.send('jtcat-stop'),
   jtcatSetMode: (mode) => ipcRenderer.send('jtcat-set-mode', mode),
   jtcatSetWsprDial: (bandOrMHz) => ipcRenderer.send('jtcat-set-wspr-dial', bandOrMHz),
+  openExternal: (url) => ipcRenderer.send('open-external', url),
   jtcatWsprBeacon: (opts) => ipcRenderer.send('jtcat-wspr-beacon', opts),
   jtcatWsprHop: (opts) => ipcRenderer.send('jtcat-wspr-hop', opts),
   jtcatSetTxFreq: (hz) => ipcRenderer.send('jtcat-set-tx-freq', hz),
