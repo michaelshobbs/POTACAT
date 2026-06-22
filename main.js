@@ -15692,7 +15692,7 @@ function tuneRadio(freqKhz, mode, brng, { clearXit } = {}) {
   if (ft8Engine && mode) {
     const mm = String(mode).toUpperCase();
     const isDataish =
-      mm === 'FT8' || mm === 'FT4' || mm === 'FT2' ||
+      mm === 'FT8' || mm === 'FT4' || mm === 'FT2' || mm === 'WSPR' ||
       mm === 'DIGU' || mm === 'DIGL' ||
       mm === 'PKTUSB' || mm === 'PKTLSB' ||
       mm === 'DATA-USB' || mm === 'DATA-LSB' ||
