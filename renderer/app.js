@@ -7297,6 +7297,14 @@ async function _pairRefreshCloudStatus() {
       _pairRenderState();
     });
   }
+  // Re-fetch the cloud SUBSCRIPTION on a cloud/sync change too — not just on
+  // tunnel changes. The Summary Cloud card already does this (onCloudSyncStatus
+  // -> _renderSummaryCloud); without the same subscription here the ECHOCAT pair
+  // panel kept a stale entitlement and showed "free trial" after the user's
+  // subscription resolved to active (Cloud card correct, ECHOCAT wrong).
+  if (window.api && window.api.onCloudSyncStatus) {
+    window.api.onCloudSyncStatus(() => { _pairRefreshCloudStatus(); });
+  }
 })();
 
 // Returns 'cloud' or 'lan' so the pair-QR popout knows which payload
