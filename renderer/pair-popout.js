@@ -171,7 +171,7 @@ function _applyPopoutTheme(payload) {
       if (!r || (!r.error && !r.qrText && !r.pairingToken && !r.host)) {
         showError(
           'Pairing data came back empty — desktop returned no token or URL.',
-          'Restart POTACAT, make sure ECHOCAT is enabled in Settings, then try again. If this persists, open DevTools (Ctrl+Shift+I) → Console and send me what appears after "[pair-popout] IPC returned:".',
+          'ECHOCAT runs automatically (there is no enable switch). Fully quit and reopen POTACAT, then try again. If this persists, open DevTools (Ctrl+Shift+I) → Console and send me what appears after "[pair-popout] IPC returned:".',
         );
         manualUrlEl.value = manualHostEl.value = manualTokenEl.value = manualFpEl.value = '';
         return;
@@ -183,7 +183,7 @@ function _applyPopoutTheme(payload) {
       if (r && r.error) {
         var hint = '';
         if (/server is not running|enable it in settings/i.test(r.error)) {
-          hint = 'Open Settings → ECHOCAT → check "Enable ECHOCAT remote access" (the box at the top), then come back here and tap Regenerate.';
+          hint = 'ECHOCAT runs automatically — there is no longer an enable switch in Settings. Fully quit POTACAT (Quit, not just close the window) and reopen it, then come back here and tap Regenerate. If it still reports not running, please file a bug report.';
         } else if (/qrcode module/i.test(r.error)) {
           hint = 'If you installed via .dmg / .exe / .AppImage, please file a bug report — this should never happen on a packaged build.';
         } else if (/HTTPS.*not enabled|HTTPS Certificates/i.test(r.error)) {

@@ -16581,6 +16581,15 @@ app.whenReady().then(() => {
   connectTci();
   connectAntennaGenius();
   connectTunerGenius();
+  // ECHOCAT is always-on — the enable toggle was removed 2026-06-02. The gate
+  // below (and headless above) reads `enableRemote`, which is PROFILE-scoped,
+  // so an upgraded/multi-op-migrated profile can come up without the flag and
+  // then the server never starts — with no Settings toggle to switch it back
+  // on. Force it true here so always-on actually holds in the GUI, mirroring
+  // headless + the renderer (which always saves enableRemote:true on save).
+  // (KE6ZC v1.8.15: "ECHOCAT server is not running and I can't find a way to
+  // enable it.")
+  if (!settings.enableRemote) { settings.enableRemote = true; saveSettings(settings); }
   if (settings.enableRemote) connectRemote();
   logStartupStage('all connect* dispatched (most async, actual connections may still be pending)');
   if (settings.enableCwKeyer) connectKeyer();
