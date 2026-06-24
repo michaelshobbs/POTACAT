@@ -290,6 +290,24 @@ The FT-891 uses 9-digit `FA` commands and `MD0` syntax (with VFO selector). POTA
 
 These radios support the `AC` command for ATU control. POTACAT's auto-tune-on-band-change feature works with the built-in antenna tuner.
 
+#### Yaesu FTDX1200 / FTDX3000 / FTDX5000
+
+| Setting | Value |
+|---------|-------|
+| Connection type | Serial CAT (Kenwood) |
+| Baud rate | 38400 (match radio menu) |
+| Disable DTR/RTS | **No** — leave unchecked |
+
+These older FTDX radios gate CAT communication on the **RTS** handshake line. Set the radio's menu accordingly:
+
+- **Menu 037 "CAT SELECT"** → `USB` (if using the radio's built-in USB CAT port)
+- **Menu 038 "CAT RATE"** → match the baud rate you set in POTACAT (38400 recommended)
+- **Menu 040 "CAT RTS"** → **Enable** ← this is the one people miss
+
+In POTACAT, **leave "Disable DTR/RTS on connect" unchecked.** POTACAT keeps RTS asserted on connect, which is exactly what the radio needs when CAT RTS is enabled. If you disable DTR/RTS while the radio expects RTS, the port still opens — but the radio silently ignores every frequency command.
+
+> **Symptom of a CAT RTS mismatch:** POTACAT connects, QRZ links open, and your logging app works, **but the frequency never changes.** QRZ and logging don't use CAT at all, so they work regardless — only tuning exercises the CAT write path. POTACAT now pops a warning if it sends tune commands and the radio never reports the new frequency back. The fix is almost always menu 040 (CAT RTS = Enable) plus unchecking Disable DTR/RTS.
+
 #### Yaesu with Win4Yaesu Suite
 
 If you run Win4Yaesu Suite alongside POTACAT, see the [Win4Yaesu section](#using-potacat-with-win4yaesu-suite) below for virtual COM port setup.

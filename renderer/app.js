@@ -4279,6 +4279,21 @@ async function _gpRevokeFromOwnerBanner() {
       console.warn('[Guest Pass] blocked:', info);
     });
   }
+  // Serial CAT connected but the radio isn't honoring tune commands — point the
+  // user at the usual culprit (CAT RTS / Disable DTR/RTS) with a sticky warning
+  // rather than letting them assume "connected" means tuning works. (FTDX3000)
+  if (window.api && window.api.onCatTuneUnconfirmed) {
+    window.api.onCatTuneUnconfirmed((info) => {
+      const yaesuHint = info && info.isYaesu
+        ? ' On Yaesu (FTDX1200/3000/5000), set the radio’s CAT RTS menu to Enable.'
+        : '';
+      showLogToast(
+        'Radio connected but not responding to frequency changes. ' +
+        'Check your radio’s CAT settings and uncheck "Disable DTR/RTS on connect" in rig setup.' +
+        yaesuHint,
+        { warn: true, sticky: true });
+    });
+  }
 })();
 
 // ── Settings → ECHOCAT → Guest Pass generate form ──
@@ -11416,12 +11431,40 @@ function render() {
       skipButton.title = isSkipped ? 'Include in scan' : 'Skip during scan';
       skipButton.addEventListener('click', (e) => {
         e.stopPropagation();
+        // Is this the spot the scan is currently dwelling on? Capture before we
+        // mutate the skip sets (which reshuffle getScanList()).
+        const activeSpot = scanning ? lastTunedSpot : null;
+        const skippingActive = !!(activeSpot
+          && activeSpot.callsign === s.callsign && activeSpot.frequency === s.frequency);
         if (isSkipped) {
           scanSkipped.delete(spotSkipKey);
           scanForceUnskipped.add(spotSkipKey);
         } else {
           scanSkipped.add(spotSkipKey);
           scanForceUnskipped.delete(spotSkipKey);
+        }
+        if (scanning) {
+          if (skippingActive) {
+            // Skipping the row we're dwelling on: tune the next spot now and
+            // restart the dwell, rather than leaving the dead row tuned until
+            // the timer expires (which would then advance a second time and
+            // skip the row the highlight already moved to). scanIndex still
+            // points at the just-skipped spot's old slot; once it drops out of
+            // getScanList() the next spot shifts into that index, so stepping
+            // from here tunes it. (WG9I scan-skip bug)
+            if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+            scanStep();
+            return;
+          }
+          // Skipped/unskipped a different row — the list shifted under us.
+          // Re-anchor scanIndex to the spot we're still dwelling on so the
+          // highlight and the next step stay on the right spot.
+          if (activeSpot) {
+            const list = getScanList();
+            const idx = list.findIndex(x =>
+              x.callsign === activeSpot.callsign && x.frequency === activeSpot.frequency);
+            if (idx >= 0) scanIndex = idx;
+          }
         }
         render();
       });

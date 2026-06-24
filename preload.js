@@ -174,6 +174,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('pass-cat-blocked', handler);
     return () => ipcRenderer.removeListener('pass-cat-blocked', handler);
   },
+  onCatTuneUnconfirmed: (cb) => {
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on('cat-tune-unconfirmed', handler);
+    return () => ipcRenderer.removeListener('cat-tune-unconfirmed', handler);
+  },
   // --- Guest Pass issue/list/revoke (desktop UI under ECHOCAT) ---
   passesIssue: (body) => ipcRenderer.invoke('passes-issue', body),
   passesList: () => ipcRenderer.invoke('passes-list'),

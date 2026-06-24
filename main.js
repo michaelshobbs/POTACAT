@@ -2718,6 +2718,18 @@ async function connectCat() {
     cat.on('status', sendCatStatus);
     cat.on('status', (s) => checkFlexHandoff(!!s.connected));
     cat.on('frequency', sendCatFrequency);
+    // Serial CAT port opened but the radio never echoes our tune — classically a
+    // Yaesu (FTDX1200/3000/5000) with menu "CAT RTS" enabled while we de-assert
+    // RTS, or a DTR/RTS-blocked USB interface. The port connects (so QRZ/logging
+    // look fine) but FA tune commands are silently dropped. Surface the fix.
+    cat.on('tune-unconfirmed', (info) => {
+      const fKhz = info && info.targetHz ? (info.targetHz / 1000).toFixed(1) : '?';
+      sendCatLog(`[CAT] Radio not responding to tune commands (${fKhz} kHz never echoed after ${info && info.attempts} tries). ` +
+        `Likely CAT RTS / DTR-RTS handshake — check the radio's CAT menu and the "Disable DTR/RTS on connect" setting.`);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('cat-tune-unconfirmed', info || {});
+      }
+    });
     cat.on('mode', sendCatMode);
     cat.on('power', sendCatPower);
     cat.on('nb', sendCatNb);
