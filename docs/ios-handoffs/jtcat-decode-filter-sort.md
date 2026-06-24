@@ -96,3 +96,62 @@ The native app's equivalents should each: update local toggle state → reflect 
 - `renderer/app.js` — `renderJtcatDecodes()` (the hidden in-window view) is an older, working rebuild-on-toggle implementation if you want a second example.
 - `renderer/remote.js` — `ft8RenderDecodeRow` + the filter button handlers (~L6361–6382): the web client that still has the append-only bug. Do **not** mirror its current toggle handlers.
 - Related: `docs/ios-handoffs/chase-target.md` (where `chaseMatch` / Chase filter come from).
+
+---
+
+## Mobile agent status — 2026-06-16 (DONE, at parity)
+
+Implemented on ECHOCAT mobile (`src/screens/Ft8Screen.tsx` + new
+`src/utils/ft8Filter.ts`). tsc clean; 311/311 unit tests
+(`__tests__/ft8Filter.test.ts` covers every §3 rule incl. the
+regression below).
+
+**Good news — the core bug never existed on mobile.** The decode list
+is a `useMemo(flatRows, [batches, filter, sort, myCallsign, searchText])`
+that rebuilds over the *entire* retained buffer whenever any control
+changes. That is structurally the same as `rebuildBandActivity()` — a
+filter/sort toggle re-renders the decodes already on screen instantly.
+No append-only defect to fix. §4 is also satisfied for free: `flatRows`
+is a pure render memo with zero side-effects; auto-reply is
+desktop-driven (mobile only sends `jtcat-reply` on an explicit user
+tap), so toggling a filter can never TX, re-log, or re-plot.
+
+**Two real gaps found + fixed for parity:**
+1. **Wanted filter swallowed 73s** (violated §3 + acceptance #4). The
+   `is73` bypass was present on the cq/chase branches but missing on
+   wanted. Fixed: `wanted && !(isWanted || isDirected || is73)`. Now
+   matches §3 exactly. Regression-tested.
+2. **No text-search control existed.** Added a search row beneath the
+   filter pills — case-insensitive substring over raw decode text,
+   composed (AND) with the flag filters, **no directed/73 bypass** (per
+   §3: explicit search = exact intent). Re-filters the retained buffer
+   live per keystroke.
+
+**Intentional mobile-side divergences (permitted by §6 / platform fit —
+flagging so the contract is on record, NOT bugs):**
+- **Sort is per-cycle, not global.** Mobile keeps chronological cycle
+  separators and sorts *within* each time block. Desktop's `sortDecodes`
+  is per-cycle too, so this agrees — calling it out only because mobile
+  renders explicit "HHMM UTC" separators between blocks.
+- **Bonus `Call` (A–Z) sort.** Mobile offers Time / dB / **Call**;
+  desktop has Time / dB. Additive, harmless. **Desktop may want to
+  mirror it** for symmetry — your call.
+- **30-cycle retained buffer** vs desktop's 50 (§6 explicitly allows
+  per-platform caps; 30 fits phone memory).
+- **dB sort missing-SNR default** is `-999` (sinks unknown-SNR rows to
+  the bottom) vs the doc's `(b.db||0)`. Cosmetic ordering of rows that
+  have no SNR; trivially changeable if you want bit-exact parity.
+
+**One thing I'd like desktop to confirm (possible doc/impl mismatch):**
+§3 specifies `isDirected = … text contains my callsign **as a token**`.
+Both mobile (pre-existing) and — please verify — the desktop pop-out
+appear to use a **substring** check (`text.includes(myCall)`), not a
+token split. I deliberately left mobile on substring because for the
+stated goal ("never lose a reply to my own CQ") substring is the *safer,
+over-inclusive* choice: strict token equality would MISS compound/
+portable calls (`K3SBP/P`, `<K3SBP>` hashed form) that substring still
+catches. **Ask:** should we (a) update §3 to document substring as the
+real contract, or (b) move both sides to token matching and accept the
+compound-call edge? Mobile will follow whichever you pick. Until then
+both sides are consistent on substring, so there's no user-visible
+divergence today.
