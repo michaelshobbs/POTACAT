@@ -1519,6 +1519,12 @@ a.park-link:hover {
   outline-offset: -2px;
 }
 
+/* Ctrl/Cmd-click multi-op selection — operators picked to log together. */
+.spot-selected {
+  background: rgba(79, 195, 247, 0.16);
+  box-shadow: inset 3px 0 0 0 var(--accent-blue, #4fc3f7);
+}
+
 .scan-skipped {
   opacity: 0.4;
 }

@@ -282,6 +282,10 @@ let llotaRespotTemplate = ''; // empty = use respotTemplate
 let wwbotaRespotTemplate = ''; // empty = use respotTemplate
 let dxRespotTemplate = 'Heard in {QTH} 73s {mycallsign} via POTACAT'; // DX cluster
 let quickRespotTemplate = 'Heard strong in {QTH}; 73s {callsign} via POTACAT'; // legacy — migrated below
+// User-defined canned re-spot messages, shared across programs. The log dialog
+// auto-fills the per-program template (option 1), then the ⟳ flick button cycles
+// through these. Same {token} substitution, applied at send time. (NA7C/Tess req)
+let respotPresets = [];
 function respotTemplateFor(network) {
   // network: 'pota' | 'wwff' | 'llota' | 'wwbota' | 'dxc'
   if (network === 'dxc') return dxRespotTemplate;
@@ -557,6 +561,10 @@ const bandFilterEl = document.getElementById('band-filter');
 const modeFilterEl = document.getElementById('mode-filter');
 const tbody = document.getElementById('spots-body');
 const noSpots = document.getElementById('no-spots');
+// Ctrl/Cmd-click multi-op selection: callsigns (uppercased) picked across spots
+// to log together as one multi-operator activation. Keyed by callsign so a row
+// rebuild can re-apply the highlight. Cleared on a normal (tune) click.
+const selectedSpotCalls = new Set();
 const catStatusEl = document.getElementById('cat-status');
 const spotCountEl = document.getElementById('spot-count');
 const spotsDropdown = document.getElementById('spots-dropdown');
@@ -11115,6 +11123,11 @@ function render() {
         tr.classList.add('spot-hidden-row');
       }
 
+      // Re-apply multi-op selection highlight across spot-list rebuilds.
+      if (selectedSpotCalls.has(String(s.callsign || '').toUpperCase())) {
+        tr.classList.add('spot-selected');
+      }
+
       // Right-click to hide spot
       tr.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -11127,8 +11140,25 @@ function render() {
         tr.classList.add('wsjtx-heard');
       }
 
-      tr.addEventListener('click', () => {
+      tr.addEventListener('click', (e) => {
+        // Ctrl/Cmd-click toggles this operator into the multi-op log selection
+        // (no tune). Pick several spots, then hit any Log button to log them all
+        // as one multi-operator activation. (N4-/multi-op request)
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const key = String(s.callsign || '').toUpperCase();
+          if (!key) return;
+          if (selectedSpotCalls.has(key)) selectedSpotCalls.delete(key);
+          else selectedSpotCalls.add(key);
+          tr.classList.toggle('spot-selected', selectedSpotCalls.has(key));
+          return;
+        }
         if (scanning) stopScan(); // clicking a row stops scan
+        // A normal (single) click is a tune action — drop any pending selection.
+        if (selectedSpotCalls.size) {
+          selectedSpotCalls.clear();
+          tbody.querySelectorAll('.spot-selected').forEach((r) => r.classList.remove('spot-selected'));
+        }
         lastTunedSpot = s;
         notifyVfoTunedSpot(s);
         cwSpotWpm = s.wpm || null;
@@ -11162,9 +11192,13 @@ function render() {
         const logButton = document.createElement('button');
         logButton.className = 'log-btn';
         logButton.textContent = isCompact ? 'L' : 'Log';
+        logButton.title = 'Log this QSO.\nTip: Ctrl/⌘-click multiple spots first to log several operators at once (multi-op activation).';
         logButton.addEventListener('click', (e) => {
           e.stopPropagation();
-          openLogPopup(s);
+          // With a multi-op selection active, log all selected operators at once
+          // (this row included); otherwise log just this spot.
+          if (selectedSpotCalls.size > 0) logSelectedOperators(s);
+          else openLogPopup(s);
         });
         logTd.appendChild(logButton);
       }
@@ -11609,6 +11643,24 @@ function parseRefParksFor(type, callsign) {
     refs = refs.map(r => autoPotaPrefix(r, callsign));
   }
   return { primary: refs[0] || '', additional: refs.slice(1) };
+}
+
+// Multi-op logging: open the log dialog pre-filled with every Ctrl/Cmd-selected
+// operator's call (comma-joined), with `baseSpot` (the row whose Log button was
+// clicked) supplying freq/mode/park/time. The log dialog already splits a
+// comma-separated callsign field into one QSO per call, so this just automates
+// the comma-separated entry the operator would otherwise type by hand. The base
+// spot's own call is included first; the selection clears once the dialog opens.
+function logSelectedOperators(baseSpot) {
+  const calls = [];
+  const seen = new Set();
+  [String(baseSpot.callsign || '').toUpperCase(), ...selectedSpotCalls].forEach((c) => {
+    if (c && !seen.has(c)) { seen.add(c); calls.push(c); }
+  });
+  openLogPopup(baseSpot);
+  if (logCallsign) logCallsign.value = calls.join(',');
+  selectedSpotCalls.clear();
+  if (tbody) tbody.querySelectorAll('.spot-selected').forEach((r) => r.classList.remove('spot-selected'));
 }
 
 function openLogPopup(spot) {
