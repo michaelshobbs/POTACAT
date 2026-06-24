@@ -1127,7 +1127,31 @@ function getActiveRigModel() {
   const activeRig = (settings.rigs || []).find(r => r.id === settings.activeRigId);
   const modelName = activeRig?.model || null;
   const rigType = detectRigType();
-  return getModel(modelName, rigType);
+  // An explicit rigs[].model that names a known entry wins outright.
+  const explicit = modelName ? getModel(modelName, null) : null;
+  if (explicit) return explicit;
+  const generic = getModel(modelName, rigType); // per-type fallback (or null)
+  // Icom CI-V rigs are identified by CI-V address, so rigs[].model is usually
+  // empty and we land on the conservative generic Icom caps — which assume a
+  // 100 W radio. When catTarget.civModel names a known Icom ("IC-705",
+  // "IC-7300", ...), borrow just that model's power fields so the power reading
+  // scales correctly (IC-705 = 10 W, not 100) and a rig that can't report power
+  // (IC-706MKIIG) is left un-polled. All other panel caps stay generic so we
+  // don't surface untested Icom controls. (NA7C Ted: blank power logged 100 W)
+  if (rigType === 'icom' && generic) {
+    const civModel = activeRig?.catTarget?.civModel
+      || (settings.catTarget && settings.catTarget.civModel);
+    const specific = civModel ? getModel(civModel, null) : null;
+    if (specific) {
+      const merged = { ...generic, caps: { ...generic.caps } };
+      if (specific.caps && specific.caps.txpower != null) merged.caps.txpower = specific.caps.txpower;
+      if (specific.maxPower != null) merged.maxPower = specific.maxPower;
+      if (specific.minPower != null) merged.minPower = specific.minPower;
+      if (specific.powerStep != null) merged.powerStep = specific.powerStep;
+      return merged;
+    }
+  }
+  return generic;
 }
 
 // Per-band Flex antenna lookup for the currently active rig. Returns
