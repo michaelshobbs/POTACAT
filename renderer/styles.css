@@ -1519,10 +1519,14 @@ a.park-link:hover {
   outline-offset: -2px;
 }
 
-/* Ctrl/Cmd-click multi-op selection — operators picked to log together. */
+/* Ctrl/Cmd-click multi-op selection — operators picked to log together.
+   Use `outline` (not box-shadow): box-shadow on a <tr> renders per-cell and
+   clips to a partial stroke. A DASHED outline is a full rectangle around the
+   row and reads as "selected", distinct from the on-freq row's SOLID outline. */
 .spot-selected {
   background: rgba(79, 195, 247, 0.16);
-  box-shadow: inset 3px 0 0 0 var(--accent-blue, #4fc3f7);
+  outline: 2px dashed var(--accent-blue, #4fc3f7);
+  outline-offset: -2px;
 }
 
 .scan-skipped {
