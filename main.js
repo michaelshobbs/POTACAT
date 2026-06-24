@@ -971,6 +971,12 @@ let pskrMapFlushTimer = null;  // throttle timer for PSKReporter Map -> renderer
 let keyer = null;          // IambicKeyer instance for CW MIDI keying
 let winKeyer = null;       // K1EL WinKeyer instance for hardware CW keying
 let remoteServer = null;   // RemoteServer instance for phone remote access
+// Active ALSA capture sessions (Linux raw hw:/plughw: devices). Assigned in the
+// ipcMain handler block below; declared here at module scope so gracefulCleanup()
+// can stop every session on quit. If left running, each session's setInterval
+// keeps calling native.readCapture() into a half-torn-down Node env, producing an
+// empty Napi::Error -> std::terminate -> SIGBUS on shutdown. (Sleuth, Arch Linux)
+let alsaSessions = null;
 // RemoteClient — this desktop acting as a client to ANOTHER POTACAT
 // shack (the desktop-to-desktop initiative). Distinct from
 // remoteServer; the two are mutually compatible (a desktop with a
@@ -14209,6 +14215,16 @@ function getIconPath() {
   return path.join(__dirname, 'assets', variant);
 }
 
+// Native window surface color, matched to the active theme so a freshly-created
+// BrowserWindow doesn't paint the Electron default (white) for a frame before
+// the page CSS loads. Values mirror --bg-primary in styles.css for each theme:
+// light #f0f2f5, dark navy #1a1a2e, dark charcoal #0b0d10. (N3VD: white flash
+// opening the logbook in dark mode.)
+function getThemeWindowBg() {
+  if (settings.lightMode) return '#f0f2f5';
+  return (settings.darkVariant === 'charcoal') ? '#0b0d10' : '#1a1a2e';
+}
+
 function applyIconToAllWindows() {
   const iconPath = getIconPath();
   const img = nativeImage.createFromPath(iconPath);
@@ -14229,6 +14245,7 @@ function createWindow() {
     width: defaultW,
     height: defaultH,
     title: `POTACAT - v${getAppDisplayVersion()}`,
+    backgroundColor: getThemeWindowBg(),
     ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
     icon: getIconPath(),
     show: false,
@@ -17049,7 +17066,9 @@ app.whenReady().then(() => {
   // ECHOCAT mic). Each session forwards Float32 chunks to the renderer
   // via the channel `alsa-audio-chunk-<id>` so multi-stream IPC stays
   // demuxed without per-frame routing logic on the JS side.
-  const alsaSessions = new Map();
+  // Assigned to the module-scoped `alsaSessions` (declared near remoteServer) so
+  // gracefulCleanup() can stop every active capture on quit — see SIGBUS note there.
+  alsaSessions = new Map();
   let alsaSessionSeq = 0;
 
   ipcMain.handle('alsa-start-capture', async (event, { device, rate, channels, chunkFrames, intervalMs }) => {
@@ -17229,6 +17248,7 @@ app.whenReady().then(() => {
       width: 800,
       height: 600,
       title: 'POTACAT Map',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -17316,6 +17336,7 @@ app.whenReady().then(() => {
       width: 900,
       height: 650,
       title: 'POTACAT — Propagation',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -17390,6 +17411,7 @@ app.whenReady().then(() => {
       width: 500,
       height: 600,
       title: 'POTACAT — Pair Mobile App',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       resizable: true,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
@@ -17434,6 +17456,7 @@ app.whenReady().then(() => {
       height: 440,
       title: 'POTACAT — Pair request',
       show: false,
+      backgroundColor: getThemeWindowBg(),
       resizable: false,
       alwaysOnTop: true,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
@@ -17597,6 +17620,7 @@ app.whenReady().then(() => {
       height: 600,
       title: 'POTACAT Logbook',
       show: false,
+      backgroundColor: getThemeWindowBg(),
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
       webPreferences: {
@@ -17611,10 +17635,15 @@ app.whenReady().then(() => {
     if (saved && saved.width > 200 && saved.height > 150 && isOnScreen(saved)) {
       qsoPopoutWin.setBounds(clampToWorkArea(saved));
     }
-    qsoPopoutWin.show();
 
     qsoPopoutWin.setMenuBarVisibility(false);
     qsoPopoutWin.loadFile(path.join(__dirname, 'renderer', 'qso-popout.html'), { query: { theme: settings.lightMode ? 'light' : 'dark', variant: settings.darkVariant || 'navy' } });
+    // Show only once the page has painted, so the user never sees the empty
+    // (white) window surface flash before the dark theme loads. Pair with the
+    // backgroundColor above as a belt-and-suspenders guard. (N3VD)
+    qsoPopoutWin.once('ready-to-show', () => {
+      if (qsoPopoutWin && !qsoPopoutWin.isDestroyed()) qsoPopoutWin.show();
+    });
 
     qsoPopoutWin.on('close', () => {
       if (qsoPopoutWin && !qsoPopoutWin.isDestroyed()) {
@@ -17702,6 +17731,7 @@ app.whenReady().then(() => {
       minWidth: 360,
       minHeight: 420,
       title: 'Log QSO',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -17781,6 +17811,7 @@ app.whenReady().then(() => {
       width: 900,
       height: 500,
       title: 'POTACAT Spots',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -17870,6 +17901,7 @@ app.whenReady().then(() => {
       width: 700,
       height: 450,
       title: 'DX Cluster Terminal',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -17949,6 +17981,7 @@ app.whenReady().then(() => {
       width: 900,
       height: 320,
       title: 'Bandspread',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -18075,6 +18108,7 @@ app.whenReady().then(() => {
       width: 700,
       height: 500,
       title: 'Activation Map',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -18185,6 +18219,7 @@ app.whenReady().then(() => {
     const vfoAlwaysOnTop = settings.vfoAlwaysOnTop !== false; // default true
     vfoPopoutWin = new BrowserWindow({
       width: 340, height: 560, title: 'VFO',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       alwaysOnTop: vfoAlwaysOnTop,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
@@ -18265,6 +18300,7 @@ app.whenReady().then(() => {
     const isMac = process.platform === 'darwin';
     conditionsPopoutWin = new BrowserWindow({
       width: 1100, height: 720, title: 'POTACAT — Conditions',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -18395,6 +18431,7 @@ app.whenReady().then(() => {
       width: 1100,
       height: 700,
       title: 'POTACAT — JTCAT',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -18464,6 +18501,7 @@ app.whenReady().then(() => {
     }
     jtcatMapPopoutWin = new BrowserWindow({
       width: 700, height: 500,
+      backgroundColor: getThemeWindowBg(),
       frame: false,
       webPreferences: { preload: path.join(__dirname, 'preload-jtcat-popout.js'), contextIsolation: true, nodeIntegration: false },
     });
@@ -19034,6 +19072,7 @@ app.whenReady().then(() => {
       width: 900,
       height: 700,
       title: 'POTACAT — SSTV',
+      backgroundColor: getThemeWindowBg(),
       show: false,
       ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }),
       icon: getIconPath(),
@@ -24162,6 +24201,15 @@ function gracefulCleanup() {
   try { if (potaSync) potaSync.stop(); } catch {}
   try { if (cloudTunnel) cloudTunnel.shutdown(); } catch {}
   try { wwbotaDisconnect(); } catch {}
+  // Stop every active ALSA capture (Linux). Each session's setInterval calls the
+  // N-API addon; if left running while Node tears down its environment it throws
+  // an empty Napi::Error and the process aborts with SIGBUS, leaving zombies.
+  try {
+    if (alsaSessions) {
+      for (const s of alsaSessions.values()) { try { s.stop(); } catch {} }
+      alsaSessions.clear();
+    }
+  } catch {}
   killRigctld();
 }
 
@@ -24198,7 +24246,20 @@ app.on('window-all-closed', () => {
   sendTelemetry(sessionSeconds);
 
   gracefulCleanup();
-  app.quit();
+  // Linux only: defer the quit one tick so the serialport binding's async
+  // close() callback (lib/transport.js disconnect -> port.close()) and any
+  // other pending native-addon callbacks drain before Node tears down the
+  // V8/Napi environment. Without this, a close callback that fires post-
+  // teardown throws an empty Napi::Error -> SIGABRT/SIGBUS, the same class
+  // of shutdown race already handled for Windows (WriteFileEx) above.
+  // NOT on macOS: delaying app.quit() there causes its own SIGABRT (see the
+  // telemetry note above), and Windows is covered by the uncaughtException
+  // swallow — so both quit immediately.
+  if (process.platform === 'linux') {
+    setTimeout(() => app.quit(), 200);
+  } else {
+    app.quit();
+  }
 });
 
 // Final breadcrumb — if startup.log ends with this line the exit was an
