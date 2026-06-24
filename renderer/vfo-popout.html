@@ -229,6 +229,11 @@
       background: var(--bg-btn); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
     }
     .profile-item:hover { background: var(--bg-btn-hover); }
+    .profile-drag { color: var(--text-dimmer); font-size: 12px; cursor: grab; padding: 0 2px; user-select: none; line-height: 1; }
+    .profile-drag:active { cursor: grabbing; }
+    .profile-item.dragging { opacity: 0.45; }
+    .profile-item.drop-above { box-shadow: inset 0 2px 0 0 var(--accent-blue, #4fc3f7); }
+    .profile-item.drop-below { box-shadow: inset 0 -2px 0 0 var(--accent-blue, #4fc3f7); }
     .profile-name { font-weight: bold; color: var(--text-primary); flex: 1; }
     .profile-detail { font-size: 11px; color: var(--text-dim); font-family: monospace; }
     .profile-del, .profile-edit {
@@ -692,6 +697,7 @@ function tuneFromPopout(freqKhz, mode, bearing, slicePort) {
 }
 let currentFilterWidth = 0;
 let profiles = [];
+let profileDragFrom = null; // index of the profile being dragged (drag-to-reorder)
 let vfoHiddenBands = []; // band labels to hide, e.g. ['160m', '2m', '70cm']
 let vfoLocked = false;
 
@@ -1257,8 +1263,10 @@ function renderProfiles() {
   profiles.forEach((p, i) => {
     const item = document.createElement('div');
     item.className = 'profile-item';
+    item.draggable = true; // drag the row to reorder (N4RDX)
     const freqMhz = p.freqKhz ? (p.freqKhz / 1000).toFixed(3) : '?';
     item.innerHTML = `
+      <span class="profile-drag" title="Drag to reorder">&#x2630;</span>
       <span class="profile-name">${esc(p.name)}</span>
       <span class="profile-detail">${freqMhz} MHz ${p.mode || ''}${p.filterWidth ? ' BW:' + p.filterWidth : ''}</span>
       <button class="profile-edit" title="Rename profile">&#x270E;</button>
@@ -1268,6 +1276,7 @@ function renderProfiles() {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.profile-del')) return;
       if (e.target.closest('.profile-edit')) return;
+      if (e.target.closest('.profile-drag')) return;
       if (item.classList.contains('editing')) return;
       applyProfile(p);
     });
@@ -1281,6 +1290,44 @@ function renderProfiles() {
       saveProfiles();
       renderProfiles();
     });
+    // --- Drag-to-reorder (HTML5 DnD). Mutates `profiles`, persists, re-renders.
+    item.addEventListener('dragstart', (e) => {
+      profileDragFrom = i;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(i)); } catch (_) {}
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      profileDragFrom = null;
+      document.querySelectorAll('.profile-item.drop-above, .profile-item.drop-below')
+        .forEach((el) => el.classList.remove('drop-above', 'drop-below'));
+    });
+    item.addEventListener('dragover', (e) => {
+      if (profileDragFrom === null || profileDragFrom === i) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const r = item.getBoundingClientRect();
+      const below = (e.clientY - r.top) > r.height / 2;
+      item.classList.toggle('drop-below', below);
+      item.classList.toggle('drop-above', !below);
+    });
+    item.addEventListener('dragleave', () => {
+      item.classList.remove('drop-above', 'drop-below');
+    });
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const from = profileDragFrom;
+      if (from === null || from === i) return;
+      const r = item.getBoundingClientRect();
+      const below = (e.clientY - r.top) > r.height / 2;
+      let to = i + (below ? 1 : 0);
+      const moved = profiles.splice(from, 1)[0];
+      if (from < to) to -= 1; // account for the gap left by the removed item
+      profiles.splice(to, 0, moved);
+      saveProfiles();
+      renderProfiles();
+    });
     list.appendChild(item);
   });
 }
@@ -1290,6 +1337,7 @@ function renderProfiles() {
 function beginRenameProfile(item, nameEl, profile, index) {
   if (item.classList.contains('editing')) return;
   item.classList.add('editing');
+  item.draggable = false; // don't start a drag while the rename input is focused
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'profile-name-edit';
