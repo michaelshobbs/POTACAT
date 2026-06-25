@@ -417,7 +417,7 @@ let qrzFullName = false; // show first+last or just first
 // --- Activator Mode State ---
 let appMode = 'hunter'; // 'hunter' or 'activator'
 let activatorParkRefs = [];   // [{ref:'K-1234', name:'Cedar Falls SP'}, ...]  max MAX_N_FER
-let activatorCrossRefs = [];  // [{program:'WWFF', ref:'KFF-1234'}, {program:'LLOTA', ref:'US-0001'}]
+let activatorCrossRefs = [];  // [{program:'WWFF', ref:'KFF-1234'}, {program:'LLOTA', ref:'LLCL-0001'}]
 let activatorParkGrid = '';   // Maidenhead grid for active park (auto from lat/lon, user-editable)
 let hunterParkRefs = [];      // [{ref:'K-5678', name:'Shenandoah NF'}]  max MAX_N_FER, resets per QSO
 let activatorContacts = []; // in-memory QSO list for current activation session
@@ -2888,7 +2888,7 @@ blType.addEventListener('change', () => {
   const type = blType.value;
   const needsRef = type === 'pota' || type === 'sota' || type === 'wwff' || type === 'llota' || type === 'wwbota';
   blRef.classList.toggle('hidden', !needsRef);
-  blRef.placeholder = type === 'pota' ? '1234 or 1234, 5678' : type === 'sota' ? 'W4C/CM-001' : type === 'wwff' ? 'KFF-1234' : type === 'llota' ? 'US-0001' : type === 'wwbota' ? 'B/G-2392' : 'Ref';
+  blRef.placeholder = type === 'pota' ? '1234 or 1234, 5678' : type === 'sota' ? 'W4C/CM-001' : type === 'wwff' ? 'KFF-1234' : type === 'llota' ? 'LLCL-0001' : type === 'wwbota' ? 'B/G-2392' : 'Ref';
   if (needsRef) blRef.focus();
   updateBlRespotVisibility();
 });
