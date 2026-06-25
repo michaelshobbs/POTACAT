@@ -6801,7 +6801,12 @@ function _buildCloudCardHTML(status) {
   const loggedIn = !!status.loggedIn;
   const sub = status.subscription || null;
   const subStatus = sub && sub.status ? String(sub.status).toLowerCase() : '';
-  const trial = !!(sub && (sub.trialActive === true || subStatus === 'trial'));
+  // `active` must win over `trial`: a member who subscribed inside their first
+  // 30 days still has a future trial_expires_at (so trialActive=true) while being
+  // fully paid/active — showing them "Free Trial" is wrong and a bad look. Match
+  // the server guard (trialActive && status !== 'active') and the Settings panel
+  // (only promotes to trial when inactive). (K4PEZ, paid annual, shown Free Trial.)
+  const trial = !!(sub && (sub.trialActive === true || subStatus === 'trial')) && subStatus !== 'active';
   const active = subStatus === 'active' || trial;
   // "Manage subscription" is honest about where the button goes —
   // cloud-open-manage opens the BMAC membership page.
