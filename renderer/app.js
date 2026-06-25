@@ -8113,16 +8113,24 @@ function getFiltered() {
   return allSpots.filter((s) => {
     // Net spots always pass through all filters
     if (s.source === 'net') return true;
-    // Pinned spot — the user clicked this row to tune to it. Keep it
-    // visible regardless of age, source toggles, band/mode/region filters,
-    // hide-worked, etc. They're working it, possibly a weak station that
-    // pota.app's spotters can't hear — so the spot will time out from the
-    // upstream feed long before the QSO is logged. (N5SKT report: tuned
-    // spots disappearing mid-QSO forced manual log entry.) The pin clears
-    // automatically when the user clicks a different spot or logs the QSO.
-    if (lastTunedSpot &&
-        s.callsign === lastTunedSpot.callsign &&
-        s.frequency === lastTunedSpot.frequency) return true;
+    // Pinned spot — the spot the user last tuned to (clicked a row, OR the
+    // radio's current frequency matched it). Keep it visible despite AGE,
+    // source toggles, and hide-worked so it can't vanish mid-QSO (N5SKT: a weak
+    // station times out of the upstream feed before the QSO is logged). BUT
+    // still honor the EXPLICIT band/mode/region dropdown filters — a user
+    // browsing 6m spots shouldn't see the 20m spot their radio happens to sit
+    // on just because it's pinned. (User report 2026-06: "Band = 6M, why does a
+    // 20m CW spot show?" — it was the radio-freq-matched pin bypassing the band
+    // filter.) The pin clears when the user clicks a different spot or logs.
+    const isPinned = !!(lastTunedSpot &&
+      s.callsign === lastTunedSpot.callsign &&
+      s.frequency === lastTunedSpot.frequency);
+    if (isPinned) {
+      if (bands && !bands.has(s.band)) return false;
+      if (!modeMatches(s.mode, modes)) return false;
+      if (continents && !continents.has(s.continent)) return false;
+      return true;
+    }
     const sourceOff =
       (s.source === 'pota' && !enablePota) ||
       (s.source === 'sota' && !enableSota) ||
